@@ -7,6 +7,7 @@ exe 配布（Python 非同梱の Windows）でも動くよう、既定は **PyMu
 
 from __future__ import annotations
 
+import importlib
 import os
 import re
 import shutil
@@ -20,18 +21,13 @@ PDF_DPI = 150
 
 
 def _load_pymupdf():
-    """PyMuPDF を読み込む。未導入なら None。import 名は fitz / pymupdf の両対応。"""
-    try:
-        import fitz  # type: ignore  # PyMuPDF
-
-        return fitz
-    except ImportError:
+    """PyMuPDF を読み込む。未導入なら None。"""
+    for module_name in ("pymupdf", "fitz"):
         try:
-            import pymupdf  # type: ignore
-
-            return pymupdf
+            return importlib.import_module(module_name)
         except ImportError:
-            return None
+            continue
+    return None
 
 
 def _validate_raw(raw: bytes) -> None:
