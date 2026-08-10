@@ -19,6 +19,7 @@ beforeEach(() => {
   apiMocks.listProjects.mockResolvedValue([])
   apiMocks.listClasses.mockResolvedValue([])
   apiMocks.exportBulk.mockResolvedValue({ name: 'anonymous.zip', size: 1024 })
+  apiMocks.importZip.mockResolvedValue({ mode: 'bundle', project_ids: [1], count: 1 })
 })
 
 afterEach(() => {
@@ -46,5 +47,30 @@ describe('ExportPage', () => {
     await waitFor(() => expect(log.textContent).toContain('anonymous.zip'))
 
     expect(log.getAttribute('aria-live')).toBe('polite')
+  })
+
+  it('bundle.jsonを含まないファイルは読み込みAPIへ送らない', async () => {
+    const { findByLabelText, findByRole, findByText } = render(<ExportPage />)
+    const dropZone = await findByLabelText('ZIPファイルのドラッグアンドドロップ')
+    const docx = new File(['not a seqanno archive'], 'sample.docx', {
+      type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    })
+
+    fireEvent.drop(dropZone, { dataTransfer: { files: [docx], items: [] } })
+    const log = await findByRole('log')
+    await waitFor(() => expect(log.textContent).toContain('ZIP ファイルが見つかりません'))
+    expect(await findByText('読み込みできませんでした')).toBeTruthy()
+
+    expect(apiMocks.importZip).not.toHaveBeenCalled()
+  })
+
+  it('bundle.jsonを含むZIPをドラッグ&ドロップで読み込む', async () => {
+    const { findByLabelText, findByText } = render(<ExportPage />)
+    const dropZone = await findByLabelText('ZIPファイルのドラッグアンドドロップ')
+    const zip = new File(['header bundle.json body'], 'seqanno_export.zip', { type: 'application/zip' })
+
+    fireEvent.drop(dropZone, { dataTransfer: { files: [zip], items: [] } })
+    await waitFor(() => expect(apiMocks.importZip).toHaveBeenCalledWith(zip))
+    expect(await findByText('読み込みが完了しました')).toBeTruthy()
   })
 })
