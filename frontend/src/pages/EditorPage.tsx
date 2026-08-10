@@ -1631,8 +1631,8 @@ export default function EditorPage() {
 
           <div className="absolute bottom-3 right-3 z-20 sm:bottom-4 sm:right-4">
             {shortcutsVisible && (
-              <div className="mb-2 max-w-[calc(100vw-1.5rem)] rounded-2xl border border-white/10 bg-slate-950/92 p-3 text-[10px] leading-5 text-slate-300 shadow-2xl backdrop-blur sm:max-w-sm">
-                <div className="mb-2 font-bold text-white">図面操作</div>
+              <div className="mb-2 max-w-[calc(100vw-1.5rem)] rounded-2xl border border-white/30 bg-slate-950/95 p-3 text-[11px] font-semibold leading-5 text-white shadow-2xl backdrop-blur sm:max-w-sm">
+                <div className="mb-2 font-black text-white">図面操作</div>
                 ホイールで拡大縮小 ／ Alt+ドラッグまたは空白ドラッグで移動
                 <div className="mt-2 flex flex-wrap gap-1.5">
                   <span className="kbd">B 描画</span>
@@ -1646,7 +1646,7 @@ export default function EditorPage() {
             )}
             <button
               type="button"
-              className="flex min-h-10 items-center gap-2 rounded-xl border border-white/70 bg-white/90 px-3 text-xs font-bold text-slate-700 shadow-lg shadow-slate-900/10 backdrop-blur hover:bg-white"
+              className="flex min-h-10 items-center gap-2 rounded-xl border border-slate-300 bg-white px-3 text-xs font-black text-slate-950 shadow-lg shadow-slate-900/15 backdrop-blur hover:bg-slate-50"
               onClick={() => setShortcutsVisible((value) => !value)}
               aria-expanded={shortcutsVisible}
             >
@@ -1995,7 +1995,7 @@ function MetaPanel({
 
   const saveMetaNow = () => onQueueSave(project.id, form, true)
 
-  const F = ({ label, k }: { label: string; k: keyof typeof form }) => (
+  const renderField = (label: string, k: keyof typeof form) => (
     <label className="block">
       <span className="mb-1 block text-[11px] text-slate-500">{label}</span>
       <input
@@ -2008,11 +2008,11 @@ function MetaPanel({
 
   return (
     <div className="thin-scroll flex-1 space-y-3 overflow-auto p-4">
-      <F label="名称" k="name" />
-      <F label="シート番号" k="sheet_no" />
+      {renderField('名称', 'name')}
+      {renderField('シート番号', 'sheet_no')}
       <div className="grid grid-cols-2 gap-3">
-        <F label="頁" k="page_no" />
-        <F label="改訂" k="revision" />
+        {renderField('頁', 'page_no')}
+        {renderField('改訂', 'revision')}
       </div>
       <label className="block">
         <span className="mb-1 block text-[11px] text-slate-500">状態</span>
@@ -2026,7 +2026,7 @@ function MetaPanel({
           <option value="done">完了</option>
         </select>
       </label>
-      <F label="担当" k="assignee" />
+      {renderField('担当', 'assignee')}
       <label className="block">
         <span className="mb-1 block text-[11px] text-slate-500">メモ</span>
         <textarea
