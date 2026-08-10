@@ -1,0 +1,13 @@
+.env
+.DS_Store
+.venv/
+__pycache__/
+.pytest_cache/
+*.py[cod]
+data/
+frontend/dist/
+frontend/node_modules/
+*.tsbuildinfo
+build/
+dist/
+*.exe

@@ -194,4 +194,3 @@ docker compose config --quiet  # Compose 設定検証
 | Undo | 直近 100 操作の Undo / Redo |
 | ズーム／パン | 図面だけをホイール拡大縮小・ドラッグ移動。システム UI は固定 |
 | 関係（from-to） | 端子単位／シンボル単位の配線を登録・出力 |
-# proj-todensekkei-2609-2611

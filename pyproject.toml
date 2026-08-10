@@ -1,0 +1,13 @@
+[project]
+name = "seq-annotator"
+version = "1.0.0"
+description = "シーケンス図のシンボル(bbox)と配線(from-to)を登録し、YOLO 形式で出力するアノテーションツール"
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 110
+target-version = "py311"
