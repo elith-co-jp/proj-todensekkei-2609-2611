@@ -1,0 +1,169 @@
+name: Build Windows EXE
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build one-file Windows executable
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    defaults:
+      run:
+        shell: pwsh
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify source tree has no confidential artifacts
+        run: |
+          $ErrorActionPreference = "Stop"
+          $forbiddenPatterns = @(
+            "*.pdf",
+            "*.tif",
+            "*.tiff",
+            "*.db",
+            "*.sqlite",
+            "*.sqlite3",
+            "*.zip",
+            "*.7z",
+            "*.rar",
+            "*.doc",
+            "*.docx",
+            "*.xls",
+            "*.xlsx",
+            "*.ppt",
+            "*.pptx"
+          )
+          $excludedDirs = @(
+            "\\.git\\",
+            "\\.venv\\",
+            "\\build\\",
+            "\\dist\\",
+            "\\frontend\\dist\\",
+            "\\frontend\\node_modules\\"
+          )
+
+          $forbiddenSourceFiles = Get-ChildItem -Path . -Recurse -File -Force |
+            Where-Object {
+              $fullName = $_.FullName
+              $fileName = $_.Name
+              $isExcluded = $false
+              foreach ($dir in $excludedDirs) {
+                if ($fullName -match $dir) {
+                  $isExcluded = $true
+                  break
+                }
+              }
+
+              $isForbidden = $false
+              foreach ($pattern in $forbiddenPatterns) {
+                if ($fileName -like $pattern) {
+                  $isForbidden = $true
+                  break
+                }
+              }
+
+              $isForbidden -and -not $isExcluded
+            }
+
+          if ($forbiddenSourceFiles) {
+            $forbiddenSourceFiles | ForEach-Object { Write-Error "Forbidden source file: $($_.FullName)" }
+            throw "Confidential-looking source artifacts are present. Remove them before building the exe."
+          }
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller
+
+      - name: Build frontend
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+
+      - name: Build executable
+        run: |
+          pyinstaller seq-annotator.spec --noconfirm --clean
+
+      - name: Verify packaged output
+        run: |
+          $ErrorActionPreference = "Stop"
+          $exePath = "dist\SeqAnnotator.exe"
+          if (-not (Test-Path $exePath -PathType Leaf)) {
+            throw "Expected artifact was not created: $exePath"
+          }
+
+          $unexpectedEntries = Get-ChildItem -Path dist -Force |
+            Where-Object { $_.Name -ne "SeqAnnotator.exe" }
+          if ($unexpectedEntries) {
+            $unexpectedEntries | ForEach-Object { Write-Error "Unexpected dist entry: $($_.FullName)" }
+            throw "dist must contain only SeqAnnotator.exe. Refusing to upload a folder-style build or data files."
+          }
+
+          $forbiddenPatterns = @(
+            "*.pdf",
+            "*.tif",
+            "*.tiff",
+            "*.png",
+            "*.jpg",
+            "*.jpeg",
+            "*.bmp",
+            "*.db",
+            "*.sqlite",
+            "*.sqlite3",
+            "*.zip",
+            "*.7z",
+            "*.rar",
+            "*.doc",
+            "*.docx",
+            "*.xls",
+            "*.xlsx",
+            "*.ppt",
+            "*.pptx"
+          )
+          $forbiddenDistFiles = Get-ChildItem -Path dist -Recurse -File -Force |
+            Where-Object {
+              $fileName = $_.Name
+              $isForbidden = $false
+              foreach ($pattern in $forbiddenPatterns) {
+                if ($fileName -like $pattern) {
+                  $isForbidden = $true
+                  break
+                }
+              }
+
+              $isForbidden -and $fileName -ne "SeqAnnotator.exe"
+            }
+          if ($forbiddenDistFiles) {
+            $forbiddenDistFiles | ForEach-Object { Write-Error "Forbidden dist file: $($_.FullName)" }
+            throw "Refusing to upload dist because it contains confidential-looking files."
+          }
+
+      - name: Upload executable
+        uses: actions/upload-artifact@v4
+        with:
+          name: SeqAnnotator-windows-exe
+          path: dist/SeqAnnotator.exe
+          if-no-files-found: error
+          retention-days: 7
