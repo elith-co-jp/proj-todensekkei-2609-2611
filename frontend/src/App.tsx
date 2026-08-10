@@ -8,10 +8,12 @@ import {
   Menu,
   PanelLeftClose,
   PanelLeftOpen,
+  Power,
   Sparkles,
   X,
 } from 'lucide-react'
 
+import { api } from './api/client'
 import { Logo, LogoMark } from './components/Logo'
 import { OnboardingTour } from './components/OnboardingTour'
 import { useModalFocus } from './hooks/useModalFocus'
@@ -28,6 +30,8 @@ export default function App() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
   const [tourOpen, setTourOpen] = useState(false)
+  const [desktopMode, setDesktopMode] = useState(false)
+  const [shutdownPending, setShutdownPending] = useState(false)
   const [desktopNavigation, setDesktopNavigation] = useState(() =>
     typeof window === 'undefined' ? true : window.matchMedia('(min-width: 1024px)').matches,
   )
@@ -42,6 +46,19 @@ export default function App() {
     }
   }, [])
   const closeMobileNavigation = useCallback(() => setMobileNavOpen(false), [])
+  const shutdownDesktop = useCallback(async () => {
+    if (shutdownPending) return
+    const confirmed = window.confirm('Annotator を終了します。保存済みであることを確認してください。')
+    if (!confirmed) return
+    setShutdownPending(true)
+    try {
+      await api.shutdownDesktop()
+      window.setTimeout(() => window.close(), 300)
+    } catch (caught) {
+      setShutdownPending(false)
+      window.alert(caught instanceof Error ? caught.message : String(caught))
+    }
+  }, [shutdownPending])
   const mobileNavigationModalOpen = mobileNavOpen && !desktopNavigation
 
   useModalFocus({
@@ -55,6 +72,36 @@ export default function App() {
       if (window.localStorage.getItem('seqanno:onboarding-complete') !== '1') setTourOpen(true)
     } catch {
       setTourOpen(true)
+    }
+  }, [])
+
+  useEffect(() => {
+    let active = true
+    let timer: number | null = null
+
+    const sendHeartbeat = () => {
+      void api.desktopHeartbeat().catch(() => {
+        // 終了直前やネットワーク切断時は通知に失敗しても画面操作を妨げない。
+      })
+    }
+
+    const start = async () => {
+      try {
+        const status = await api.health()
+        if (!active || !status.desktop) return
+        setDesktopMode(true)
+        sendHeartbeat()
+        timer = window.setInterval(sendHeartbeat, 15000)
+      } catch {
+        // API 起動前の一時的な失敗では、通常画面の表示を優先する。
+      }
+    }
+
+    void start()
+
+    return () => {
+      active = false
+      if (timer !== null) window.clearInterval(timer)
     }
   }, [])
 
@@ -121,7 +168,7 @@ export default function App() {
             <div className="mt-3 text-[11px] font-semibold tracking-[0.16em] text-cyan-200/80">
               ANNOTATION OPERATIONS
             </div>
-            <div className="mt-1 text-sm font-bold leading-snug text-white">シーケンス図アノテーション</div>
+            <div className="mt-1 text-sm font-bold leading-snug text-white">Annotator</div>
           </div>
           {sidebarCollapsed && <LogoMark size={34} className="hidden lg:block" />}
           <button
@@ -197,6 +244,22 @@ export default function App() {
             <CircleHelp size={18} className="flex-none text-cyan-300" />
             <span className={`text-xs font-semibold ${sidebarCollapsed ? 'lg:hidden' : ''}`}>ツアーガイドを表示</span>
           </button>
+          {desktopMode && (
+            <button
+              type="button"
+              className={`mt-2 flex min-h-12 w-full items-center gap-3 rounded-2xl border border-rose-300/20 bg-rose-500/10 px-3 text-left text-rose-100 transition hover:border-rose-200/40 hover:bg-rose-500/15 disabled:cursor-wait disabled:opacity-70 ${
+                sidebarCollapsed ? 'lg:justify-center lg:px-2' : ''
+              }`}
+              onClick={() => void shutdownDesktop()}
+              disabled={shutdownPending}
+              title="アプリを終了"
+            >
+              <Power size={18} className="flex-none text-rose-200" />
+              <span className={`text-xs font-semibold ${sidebarCollapsed ? 'lg:hidden' : ''}`}>
+                {shutdownPending ? '終了中...' : 'アプリを終了'}
+              </span>
+            </button>
+          )}
           {!sidebarCollapsed && (
             <div className="mt-3 rounded-2xl bg-gradient-to-br from-cyan-300/10 to-blue-400/5 p-4 lg:block">
               <div className="flex items-center gap-2 text-[10px] font-bold tracking-[0.12em] text-cyan-200">
@@ -227,7 +290,7 @@ export default function App() {
           </button>
           <LogoMark size={25} />
           <div className="min-w-0">
-            <div className="truncate text-sm font-bold text-slate-900">シーケンス図アノテーション</div>
+            <div className="truncate text-sm font-bold text-slate-900">Annotator</div>
             <div className="text-[10px] font-semibold tracking-[0.12em] text-slate-400">ANNOTATION OPERATIONS</div>
           </div>
         </header>

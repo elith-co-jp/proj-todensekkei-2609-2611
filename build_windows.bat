@@ -1,6 +1,6 @@
 @echo off
 rem =====================================================================
-rem  SeqAnnotator.exe を Windows 上でビルドするスクリプト。
+rem  Annotator.exe を Windows 上でビルドするスクリプト。
 rem  Python 3.11+ と Node.js 18+ を入れた Windows で実行してください。
 rem  （生成した exe は Python 非同梱の Windows PC でそのまま動きます）
 rem =====================================================================
@@ -26,7 +26,7 @@ echo [3/4] exe をビルドします...
 pyinstaller seq-annotator.spec --noconfirm || goto :error
 
 echo [4/4] 完了しました。
-echo    生成物: dist\SeqAnnotator.exe
+echo    生成物: dist\Annotator.exe
 echo    ダブルクリックで起動し、既定ブラウザに UI が開きます。
 goto :eof
 
