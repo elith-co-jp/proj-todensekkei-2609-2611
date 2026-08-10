@@ -20,6 +20,7 @@ from pathlib import Path
 
 HOST = "127.0.0.1"
 PREFERRED_PORTS = (8010, 8011, 8020, 8080, 8000)
+_NULL_STREAMS = []
 
 
 def _pick_port() -> int:
@@ -70,11 +71,22 @@ def _show_startup_error(exc: Exception) -> None:
             return
         except Exception:  # noqa: BLE001
             pass
-    print(message, file=sys.stderr)
+    if sys.stderr is not None:
+        print(message, file=sys.stderr)
+
+
+def _ensure_standard_streams() -> None:
+    """Windowed PyInstaller exe で None になる標準ストリームを安全な捨て先へ逃がす。"""
+    for name in ("stdout", "stderr"):
+        if getattr(sys, name, None) is None:
+            stream = open(os.devnull, "w", encoding="utf-8", buffering=1)
+            setattr(sys, name, stream)
+            _NULL_STREAMS.append(stream)
 
 
 def main() -> None:
     os.environ.setdefault("SEQANNO_DESKTOP", "1")
+    _ensure_standard_streams()
 
     import uvicorn
 
@@ -92,7 +104,14 @@ def main() -> None:
     threading.Thread(target=_open_browser_later, args=(url,), daemon=True).start()
 
     try:
-        uvicorn.run(app, host=HOST, port=port, log_level="warning")
+        uvicorn.run(
+            app,
+            host=HOST,
+            port=port,
+            log_level="warning",
+            log_config=None,
+            access_log=False,
+        )
     except KeyboardInterrupt:
         pass
 

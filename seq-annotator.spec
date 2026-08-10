@@ -26,17 +26,16 @@ hiddenimports = []
 # uvicorn / anyio は動的 import が多いのでサブモジュールを明示収集する
 hiddenimports += collect_submodules("uvicorn")
 hiddenimports += collect_submodules("anyio")
-hiddenimports += ["passlib.handlers", "email.mime"]  # 念のため
+hiddenimports += ["email.mime"]  # 念のため
 
-# PyMuPDF（fitz）: MuPDF の同梱バイナリまで丸ごと集める
-for pkg in ("fitz", "pymupdf"):
-    try:
-        d, b, h = collect_all(pkg)
-        datas += d
-        binaries += b
-        hiddenimports += h
-    except Exception:  # noqa: BLE001  未導入パッケージ名は無視
-        pass
+# PyMuPDF: MuPDF の同梱バイナリまで丸ごと集める
+try:
+    d, b, h = collect_all("pymupdf")
+    datas += d
+    binaries += b
+    hiddenimports += h
+except Exception:  # noqa: BLE001  未導入時は通常の import 解析に任せる
+    pass
 
 a = Analysis(
     ["desktop.py"],
@@ -62,7 +61,7 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
+    upx=False,
     upx_exclude=[],
     runtime_tmpdir=None,
     console=False,
