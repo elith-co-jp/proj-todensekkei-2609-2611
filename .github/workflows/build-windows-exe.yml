@@ -109,16 +109,16 @@ jobs:
       - name: Verify packaged output
         run: |
           $ErrorActionPreference = "Stop"
-          $exePath = "dist\SeqAnnotator.exe"
+          $exePath = "dist\Annotator.exe"
           if (-not (Test-Path $exePath -PathType Leaf)) {
             throw "Expected artifact was not created: $exePath"
           }
 
           $unexpectedEntries = Get-ChildItem -Path dist -Force |
-            Where-Object { $_.Name -ne "SeqAnnotator.exe" }
+            Where-Object { $_.Name -ne "Annotator.exe" }
           if ($unexpectedEntries) {
             $unexpectedEntries | ForEach-Object { Write-Error "Unexpected dist entry: $($_.FullName)" }
-            throw "dist must contain only SeqAnnotator.exe. Refusing to upload a folder-style build or data files."
+            throw "dist must contain only Annotator.exe. Refusing to upload a folder-style build or data files."
           }
 
           $forbiddenPatterns = @(
@@ -153,7 +153,7 @@ jobs:
                 }
               }
 
-              $isForbidden -and $fileName -ne "SeqAnnotator.exe"
+              $isForbidden -and $fileName -ne "Annotator.exe"
             }
           if ($forbiddenDistFiles) {
             $forbiddenDistFiles | ForEach-Object { Write-Error "Forbidden dist file: $($_.FullName)" }
@@ -163,7 +163,7 @@ jobs:
       - name: Upload executable
         uses: actions/upload-artifact@v4
         with:
-          name: SeqAnnotator-windows-exe
-          path: dist/SeqAnnotator.exe
+          name: Annotator-windows-exe
+          path: dist/Annotator.exe
           if-no-files-found: error
           retention-days: 7

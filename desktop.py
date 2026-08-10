@@ -4,16 +4,19 @@
 外部通信はせず 127.0.0.1 のみで待ち受ける。
 
     開発:   python desktop.py
-    配布物: SeqAnnotator.exe をダブルクリック
+    配布物: Annotator.exe をダブルクリック
 """
 
 from __future__ import annotations
 
+import os
 import socket
 import sys
 import threading
 import time
+import traceback
 import webbrowser
+from pathlib import Path
 
 HOST = "127.0.0.1"
 PREFERRED_PORTS = (8010, 8011, 8020, 8080, 8000)
@@ -42,7 +45,37 @@ def _open_browser_later(url: str) -> None:
         pass
 
 
+def _app_dir() -> Path:
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parent
+
+
+def _show_startup_error(exc: Exception) -> None:
+    log_path = _app_dir() / "annotator_error.log"
+    try:
+        log_path.write_text(traceback.format_exc(), encoding="utf-8")
+    except Exception:  # noqa: BLE001
+        log_path = None
+
+    message = f"Annotator の起動に失敗しました。\n\n{exc}"
+    if log_path:
+        message += f"\n\n詳細ログ: {log_path}"
+
+    if sys.platform.startswith("win"):
+        try:
+            import ctypes  # noqa: PLC0415
+
+            ctypes.windll.user32.MessageBoxW(None, message, "Annotator", 0x10)
+            return
+        except Exception:  # noqa: BLE001
+            pass
+    print(message, file=sys.stderr)
+
+
 def main() -> None:
+    os.environ.setdefault("SEQANNO_DESKTOP", "1")
+
     import uvicorn
 
     from main import app  # 遅延 import（uvicorn 準備後にアプリを構築）
@@ -51,9 +84,9 @@ def main() -> None:
     url = f"http://{HOST}:{port}"
 
     print("=" * 60)
-    print(" シーケンス図アノテーションツール")
+    print(" Annotator")
     print(f"  ブラウザで {url} を開きます。")
-    print("  終了するにはこのウィンドウを閉じるか Ctrl+C を押してください。")
+    print("  終了するには画面の「アプリを終了」を押してください。")
     print("=" * 60)
 
     threading.Thread(target=_open_browser_later, args=(url,), daemon=True).start()
@@ -67,7 +100,6 @@ def main() -> None:
 if __name__ == "__main__":
     try:
         main()
-    except Exception as exc:  # noqa: BLE001  凍結時にコンソールを残して原因を見せる
-        print(f"起動に失敗しました: {exc}", file=sys.stderr)
-        input("Enter キーを押すと終了します...")
-        raise
+    except Exception as exc:  # noqa: BLE001  凍結時はメッセージボックスとログで原因を見せる
+        _show_startup_error(exc)
+        sys.exit(1)

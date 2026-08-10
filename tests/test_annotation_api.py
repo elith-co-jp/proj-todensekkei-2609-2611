@@ -4,7 +4,12 @@ from tests.conftest import SAMPLE_ANNOTATION, create_project, make_pdf
 
 
 def test_health(client):
-    assert client.get("/api/health").json() == {"status": "ok"}
+    assert client.get("/api/health").json() == {"status": "ok", "desktop": False}
+
+
+def test_desktop_control_endpoints_are_disabled_by_default(client):
+    assert client.post("/api/desktop/heartbeat").status_code == 404
+    assert client.post("/api/desktop/shutdown").status_code == 404
 
 
 def test_default_classes_have_unique_yolo_index(client):

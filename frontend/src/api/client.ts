@@ -46,7 +46,11 @@ async function download(path: string, init: RequestInit, fallbackName: string) {
 }
 
 export const api = {
-  health: () => req<{ status: string }>('/api/health'),
+  health: () => req<{ status: string; desktop: boolean }>('/api/health'),
+
+  desktopHeartbeat: () => req<{ status: string }>('/api/desktop/heartbeat', { method: 'POST' }),
+
+  shutdownDesktop: () => req<{ status: string }>('/api/desktop/shutdown', { method: 'POST' }),
 
   listClasses: () => req<SymbolClass[]>('/api/classes'),
 
