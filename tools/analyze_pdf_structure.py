@@ -111,6 +111,7 @@ class DetectedWire:
     span_end: int
     length: int
     confidence: float
+    visible_coverage: float
     reason: str
     nearby_label_ids: list[str]
 
@@ -283,11 +284,160 @@ def line_from_box(orientation: str, box: Box) -> LineSegment:
     return LineSegment(orientation=orientation, box=box)
 
 
+def support_vector_for_span(
+    binary: np.ndarray,
+    orientation: str,
+    axis: int,
+    start: int,
+    end: int,
+    half_width: int = 4,
+) -> np.ndarray:
+    if end <= start:
+        return np.array([], dtype=bool)
+
+    height, width = binary.shape
+    if orientation == "h":
+        x0 = max(0, start)
+        x1 = min(width, end)
+        y0 = max(0, axis - half_width)
+        y1 = min(height, axis + half_width + 1)
+        strip = binary[y0:y1, x0:x1]
+        return np.any(strip > 0, axis=0) if strip.size else np.array([], dtype=bool)
+
+    x0 = max(0, axis - half_width)
+    x1 = min(width, axis + half_width + 1)
+    y0 = max(0, start)
+    y1 = min(height, end)
+    strip = binary[y0:y1, x0:x1]
+    return np.any(strip > 0, axis=1) if strip.size else np.array([], dtype=bool)
+
+
+def close_short_1d_gaps(support: np.ndarray, max_gap: int) -> np.ndarray:
+    if support.size == 0:
+        return support
+    closed = support.copy()
+    supported_indices = np.flatnonzero(support)
+    if supported_indices.size < 2:
+        return closed
+    previous = int(supported_indices[0])
+    for current in supported_indices[1:]:
+        current = int(current)
+        if current - previous - 1 <= max_gap:
+            closed[previous : current + 1] = True
+        previous = current
+    return closed
+
+
+def line_ink_coverage(binary: np.ndarray, line: LineSegment, half_width: int = 4) -> float:
+    support = support_vector_for_span(binary, line.orientation, line_axis(line), *line_span(line), half_width=half_width)
+    if support.size == 0:
+        return 0.0
+    return float(np.count_nonzero(support) / support.size)
+
+
+def gap_has_ink_support(
+    binary: np.ndarray,
+    orientation: str,
+    axis: int,
+    gap_start: int,
+    gap_end: int,
+    *,
+    max_empty_gap: int = 8,
+    min_gap_coverage: float = 0.18,
+    half_width: int = 4,
+) -> bool:
+    gap = gap_end - gap_start
+    if gap <= 0:
+        return True
+    if gap <= max_empty_gap:
+        return True
+    support = support_vector_for_span(binary, orientation, axis, gap_start, gap_end, half_width=half_width)
+    if support.size == 0:
+        return False
+    return float(np.count_nonzero(support) / support.size) >= min_gap_coverage
+
+
+def split_line_by_ink_support(
+    binary: np.ndarray,
+    line: LineSegment,
+    *,
+    min_length: int,
+    max_empty_run: int,
+    half_width: int = 4,
+    min_visible_coverage: float = 0.35,
+) -> list[LineSegment]:
+    start, end = line_span(line)
+    support = support_vector_for_span(binary, line.orientation, line_axis(line), start, end, half_width=half_width)
+    if support.size == 0:
+        return []
+
+    closed = close_short_1d_gaps(support, max_empty_run)
+    split: list[LineSegment] = []
+    cursor = 0
+    while cursor < closed.size:
+        while cursor < closed.size and not closed[cursor]:
+            cursor += 1
+        run_start = cursor
+        while cursor < closed.size and closed[cursor]:
+            cursor += 1
+        run_end = cursor
+        run_length = run_end - run_start
+        if run_length < min_length:
+            continue
+        visible_coverage = float(np.count_nonzero(support[run_start:run_end]) / max(1, run_length))
+        if visible_coverage < min_visible_coverage:
+            continue
+
+        if line.orientation == "h":
+            box = Box(start + run_start, line.box.y0, start + run_end, line.box.y1)
+        else:
+            box = Box(line.box.x0, start + run_start, line.box.x1, start + run_end)
+        split.append(LineSegment(line.orientation, box))
+    return split
+
+
+def split_lines_by_ink_support(
+    binary: np.ndarray,
+    lines: Iterable[LineSegment],
+    *,
+    min_length: int,
+    max_empty_run: int,
+    half_width: int = 4,
+    min_visible_coverage: float = 0.35,
+) -> list[LineSegment]:
+    split: list[LineSegment] = []
+    for line in lines:
+        split.extend(
+            split_line_by_ink_support(
+                binary,
+                line,
+                min_length=min_length,
+                max_empty_run=max_empty_run,
+                half_width=half_width,
+                min_visible_coverage=min_visible_coverage,
+            )
+        )
+    return split
+
+
+def line_gap_span(existing: LineSegment, incoming: LineSegment) -> tuple[int, int]:
+    existing_start, existing_end = line_span(existing)
+    incoming_start, incoming_end = line_span(incoming)
+    if incoming_start >= existing_end:
+        return existing_end, incoming_start
+    if existing_start >= incoming_end:
+        return incoming_end, existing_start
+    return 0, 0
+
+
 def merge_candidate_lines(
     lines: list[LineSegment],
     orientation: str,
     axis_tolerance: int = 14,
     max_gap: int = 38,
+    binary: np.ndarray | None = None,
+    max_empty_gap: int = 8,
+    min_gap_coverage: float = 0.18,
 ) -> list[LineSegment]:
     ordered = sorted(lines, key=lambda line: (line_axis(line), line_span(line)[0]))
     merged: list[Box] = []
@@ -300,7 +450,21 @@ def merge_candidate_lines(
             existing_start, existing_end = line_span(existing_line)
             same_axis = abs(line_axis(existing_line) - line_axis(line)) <= axis_tolerance
             gap = max(start, existing_start) - min(end, existing_end)
-            if same_axis and gap <= max_gap:
+            gap_supported = True
+            if same_axis and binary is not None:
+                gap_start, gap_end = line_gap_span(existing_line, line)
+                axis = round((line_axis(existing_line) + line_axis(line)) / 2)
+                gap_supported = gap_has_ink_support(
+                    binary,
+                    orientation,
+                    axis,
+                    gap_start,
+                    gap_end,
+                    max_empty_gap=max_empty_gap,
+                    min_gap_coverage=min_gap_coverage,
+                    half_width=5 if orientation == "v" else 4,
+                )
+            if same_axis and gap <= max_gap and gap_supported:
                 match_index = index
                 break
 
@@ -404,15 +568,64 @@ def build_initial_wire_candidates(
 
     h_lines = [line for line in h_lines if keep(line)]
     v_lines = [line for line in v_lines if keep(line)]
+    h_lines = split_lines_by_ink_support(
+        binary,
+        h_lines,
+        min_length=45,
+        max_empty_run=8,
+        half_width=4,
+        min_visible_coverage=0.42,
+    )
+    v_lines = split_lines_by_ink_support(
+        binary,
+        v_lines,
+        min_length=45,
+        max_empty_run=10,
+        half_width=5,
+        min_visible_coverage=0.38,
+    )
     raw_v_lines = scan_line_segments(binary, "v", 18)
-    restored_v_lines = restore_vertical_columns([*raw_v_lines, *v_lines], regions, width, height)
-    final_v_lines = merge_candidate_lines([*v_lines, *restored_v_lines], "v", axis_tolerance=12, max_gap=82)
-    final_h_lines = merge_candidate_lines(h_lines, "h", axis_tolerance=10, max_gap=38)
+    restored_v_lines = restore_vertical_columns([*raw_v_lines, *v_lines], binary, regions, width, height)
+    final_v_lines = merge_candidate_lines(
+        [*v_lines, *restored_v_lines],
+        "v",
+        axis_tolerance=12,
+        max_gap=82,
+        binary=binary,
+        max_empty_gap=8,
+        min_gap_coverage=0.16,
+    )
+    final_h_lines = merge_candidate_lines(
+        h_lines,
+        "h",
+        axis_tolerance=10,
+        max_gap=38,
+        binary=binary,
+        max_empty_gap=6,
+        min_gap_coverage=0.20,
+    )
+    final_v_lines = split_lines_by_ink_support(
+        binary,
+        final_v_lines,
+        min_length=45,
+        max_empty_run=10,
+        half_width=5,
+        min_visible_coverage=0.38,
+    )
+    final_h_lines = split_lines_by_ink_support(
+        binary,
+        final_h_lines,
+        min_length=45,
+        max_empty_run=8,
+        half_width=4,
+        min_visible_coverage=0.42,
+    )
     return final_h_lines, final_v_lines, restored_v_lines
 
 
 def restore_vertical_columns(
     v_lines: list[LineSegment],
+    binary: np.ndarray,
     regions: PageRegions,
     image_width: int,
     image_height: int,
@@ -451,10 +664,21 @@ def restore_vertical_columns(
     for cluster in clusters:
         spans = sorted((line.box.y0, line.box.y1) for line in cluster)
         merged_spans: list[tuple[int, int, int]] = []
+        axis = round(sum(line_axis(line) for line in cluster) / len(cluster))
         start, end = spans[0]
         count = 1
         for next_start, next_end in spans[1:]:
-            if next_start - end <= max_gap:
+            gap_supported = gap_has_ink_support(
+                binary,
+                "v",
+                axis,
+                end,
+                next_start,
+                max_empty_gap=8,
+                min_gap_coverage=0.16,
+                half_width=5,
+            )
+            if next_start - end <= max_gap and gap_supported:
                 end = max(end, next_end)
                 count += 1
             else:
@@ -462,7 +686,6 @@ def restore_vertical_columns(
                 start, end, count = next_start, next_end, 1
         merged_spans.append((start, end, count))
 
-        axis = round(sum(line_axis(line) for line in cluster) / len(cluster))
         x0 = max(0, min(min(line.box.x0 for line in cluster), axis - 3))
         x1 = min(image_width, max(max(line.box.x1 for line in cluster), axis + 3))
         for start, end, count in merged_spans:
@@ -473,7 +696,15 @@ def restore_vertical_columns(
                 continue
             restored.append(LineSegment("v", Box(x0, max(0, start), x1, min(image_height, end))))
 
-    return merge_candidate_lines(restored, "v", axis_tolerance=axis_tolerance, max_gap=max_gap)
+    return merge_candidate_lines(
+        restored,
+        "v",
+        axis_tolerance=axis_tolerance,
+        max_gap=max_gap,
+        binary=binary,
+        max_empty_gap=8,
+        min_gap_coverage=0.16,
+    )
 
 
 def line_intersection(h_line: LineSegment, v_line: LineSegment, tolerance: int = 18) -> tuple[int, int] | None:
@@ -718,13 +949,30 @@ def nearby_label_ids_for_line(line: LineSegment, labels: list[DetectedLabel], ma
 
 
 def build_detected_wires(
+    binary: np.ndarray,
     h_lines: list[LineSegment],
     v_lines: list[LineSegment],
     labels: list[DetectedLabel],
     regions: PageRegions,
 ) -> list[DetectedWire]:
-    merged_h = merge_candidate_lines(h_lines, "h", axis_tolerance=10, max_gap=38)
-    merged_v = merge_candidate_lines(v_lines, "v", axis_tolerance=16, max_gap=82)
+    merged_h = merge_candidate_lines(
+        h_lines,
+        "h",
+        axis_tolerance=10,
+        max_gap=38,
+        binary=binary,
+        max_empty_gap=6,
+        min_gap_coverage=0.20,
+    )
+    merged_v = merge_candidate_lines(
+        v_lines,
+        "v",
+        axis_tolerance=16,
+        max_gap=82,
+        binary=binary,
+        max_empty_gap=8,
+        min_gap_coverage=0.16,
+    )
     detected: list[DetectedWire] = []
 
     for line in [*merged_h, *merged_v]:
@@ -734,21 +982,22 @@ def build_detected_wires(
 
         label_overlap = line_label_overlap_ratio(line, labels)
         connection_count = count_line_connections(line, merged_h, merged_v)
+        visible_coverage = line_ink_coverage(binary, line, half_width=5 if line.orientation == "v" else 4)
         accept = False
         confidence = 0.0
         reason = "rejected"
 
         if line.orientation == "h":
-            if line.length >= 500 and label_overlap <= 0.25:
+            if line.length >= 500 and label_overlap <= 0.25 and visible_coverage >= 0.35:
                 accept, confidence, reason = True, 0.9, "long_horizontal_bus"
-            elif line.length >= 130 and connection_count >= 2 and label_overlap <= 0.28:
+            elif line.length >= 130 and connection_count >= 2 and label_overlap <= 0.28 and visible_coverage >= 0.38:
                 accept, confidence, reason = True, 0.72, "connected_horizontal_wire"
-            elif line.length >= 80 and connection_count >= 1 and label_overlap <= 0.12:
+            elif line.length >= 80 and connection_count >= 1 and label_overlap <= 0.12 and visible_coverage >= 0.45:
                 accept, confidence, reason = True, 0.55, "short_horizontal_branch"
         else:
-            if line.length >= 130 and label_overlap <= 0.78:
+            if line.length >= 130 and label_overlap <= 0.78 and visible_coverage >= 0.35:
                 accept, confidence, reason = True, 0.78 if connection_count else 0.62, "long_vertical_wire"
-            elif line.length >= 70 and connection_count >= 1 and label_overlap <= 0.25:
+            elif line.length >= 70 and connection_count >= 1 and label_overlap <= 0.25 and visible_coverage >= 0.42:
                 accept, confidence, reason = True, 0.56, "connected_vertical_drop"
 
         if not accept:
@@ -765,6 +1014,7 @@ def build_detected_wires(
                 span_end=span_end,
                 length=line.length,
                 confidence=round(confidence, 3),
+                visible_coverage=round(visible_coverage, 3),
                 reason=reason,
                 nearby_label_ids=nearby_label_ids_for_line(line, labels),
             )
@@ -967,7 +1217,7 @@ def analyze_page(pdf_path: Path, page_number: int, dpi: int, out_dir: Path, run_
     line_removed_input = remove_line_mask_from_binary(binary, h_lines, v_lines)
     ocr_results, ocr_status = run_easyocr(image, line_removed_input, regions, enabled=run_ocr)
     labels = build_detected_labels(ocr_results)
-    wires = build_detected_wires(h_lines, v_lines, labels, regions)
+    wires = build_detected_wires(binary, h_lines, v_lines, labels, regions)
     graph = build_connection_graph(wires, labels)
 
     accepted_labels = [label for label in labels if label.accepted]
@@ -1043,6 +1293,11 @@ def analyze_page(pdf_path: Path, page_number: int, dpi: int, out_dir: Path, run_
         "detected_label_count": len(accepted_labels),
         "connection_graph_node_count": len(graph["nodes"]),
         "connection_graph_edge_count": len(graph["edges"]),
+        "wire_visible_coverage_min": round(min((wire.visible_coverage for wire in wires), default=0.0), 3),
+        "wire_visible_coverage_avg": round(
+            sum(wire.visible_coverage for wire in wires) / max(1, len(wires)),
+            3,
+        ),
         "wire_reason_counts": dict(Counter(wire.reason for wire in wires)),
         "label_type_counts": dict(Counter(label.label_type for label in accepted_labels)),
         "outputs": {
