@@ -24,9 +24,14 @@ class DemoPaths:
     final_json: Path
     source_image: Path
     reconstructed: Path
+    reconstructed_no_label_boxes: Path
     overlay: Path
+    overlay_no_label_boxes: Path
     wire_support_diff: Path
     comparison_sheet: Path
+    comparison_sheet_highres: Path
+    comparison_sheet_no_label_boxes: Path
+    comparison_sheet_no_label_boxes_highres: Path
 
 
 def load_json(path: Path) -> Any:
@@ -193,11 +198,18 @@ def build_final_output_from_analysis(page_dir: Path, source_type: str) -> dict[s
     }
 
 
-def draw_reconstruction(payload: dict[str, Any], *, semantic_colors: bool = True) -> Image.Image:
+def draw_reconstruction(
+    payload: dict[str, Any],
+    *,
+    semantic_colors: bool = True,
+    label_style: str = "boxed",
+) -> Image.Image:
     width = int(payload["image_size"]["width"])
     height = int(payload["image_size"]["height"])
     image = Image.new("RGB", (width, height), "white")
     draw = ImageDraw.Draw(image)
+    if label_style not in {"boxed", "text", "none"}:
+        raise ValueError("label_style must be one of: boxed, text, none")
 
     regions = payload.get("regions", {})
     drawing_area = regions.get("drawing_area")
@@ -235,15 +247,21 @@ def draw_reconstruction(payload: dict[str, Any], *, semantic_colors: bool = True
         draw.ellipse((x - r, y - r, x + r, y + r), fill=(0, 95, 220), outline="white", width=1)
 
     for label in payload.get("labels", []):
+        if label_style == "none":
+            continue
         box = label.get("bbox")
         if not box:
             continue
         x0, y0, x1, y1 = box_tuple(box)
-        draw.rectangle((x0, y0, x1, y1), outline=(0, 135, 70), width=2)
         text = label_text(label)[:22]
-        text_y = max(0, y0 - 15)
-        draw.rectangle((x0, text_y, x0 + max(24, len(text) * 8), text_y + 14), fill=(0, 135, 70))
-        draw.text((x0 + 2, text_y), text, fill="white", font=FONT_XS)
+        if label_style == "boxed":
+            draw.rectangle((x0, y0, x1, y1), outline=(0, 135, 70), width=2)
+            text_y = max(0, y0 - 15)
+            draw.rectangle((x0, text_y, x0 + max(24, len(text) * 8), text_y + 14), fill=(0, 135, 70))
+            draw.text((x0 + 2, text_y), text, fill="white", font=FONT_XS)
+        else:
+            text_size = max(11, min(20, round((y1 - y0) * 0.85)))
+            draw.text((x0, y0), text, fill=(0, 95, 45), font=load_font(text_size))
 
     return image
 
@@ -308,19 +326,31 @@ def draw_wire_support_diff(source: Image.Image, payload: dict[str, Any]) -> tupl
     return image, metrics
 
 
-def make_comparison_sheet(source: Image.Image, reconstructed: Image.Image, overlay: Image.Image, diff: Image.Image) -> Image.Image:
+def resize_panel(image: Image.Image, target_w: int) -> Image.Image:
+    scale = target_w / image.width
+    resample = Image.Resampling.LANCZOS if hasattr(Image, "Resampling") else Image.LANCZOS
+    return image.resize((target_w, round(image.height * scale)), resample)
+
+
+def make_comparison_sheet(
+    source: Image.Image,
+    reconstructed: Image.Image,
+    overlay: Image.Image,
+    diff: Image.Image,
+    *,
+    target_w: int,
+    reconstructed_title: str = "reconstructed_from_json",
+) -> Image.Image:
     panels = [
         ("source", source.convert("RGB")),
-        ("reconstructed_from_json", reconstructed.convert("RGB")),
+        (reconstructed_title, reconstructed.convert("RGB")),
         ("overlay_on_source", overlay.convert("RGB")),
         ("wire_support_diff", diff.convert("RGB")),
     ]
-    target_w = 900
     header_h = 38
     rendered: list[Image.Image] = []
     for title, image in panels:
-        scale = target_w / image.width
-        resized = image.resize((target_w, round(image.height * scale)))
+        resized = resize_panel(image, target_w)
         panel = Image.new("RGB", (target_w, resized.height + header_h), "white")
         panel.paste(resized, (0, header_h))
         draw = ImageDraw.Draw(panel)
@@ -342,14 +372,52 @@ def write_visual_outputs(payload: dict[str, Any], source_image: Image.Image, out
         final_json=out_dir / "final_output.json",
         source_image=out_dir / "source.png",
         reconstructed=out_dir / "reconstructed_from_json.png",
+        reconstructed_no_label_boxes=out_dir / "reconstructed_no_label_boxes.png",
         overlay=out_dir / "overlay_on_original.png",
+        overlay_no_label_boxes=out_dir / "overlay_no_label_boxes.png",
         wire_support_diff=out_dir / "wire_support_diff.png",
         comparison_sheet=out_dir / "comparison_sheet.png",
+        comparison_sheet_highres=out_dir / "comparison_sheet_highres.png",
+        comparison_sheet_no_label_boxes=out_dir / "comparison_sheet_no_label_boxes.png",
+        comparison_sheet_no_label_boxes_highres=out_dir / "comparison_sheet_no_label_boxes_highres.png",
     )
-    reconstructed = draw_reconstruction(payload)
+    reconstructed = draw_reconstruction(payload, label_style="boxed")
+    reconstructed_no_boxes = draw_reconstruction(payload, label_style="text")
     overlay = draw_overlay(source_image, reconstructed)
+    overlay_no_boxes = draw_overlay(source_image, reconstructed_no_boxes)
     diff, diff_metrics = draw_wire_support_diff(source_image, payload)
-    sheet = make_comparison_sheet(source_image, reconstructed, overlay, diff)
+    sheet = make_comparison_sheet(
+        source_image,
+        reconstructed,
+        overlay,
+        diff,
+        target_w=900,
+        reconstructed_title="reconstructed_from_json",
+    )
+    sheet_highres = make_comparison_sheet(
+        source_image,
+        reconstructed,
+        overlay,
+        diff,
+        target_w=source_image.width,
+        reconstructed_title="reconstructed_from_json",
+    )
+    sheet_no_boxes = make_comparison_sheet(
+        source_image,
+        reconstructed_no_boxes,
+        overlay_no_boxes,
+        diff,
+        target_w=900,
+        reconstructed_title="reconstructed_no_label_boxes",
+    )
+    sheet_no_boxes_highres = make_comparison_sheet(
+        source_image,
+        reconstructed_no_boxes,
+        overlay_no_boxes,
+        diff,
+        target_w=source_image.width,
+        reconstructed_title="reconstructed_no_label_boxes",
+    )
 
     payload = {
         **payload,
@@ -361,17 +429,27 @@ def write_visual_outputs(payload: dict[str, Any], source_image: Image.Image, out
             "final_json": str(paths.final_json),
             "source_image": str(paths.source_image),
             "reconstructed_from_json": str(paths.reconstructed),
+            "reconstructed_no_label_boxes": str(paths.reconstructed_no_label_boxes),
             "overlay_on_original": str(paths.overlay),
+            "overlay_no_label_boxes": str(paths.overlay_no_label_boxes),
             "wire_support_diff": str(paths.wire_support_diff),
             "comparison_sheet": str(paths.comparison_sheet),
+            "comparison_sheet_highres": str(paths.comparison_sheet_highres),
+            "comparison_sheet_no_label_boxes": str(paths.comparison_sheet_no_label_boxes),
+            "comparison_sheet_no_label_boxes_highres": str(paths.comparison_sheet_no_label_boxes_highres),
         },
     }
     write_json(paths.final_json, payload)
     source_image.save(paths.source_image)
     reconstructed.save(paths.reconstructed)
+    reconstructed_no_boxes.save(paths.reconstructed_no_label_boxes)
     overlay.save(paths.overlay)
+    overlay_no_boxes.save(paths.overlay_no_label_boxes)
     diff.save(paths.wire_support_diff)
     sheet.save(paths.comparison_sheet)
+    sheet_highres.save(paths.comparison_sheet_highres)
+    sheet_no_boxes.save(paths.comparison_sheet_no_label_boxes)
+    sheet_no_boxes_highres.save(paths.comparison_sheet_no_label_boxes_highres)
     return paths
 
 
@@ -517,7 +595,7 @@ def make_synthetic_payload() -> dict[str, Any]:
 
 
 def draw_synthetic_source(payload: dict[str, Any]) -> Image.Image:
-    image = draw_reconstruction(payload, semantic_colors=False)
+    image = draw_reconstruction(payload, semantic_colors=False, label_style="text")
     draw = ImageDraw.Draw(image)
     width = payload["image_size"]["width"]
     height = payload["image_size"]["height"]
