@@ -1,0 +1,5 @@
+pillow>=10.3
+numpy>=1.26
+opencv-python-headless>=4.10
+pyyaml>=6.0
+ultralytics>=8.3
