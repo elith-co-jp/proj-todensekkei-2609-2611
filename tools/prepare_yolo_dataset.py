@@ -521,22 +521,27 @@ def prepare_dataset(args: argparse.Namespace) -> dict:
             original_class_counts[class_names[box.class_id]] += 1
 
     train_sources, val_sources = split_sources(sources, args.val_ratio, args.seed)
+    single_source_validation_fallback = len(sources) == 1 and not val_sources and args.augment_copies > 0
+    if single_source_validation_fallback:
+        train_sources = sources
+        val_sources = sources
     rng = random.Random(args.seed)
     prepared: list[PreparedImage] = []
 
     for index, source in enumerate(train_sources, start=1):
         stem = safe_stem(source, index)
-        prepared.append(
-            save_prepared_image(
-                dataset_dir,
-                "train",
-                stem,
-                source.image,
-                source.boxes,
-                f"{source.zip_path.name}:{source.image_member}",
-                augmented=False,
+        if not single_source_validation_fallback:
+            prepared.append(
+                save_prepared_image(
+                    dataset_dir,
+                    "train",
+                    stem,
+                    source.image,
+                    source.boxes,
+                    f"{source.zip_path.name}:{source.image_member}",
+                    augmented=False,
+                )
             )
-        )
         for copy_index in range(1, args.augment_copies + 1):
             augmented_image, augmented_boxes = augment_image(source.image, source.boxes, rng, args.augment_strength)
             prepared.append(
@@ -591,6 +596,7 @@ def prepare_dataset(args: argparse.Namespace) -> dict:
             "strength": args.augment_strength,
             "seed": args.seed,
         },
+        "single_source_validation_fallback": single_source_validation_fallback,
         "splits": {
             "train": {
                 "image_count": len(train_prepared),
@@ -614,6 +620,7 @@ def prepare_dataset(args: argparse.Namespace) -> dict:
             "No source drawing or generated dataset should be committed.",
             "The generated command uses a YOLO architecture yaml and pretrained=False.",
             "Validation images are not augmented.",
+            "When only one source image is available, the original image is used for validation and augmented copies are used for training.",
         ],
     }
     summary_path = out_dir / "dataset_summary.json"
