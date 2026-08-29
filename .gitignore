@@ -27,3 +27,4 @@ dist/
 *.pth
 *.onnx
 *.engine
+:memory:.ses

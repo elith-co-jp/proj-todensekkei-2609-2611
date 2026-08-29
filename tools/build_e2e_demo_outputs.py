@@ -485,22 +485,22 @@ def make_synthetic_payload() -> dict[str, Any]:
         )
 
     for x, tb, cn, n1, n2 in (
-        (360, "TB16", "CN230", "135", "136"),
-        (620, "TB16", "CN230", "137", "138"),
-        (880, "TB6", "CN30", "145", "146"),
-        (1140, "TB6", "CN30", "149", "150"),
-        (1400, "TB16", "CN230", "153", "154"),
+        (360, "TB-A", "CN-A", "101", "102"),
+        (620, "TB-A", "CN-A", "103", "104"),
+        (880, "TB-B", "CN-B", "105", "106"),
+        (1140, "TB-B", "CN-B", "107", "108"),
+        (1400, "TB-C", "CN-C", "109", "110"),
     ):
         add_label(tb, x - 45, 300, "connector_or_terminal_block")
         add_label(cn, x - 45, 330, "connector_or_terminal_block")
         add_label(n1, x + 18, 385, "terminal_number")
         add_label(n2, x + 18, 585, "terminal_number")
         add_label("13", x - 20, 850, "terminal_number")
-    add_label("PER2102700", 210, 145, "diagram_label")
-    add_label("(ER21011-2)", 210, 205, "sheet_reference")
-    add_label("2B-RCVTB(01)", 1220, 390, "diagram_label")
-    add_label("2RAXP", 1220, 585, "diagram_label")
-    add_label("ABN", 842, 805, "device_code")
+    add_label("BUS001", 210, 145, "diagram_label")
+    add_label("(SHEET-REF-001)", 210, 205, "sheet_reference")
+    add_label("DEVICE-GROUP-001", 1220, 390, "diagram_label")
+    add_label("PANEL-A", 1220, 585, "diagram_label")
+    add_label("DEV-A", 842, 805, "device_code")
 
     nodes = []
     for x in (360, 620, 880, 1140, 1400):

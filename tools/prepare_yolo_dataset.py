@@ -5,6 +5,7 @@ import html
 import io
 import json
 import random
+import re
 import shutil
 import zipfile
 from collections import Counter
@@ -40,6 +41,7 @@ class SourceImage:
     image: Image.Image
     boxes: list[YoloBox]
     source_classes: list[str]
+    source_index: int
 
 
 @dataclass(frozen=True)
@@ -162,18 +164,18 @@ def read_export_zip(path: Path, global_class_to_id: dict[str, int]) -> list[Sour
             global_class_to_id.setdefault(class_name, len(global_class_to_id))
 
         images: list[SourceImage] = []
-        for name in sorted(names):
-            suffix = PurePosixPath(name).suffix.lower()
-            if suffix not in IMAGE_EXTENSIONS:
-                continue
-            if "/images/" not in f"/{name}":
-                continue
+        image_members = [
+            name
+            for name in sorted(names)
+            if PurePosixPath(name).suffix.lower() in IMAGE_EXTENSIONS and "/images/" in f"/{name}"
+        ]
+        for source_index, name in enumerate(image_members, start=1):
             label_member = label_member_for_image(name, names)
             label_text = zf.read(label_member).decode("utf-8-sig") if label_member else ""
             boxes = remap_boxes(parse_yolo_labels(label_text), source_classes, global_class_to_id)
             with zf.open(name) as raw:
                 image = Image.open(io.BytesIO(raw.read())).convert("RGB")
-            images.append(SourceImage(path, name, label_member, image, boxes, source_classes))
+            images.append(SourceImage(path, name, label_member, image, boxes, source_classes, source_index))
     return images
 
 
@@ -305,6 +307,111 @@ def split_sources(sources: list[SourceImage], val_ratio: float, seed: int) -> tu
     return shuffled[val_count:], shuffled[:val_count]
 
 
+def parse_page_numbers(values: Iterable[str]) -> set[int]:
+    pages: set[int] = set()
+    for value in values:
+        for part in value.split(","):
+            part = part.strip()
+            if not part:
+                continue
+            if "-" in part:
+                start, end = (int(item) for item in part.split("-", 1))
+                if end < start:
+                    raise ValueError(f"invalid page range: {part}")
+                pages.update(range(start, end + 1))
+            else:
+                pages.add(int(part))
+    return pages
+
+
+def source_page_number(source: SourceImage) -> int | None:
+    match = re.search(r"page_(\d+)", PurePosixPath(source.image_member).stem)
+    return int(match.group(1)) if match else None
+
+
+def split_sources_by_page_numbers(
+    sources: list[SourceImage],
+    train_pages: set[int],
+    val_pages: set[int],
+    test_pages: set[int],
+) -> tuple[list[SourceImage], list[SourceImage], list[SourceImage], dict[str, list[int]]]:
+    overlap = (train_pages & val_pages) | (train_pages & test_pages) | (val_pages & test_pages)
+    if overlap:
+        raise ValueError(f"page split groups overlap: {sorted(overlap)}")
+
+    seen_pages = {page for source in sources if (page := source_page_number(source)) is not None}
+    requested_pages = train_pages | val_pages | test_pages
+    missing_pages = sorted(requested_pages - seen_pages)
+    if missing_pages:
+        raise ValueError(f"requested page(s) are not in source export: {missing_pages}")
+
+    train_sources: list[SourceImage] = []
+    val_sources: list[SourceImage] = []
+    test_sources: list[SourceImage] = []
+    for source in sources:
+        page = source_page_number(source)
+        if page in val_pages:
+            val_sources.append(source)
+        elif page in test_pages:
+            test_sources.append(source)
+        elif not train_pages or page in train_pages:
+            train_sources.append(source)
+
+    if not train_sources:
+        raise ValueError("page split produced no train sources")
+    if not val_sources:
+        raise ValueError("page split produced no val sources")
+
+    return train_sources, val_sources, test_sources, {
+        "train": sorted({page for source in train_sources if (page := source_page_number(source)) is not None}),
+        "val": sorted({page for source in val_sources if (page := source_page_number(source)) is not None}),
+        "test": sorted({page for source in test_sources if (page := source_page_number(source)) is not None}),
+    }
+
+
+def parse_source_indices(values: Iterable[str]) -> set[int]:
+    return parse_page_numbers(values)
+
+
+def split_sources_by_source_indices(
+    sources: list[SourceImage],
+    train_indices: set[int],
+    val_indices: set[int],
+    test_indices: set[int],
+) -> tuple[list[SourceImage], list[SourceImage], list[SourceImage], dict[str, list[int]]]:
+    overlap = (train_indices & val_indices) | (train_indices & test_indices) | (val_indices & test_indices)
+    if overlap:
+        raise ValueError(f"source-index split groups overlap: {sorted(overlap)}")
+
+    seen_indices = {source.source_index for source in sources}
+    requested_indices = train_indices | val_indices | test_indices
+    missing_indices = sorted(requested_indices - seen_indices)
+    if missing_indices:
+        raise ValueError(f"requested source index(es) are not in source export: {missing_indices}")
+
+    train_sources: list[SourceImage] = []
+    val_sources: list[SourceImage] = []
+    test_sources: list[SourceImage] = []
+    for source in sources:
+        if source.source_index in val_indices:
+            val_sources.append(source)
+        elif source.source_index in test_indices:
+            test_sources.append(source)
+        elif not train_indices or source.source_index in train_indices:
+            train_sources.append(source)
+
+    if not train_sources:
+        raise ValueError("source-index split produced no train sources")
+    if not val_sources:
+        raise ValueError("source-index split produced no val sources")
+
+    return train_sources, val_sources, test_sources, {
+        "train": sorted(source.source_index for source in train_sources),
+        "val": sorted(source.source_index for source in val_sources),
+        "test": sorted(source.source_index for source in test_sources),
+    }
+
+
 def safe_stem(source: SourceImage, index: int) -> str:
     zip_stem = source.zip_path.stem.replace(" ", "_")
     image_stem = PurePosixPath(source.image_member).stem.replace(" ", "_")
@@ -332,13 +439,16 @@ def save_prepared_image(
 
 
 def build_data_yaml(dataset_dir: Path, class_names: list[str]) -> dict:
-    return {
+    data = {
         "path": str(dataset_dir.resolve()),
         "train": "images/train",
         "val": "images/val",
         "nc": len(class_names),
         "names": {index: name for index, name in enumerate(class_names)},
     }
+    if (dataset_dir / "images" / "test").exists():
+        data["test"] = "images/test"
+    return data
 
 
 def count_boxes_by_class(prepared: Iterable[PreparedImage], class_names: list[str]) -> dict[str, int]:
@@ -347,6 +457,294 @@ def count_boxes_by_class(prepared: Iterable[PreparedImage], class_names: list[st
         for box in item.boxes:
             counts[class_names[box.class_id]] += 1
     return {name: counts.get(name, 0) for name in class_names}
+
+
+def parse_class_targets(values: Iterable[str], class_names: list[str]) -> dict[str, int]:
+    class_name_set = set(class_names)
+    targets: dict[str, int] = {}
+    for value in values:
+        if "=" not in value:
+            raise ValueError(f"class target must use name=count format: {value!r}")
+        name, count_text = value.split("=", 1)
+        name = name.strip()
+        if name not in class_name_set:
+            raise ValueError(f"unknown class in --focus-class-targets: {name!r}")
+        count = int(count_text)
+        if count < 0:
+            raise ValueError(f"class target must be non-negative: {value!r}")
+        targets[name] = count
+    return targets
+
+
+def drop_empty_classes(sources: list[SourceImage], class_names: list[str]) -> tuple[list[SourceImage], list[str]]:
+    used_class_ids = sorted({box.class_id for source in sources for box in source.boxes})
+    if len(used_class_ids) == len(class_names):
+        return sources, class_names
+
+    old_to_new = {old_id: new_id for new_id, old_id in enumerate(used_class_ids)}
+    next_class_names = [class_names[old_id] for old_id in used_class_ids]
+    next_sources: list[SourceImage] = []
+    for source in sources:
+        next_boxes = [
+            YoloBox(old_to_new[box.class_id], box.cx, box.cy, box.w, box.h)
+            for box in source.boxes
+            if box.class_id in old_to_new
+        ]
+        next_sources.append(
+            SourceImage(
+                source.zip_path,
+                source.image_member,
+                source.label_member,
+                source.image,
+                next_boxes,
+                next_class_names,
+                source.source_index,
+            )
+        )
+    return next_sources, next_class_names
+
+
+def filter_classes(
+    sources: list[SourceImage],
+    class_names: list[str],
+    include_classes: Iterable[str],
+    exclude_classes: Iterable[str],
+) -> tuple[list[SourceImage], list[str], list[str]]:
+    include_set = set(include_classes)
+    exclude_set = set(exclude_classes)
+    class_name_set = set(class_names)
+    unknown = sorted((include_set | exclude_set) - class_name_set)
+    if unknown:
+        raise ValueError(f"unknown class in class filter: {', '.join(unknown)}")
+
+    keep_names = [
+        class_name
+        for class_name in class_names
+        if (not include_set or class_name in include_set) and class_name not in exclude_set
+    ]
+    if not keep_names:
+        raise ValueError("class filter removed all classes")
+
+    old_to_new = {
+        old_id: keep_names.index(class_name)
+        for old_id, class_name in enumerate(class_names)
+        if class_name in keep_names
+    }
+    next_sources: list[SourceImage] = []
+    for source in sources:
+        next_boxes = [
+            YoloBox(old_to_new[box.class_id], box.cx, box.cy, box.w, box.h)
+            for box in source.boxes
+            if box.class_id in old_to_new
+        ]
+        next_sources.append(
+            SourceImage(
+                source.zip_path,
+                source.image_member,
+                source.label_member,
+                source.image,
+                next_boxes,
+                keep_names,
+                source.source_index,
+            )
+        )
+    dropped = [class_name for class_name in class_names if class_name not in set(keep_names)]
+    return next_sources, keep_names, dropped
+
+
+def _component_is_text_like(width: int, height: int, area: int) -> bool:
+    if width < 2 or height < 6 or width > 180 or height > 52:
+        return False
+    if area < 8:
+        return False
+    if width >= 46 and height <= 5:
+        return False
+    if height >= 46 and width <= 5:
+        return False
+    aspect = width / max(1, height)
+    if aspect < 0.07 or aspect > 13.0:
+        return False
+    fill_ratio = area / max(1, width * height)
+    return 0.03 <= fill_ratio <= 0.78
+
+
+def _box_pixel_bounds(box: YoloBox, image_width: int, image_height: int, padding: int = 0) -> tuple[int, int, int, int]:
+    corners = box_to_corners(box, image_width, image_height)
+    x0 = max(0, int(np.floor(corners[:, 0].min())) - padding)
+    y0 = max(0, int(np.floor(corners[:, 1].min())) - padding)
+    x1 = min(image_width, int(np.ceil(corners[:, 0].max())) + padding)
+    y1 = min(image_height, int(np.ceil(corners[:, 1].max())) + padding)
+    return x0, y0, x1, y1
+
+
+def _component_in_symbol_scope(
+    left: int,
+    top: int,
+    width: int,
+    height: int,
+    boxes: list[YoloBox],
+    image_width: int,
+    image_height: int,
+) -> bool:
+    cx = left + width / 2
+    cy = top + height / 2
+    for box in boxes:
+        x0, y0, x1, y1 = _box_pixel_bounds(box, image_width, image_height, padding=8)
+        if x0 <= cx <= x1 and y0 <= cy <= y1:
+            return True
+    return False
+
+
+def text_like_component_mask(
+    image: Image.Image,
+    boxes: list[YoloBox],
+    scope: str,
+) -> np.ndarray:
+    gray = np.array(image.convert("L"))
+    blurred = cv2.GaussianBlur(gray, (3, 3), 0)
+    _threshold, binary = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY_INV | cv2.THRESH_OTSU)
+    count, labels, stats, _centroids = cv2.connectedComponentsWithStats(binary, connectivity=8)
+    mask = np.zeros_like(binary)
+    image_height, image_width = binary.shape
+    for component_id in range(1, count):
+        left = int(stats[component_id, cv2.CC_STAT_LEFT])
+        top = int(stats[component_id, cv2.CC_STAT_TOP])
+        width = int(stats[component_id, cv2.CC_STAT_WIDTH])
+        height = int(stats[component_id, cv2.CC_STAT_HEIGHT])
+        area = int(stats[component_id, cv2.CC_STAT_AREA])
+        if not _component_is_text_like(width, height, area):
+            continue
+        if scope == "symbol-boxes" and not _component_in_symbol_scope(
+            left,
+            top,
+            width,
+            height,
+            boxes,
+            image_width,
+            image_height,
+        ):
+            continue
+        mask[labels == component_id] = 255
+    kernel = np.ones((2, 2), dtype=np.uint8)
+    return cv2.dilate(mask, kernel, iterations=1)
+
+
+def suppress_text_like_components(
+    image: Image.Image,
+    boxes: list[YoloBox],
+    *,
+    mode: str,
+    scope: str,
+) -> tuple[Image.Image, dict[str, float | int | str]]:
+    if mode == "none":
+        return image.convert("RGB"), {"mode": mode, "scope": scope, "masked_pixel_ratio": 0.0, "masked_pixels": 0}
+
+    mask = text_like_component_mask(image, boxes, scope)
+    arr = np.array(image.convert("RGB"))
+    weights = {
+        "light": 0.70,
+        "medium": 0.45,
+        "heavy": 0.20,
+        "erase": 0.0,
+    }
+    keep_weight = weights[mode]
+    selected = mask > 0
+    if np.any(selected):
+        arr[selected] = np.clip(arr[selected].astype(np.float32) * keep_weight + 255.0 * (1.0 - keep_weight), 0, 255)
+    masked_pixels = int(np.count_nonzero(selected))
+    total_pixels = int(mask.shape[0] * mask.shape[1])
+    stats = {
+        "mode": mode,
+        "scope": scope,
+        "masked_pixels": masked_pixels,
+        "masked_pixel_ratio": round(masked_pixels / max(1, total_pixels), 6),
+    }
+    return Image.fromarray(arr.astype(np.uint8), mode="RGB"), stats
+
+
+def crop_boxes_for_window(
+    boxes: Iterable[YoloBox],
+    left: float,
+    top: float,
+    crop_width: float,
+    crop_height: float,
+    image_width: int,
+    image_height: int,
+) -> list[YoloBox]:
+    cropped: list[YoloBox] = []
+    for box in boxes:
+        corners = box_to_corners(box, image_width, image_height)
+        x0, x1 = float(corners[:, 0].min()), float(corners[:, 0].max())
+        y0, y1 = float(corners[:, 1].min()), float(corners[:, 1].max())
+        ix0 = max(x0, left)
+        iy0 = max(y0, top)
+        ix1 = min(x1, left + crop_width)
+        iy1 = min(y1, top + crop_height)
+        if ix1 <= ix0 or iy1 <= iy0:
+            continue
+        original_area = max(1.0, (x1 - x0) * (y1 - y0))
+        visible_ratio = ((ix1 - ix0) * (iy1 - iy0)) / original_area
+        cx = (x0 + x1) / 2
+        cy = (y0 + y1) / 2
+        center_inside = left <= cx <= left + crop_width and top <= cy <= top + crop_height
+        if not center_inside and visible_ratio < 0.7:
+            continue
+        next_box = YoloBox(
+            class_id=box.class_id,
+            cx=(((ix0 + ix1) / 2) - left) / crop_width,
+            cy=(((iy0 + iy1) / 2) - top) / crop_height,
+            w=(ix1 - ix0) / crop_width,
+            h=(iy1 - iy0) / crop_height,
+        )
+        if next_box.w > 0 and next_box.h > 0:
+            cropped.append(next_box)
+    return cropped
+
+
+def focused_crop(
+    source: SourceImage,
+    focus_box: YoloBox,
+    rng: random.Random,
+    crop_size: int,
+    jitter: float,
+) -> tuple[Image.Image, list[YoloBox]]:
+    image_width, image_height = source.image.size
+    side = min(float(crop_size), float(image_width), float(image_height))
+    corners = box_to_corners(focus_box, image_width, image_height)
+    focus_cx = float(corners[:, 0].mean())
+    focus_cy = float(corners[:, 1].mean())
+    focus_cx += rng.uniform(-jitter, jitter) * side
+    focus_cy += rng.uniform(-jitter, jitter) * side
+    left = min(max(0.0, focus_cx - side / 2), max(0.0, image_width - side))
+    top = min(max(0.0, focus_cy - side / 2), max(0.0, image_height - side))
+    right = left + side
+    bottom = top + side
+    crop = source.image.crop((round(left), round(top), round(right), round(bottom)))
+    crop_boxes = crop_boxes_for_window(source.boxes, left, top, side, side, image_width, image_height)
+    return crop, crop_boxes
+
+
+def random_negative_crop(
+    source: SourceImage,
+    rng: random.Random,
+    crop_size: int,
+    attempts: int = 120,
+) -> Image.Image | None:
+    image_width, image_height = source.image.size
+    side = min(float(crop_size), float(image_width), float(image_height))
+    if side < 16:
+        return None
+    max_left = max(0.0, image_width - side)
+    max_top = max(0.0, image_height - side)
+    for _attempt in range(attempts):
+        left = rng.uniform(0, max_left) if max_left > 0 else 0.0
+        top = rng.uniform(0, max_top) if max_top > 0 else 0.0
+        if crop_boxes_for_window(source.boxes, left, top, side, side, image_width, image_height):
+            continue
+        right = left + side
+        bottom = top + side
+        return source.image.crop((round(left), round(top), round(right), round(bottom)))
+    return None
 
 
 def draw_boxes(image: Image.Image, boxes: list[YoloBox], class_names: list[str]) -> Image.Image:
@@ -515,18 +913,101 @@ def prepare_dataset(args: argparse.Namespace) -> dict:
         raise ValueError("no images were found in annotation export ZIP")
 
     class_names = [name for name, _index in sorted(global_class_to_id.items(), key=lambda item: item[1])]
+    filtered_classes: list[str] = []
+    if args.include_classes or args.exclude_classes:
+        sources, class_names, filtered_classes = filter_classes(
+            sources,
+            class_names,
+            args.include_classes,
+            args.exclude_classes,
+        )
+    dropped_empty_classes: list[str] = []
+    if args.drop_empty_classes:
+        before_class_names = [*class_names]
+        sources, class_names = drop_empty_classes(sources, class_names)
+        dropped_empty_classes = [name for name in before_class_names if name not in set(class_names)]
+
+    text_suppression_stats: list[dict[str, float | int | str]] = []
+    if args.text_suppression != "none":
+        suppressed_sources: list[SourceImage] = []
+        for source in sources:
+            suppressed_image, stats = suppress_text_like_components(
+                source.image,
+                source.boxes,
+                mode=args.text_suppression,
+                scope=args.text_suppression_scope,
+            )
+            text_suppression_stats.append(
+                {
+                    **stats,
+                    "image_member": source.image_member,
+                }
+            )
+            suppressed_sources.append(
+                SourceImage(
+                    source.zip_path,
+                    source.image_member,
+                    source.label_member,
+                    suppressed_image,
+                    source.boxes,
+                    source.source_classes,
+                    source.source_index,
+                )
+            )
+        sources = suppressed_sources
     original_class_counts = Counter()
     for source in sources:
         for box in source.boxes:
             original_class_counts[class_names[box.class_id]] += 1
 
-    train_sources, val_sources = split_sources(sources, args.val_ratio, args.seed)
+    page_split = {"train": [], "val": [], "test": []}
+    source_index_split = {"train": [], "val": [], "test": []}
+    if args.train_source_indices or args.val_source_indices or args.test_source_indices:
+        train_sources, val_sources, test_sources, source_index_split = split_sources_by_source_indices(
+            sources,
+            parse_source_indices(args.train_source_indices),
+            parse_source_indices(args.val_source_indices),
+            parse_source_indices(args.test_source_indices),
+        )
+    elif args.train_page_numbers or args.val_page_numbers or args.test_page_numbers:
+        train_sources, val_sources, test_sources, page_split = split_sources_by_page_numbers(
+            sources,
+            parse_page_numbers(args.train_page_numbers),
+            parse_page_numbers(args.val_page_numbers),
+            parse_page_numbers(args.test_page_numbers),
+        )
+    else:
+        train_sources, val_sources = split_sources(sources, args.val_ratio, args.seed)
+        test_sources = []
     single_source_validation_fallback = len(sources) == 1 and not val_sources and args.augment_copies > 0
     if single_source_validation_fallback:
         train_sources = sources
         val_sources = sources
     rng = random.Random(args.seed)
     prepared: list[PreparedImage] = []
+    train_class_counts = Counter()
+    for source in train_sources:
+        for box in source.boxes:
+            train_class_counts[box.class_id] += 1
+    focus_classes = set(args.focus_classes)
+    unknown_focus_classes = sorted(focus_classes - set(class_names))
+    if unknown_focus_classes:
+        raise ValueError(f"unknown class in --focus-classes: {', '.join(unknown_focus_classes)}")
+    focus_class_targets = parse_class_targets(args.focus_class_targets, class_names)
+    focus_repeats_by_class: dict[int, int] = {}
+    for class_id, class_name in enumerate(class_names):
+        count = train_class_counts.get(class_id, 0)
+        target_boxes = focus_class_targets.get(class_name, args.balance_target_boxes)
+        if focus_classes and class_name not in focus_classes:
+            focus_repeats_by_class[class_id] = 0
+            continue
+        if target_boxes <= 0 or count <= 0 or count >= target_boxes:
+            focus_repeats_by_class[class_id] = 0
+            continue
+        repeats = (target_boxes - count + count - 1) // count
+        focus_repeats_by_class[class_id] = min(args.focus_crops_max_per_box, repeats)
+    focused_crop_count = 0
+    negative_crop_count = 0
 
     for index, source in enumerate(train_sources, start=1):
         stem = safe_stem(source, index)
@@ -555,6 +1036,53 @@ def prepare_dataset(args: argparse.Namespace) -> dict:
                     augmented=True,
                 )
             )
+        for box_index, box in enumerate(source.boxes, start=1):
+            repeats = focus_repeats_by_class.get(box.class_id, 0)
+            for crop_index in range(1, repeats + 1):
+                crop_image, crop_boxes = focused_crop(
+                    source,
+                    box,
+                    rng,
+                    args.focus_crop_size,
+                    args.focus_crop_jitter,
+                )
+                if not crop_boxes:
+                    continue
+                augmented_crop, augmented_crop_boxes = augment_image(
+                    crop_image,
+                    crop_boxes,
+                    rng,
+                    args.augment_strength,
+                )
+                focused_crop_count += 1
+                prepared.append(
+                    save_prepared_image(
+                        dataset_dir,
+                        "train",
+                        f"{stem}_focus{box_index:03d}_{crop_index:02d}",
+                        augmented_crop,
+                        augmented_crop_boxes,
+                        f"{source.zip_path.name}:{source.image_member}:focus:{class_names[box.class_id]}",
+                        augmented=True,
+                    )
+                )
+        for negative_index in range(1, args.negative_crops_per_source + 1):
+            negative_crop = random_negative_crop(source, rng, args.negative_crop_size)
+            if negative_crop is None:
+                continue
+            augmented_negative, _negative_boxes = augment_image(negative_crop, [], rng, args.augment_strength)
+            negative_crop_count += 1
+            prepared.append(
+                save_prepared_image(
+                    dataset_dir,
+                    "train",
+                    f"{stem}_neg{negative_index:03d}",
+                    augmented_negative,
+                    [],
+                    f"{source.zip_path.name}:{source.image_member}:negative",
+                    augmented=True,
+                )
+            )
 
     for index, source in enumerate(val_sources, start=1):
         stem = safe_stem(source, index)
@@ -570,6 +1098,20 @@ def prepare_dataset(args: argparse.Namespace) -> dict:
             )
         )
 
+    for index, source in enumerate(test_sources, start=1):
+        stem = safe_stem(source, index)
+        prepared.append(
+            save_prepared_image(
+                dataset_dir,
+                "test",
+                stem,
+                source.image,
+                source.boxes,
+                f"{source.zip_path.name}:{source.image_member}",
+                augmented=False,
+            )
+        )
+
     data_yaml = build_data_yaml(dataset_dir, class_names)
     data_yaml_path = out_dir / "data.yaml"
     data_yaml_path.write_text(yaml.safe_dump(data_yaml, sort_keys=False, allow_unicode=True), encoding="utf-8")
@@ -577,6 +1119,7 @@ def prepare_dataset(args: argparse.Namespace) -> dict:
 
     train_prepared = [item for item in prepared if item.split == "train"]
     val_prepared = [item for item in prepared if item.split == "val"]
+    test_prepared = [item for item in prepared if item.split == "test"]
     train_command = (
         "yolo detect train "
         f"data={data_yaml_path.resolve()} "
@@ -596,7 +1139,52 @@ def prepare_dataset(args: argparse.Namespace) -> dict:
             "strength": args.augment_strength,
             "seed": args.seed,
         },
+        "class_filtering": {
+            "drop_empty_classes": args.drop_empty_classes,
+            "dropped_empty_classes": dropped_empty_classes,
+            "include_classes": args.include_classes,
+            "exclude_classes": args.exclude_classes,
+            "filtered_classes": filtered_classes,
+        },
+        "text_suppression": {
+            "mode": args.text_suppression,
+            "scope": args.text_suppression_scope,
+            "image_stats": text_suppression_stats,
+        },
+        "class_balancing": {
+            "target_boxes_per_class": args.balance_target_boxes,
+            "focus_classes": sorted(focus_classes),
+            "focus_class_targets": focus_class_targets,
+            "focus_crop_size": args.focus_crop_size,
+            "focus_crop_jitter": args.focus_crop_jitter,
+            "focus_crops_max_per_box": args.focus_crops_max_per_box,
+            "focused_crop_image_count": focused_crop_count,
+            "focus_repeats_by_class": {
+                class_names[class_id]: repeats
+                for class_id, repeats in sorted(focus_repeats_by_class.items())
+            },
+        },
+        "negative_crops": {
+            "per_source": args.negative_crops_per_source,
+            "crop_size": args.negative_crop_size,
+            "image_count": negative_crop_count,
+        },
         "single_source_validation_fallback": single_source_validation_fallback,
+        "page_split": page_split,
+        "source_index_split": source_index_split,
+        "source_images": [
+            {
+                "source_index": source.source_index,
+                "image_member": source.image_member,
+                "label_member": source.label_member,
+                "box_count": len(source.boxes),
+                "class_box_counts": {
+                    name: Counter(class_names[box.class_id] for box in source.boxes).get(name, 0)
+                    for name in class_names
+                },
+            }
+            for source in sources
+        ],
         "splits": {
             "train": {
                 "image_count": len(train_prepared),
@@ -607,6 +1195,11 @@ def prepare_dataset(args: argparse.Namespace) -> dict:
                 "image_count": len(val_prepared),
                 "box_count": sum(len(item.boxes) for item in val_prepared),
                 "class_box_counts": count_boxes_by_class(val_prepared, class_names),
+            },
+            "test": {
+                "image_count": len(test_prepared),
+                "box_count": sum(len(item.boxes) for item in test_prepared),
+                "class_box_counts": count_boxes_by_class(test_prepared, class_names),
             },
         },
         "paths": {
@@ -637,8 +1230,97 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("exports", nargs="+", type=Path, help="seq-annotator export ZIP path(s)")
     parser.add_argument("--out-dir", type=Path, default=DEFAULT_OUT_DIR)
     parser.add_argument("--val-ratio", type=float, default=0.2)
+    parser.add_argument(
+        "--train-page-numbers",
+        nargs="*",
+        default=[],
+        help="explicit source page numbers for train split, e.g. 1 2 4-6",
+    )
+    parser.add_argument(
+        "--val-page-numbers",
+        nargs="*",
+        default=[],
+        help="explicit source page numbers for val split",
+    )
+    parser.add_argument(
+        "--test-page-numbers",
+        nargs="*",
+        default=[],
+        help="explicit source page numbers for test split",
+    )
+    parser.add_argument(
+        "--train-source-indices",
+        nargs="*",
+        default=[],
+        help="explicit source image indices for train split, based on sorted image members",
+    )
+    parser.add_argument(
+        "--val-source-indices",
+        nargs="*",
+        default=[],
+        help="explicit source image indices for val split, based on sorted image members",
+    )
+    parser.add_argument(
+        "--test-source-indices",
+        nargs="*",
+        default=[],
+        help="explicit source image indices for test split, based on sorted image members",
+    )
     parser.add_argument("--augment-copies", type=int, default=12)
     parser.add_argument("--augment-strength", choices=("light", "medium", "heavy"), default="heavy")
+    parser.add_argument(
+        "--include-classes",
+        nargs="*",
+        default=[],
+        help="train only these class names; other labels become background",
+    )
+    parser.add_argument(
+        "--exclude-classes",
+        nargs="*",
+        default=[],
+        help="remove these class names from labels so they become background",
+    )
+    parser.add_argument(
+        "--text-suppression",
+        choices=("none", "light", "medium", "heavy", "erase"),
+        default="none",
+        help="lighten text-like connected components before dataset export",
+    )
+    parser.add_argument(
+        "--text-suppression-scope",
+        choices=("whole-image", "symbol-boxes"),
+        default="whole-image",
+        help="where text-like component suppression is applied",
+    )
+    parser.add_argument("--drop-empty-classes", action="store_true", help="remove classes that have no boxes")
+    parser.add_argument(
+        "--balance-target-boxes",
+        type=int,
+        default=0,
+        help="add focused crops for classes below this train box count",
+    )
+    parser.add_argument(
+        "--focus-classes",
+        nargs="*",
+        default=[],
+        help="if set, add focused crops only for these class names",
+    )
+    parser.add_argument(
+        "--focus-class-targets",
+        nargs="*",
+        default=[],
+        help="per-class focused crop targets, e.g. relay_coil=240 solenoid=240",
+    )
+    parser.add_argument(
+        "--focus-crops-max-per-box",
+        type=int,
+        default=8,
+        help="maximum focused crop copies per rare-class box",
+    )
+    parser.add_argument("--focus-crop-size", type=int, default=1280)
+    parser.add_argument("--focus-crop-jitter", type=float, default=0.2)
+    parser.add_argument("--negative-crops-per-source", type=int, default=0)
+    parser.add_argument("--negative-crop-size", type=int, default=512)
     parser.add_argument("--seed", type=int, default=2609)
     parser.add_argument("--epochs", type=int, default=180)
     parser.add_argument("--imgsz", type=int, default=1280)
