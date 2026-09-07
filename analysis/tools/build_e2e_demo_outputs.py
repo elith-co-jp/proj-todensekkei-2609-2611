@@ -14,9 +14,9 @@ from PIL import Image, ImageDraw, ImageFont
 
 
 PDF_ENV_VAR = "TODENSEKKEI_REFERENCE_PDF"
-DEFAULT_PDF_PATH = Path("data/private/reference/reference.pdf")
-DEFAULT_ANALYSIS_ROOT = Path("data/private/analysis/pdf_structure")
-DEFAULT_OUT_DIR = Path("data/private/e2e_demo")
+DEFAULT_PDF_PATH = Path("private/inputs/reference/reference.pdf")
+DEFAULT_ANALYSIS_ROOT = Path("private/results/pdf_structure/pdf_structure")
+DEFAULT_OUT_DIR = Path("private/results/e2e_demo")
 
 
 @dataclass(frozen=True)

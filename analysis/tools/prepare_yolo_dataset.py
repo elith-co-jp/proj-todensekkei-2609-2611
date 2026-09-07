@@ -19,7 +19,7 @@ import yaml
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 
-DEFAULT_OUT_DIR = Path("data/private/yolo/symbol_detection")
+DEFAULT_OUT_DIR = Path("private/training/yolo/symbol_detection")
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp", ".webp"}
 UNSAFE_NAMES = {".DS_Store", "Thumbs.db"}
 

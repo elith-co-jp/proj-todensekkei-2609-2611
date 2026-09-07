@@ -16,8 +16,8 @@ import pymupdf
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 
-DEFAULT_PDF_PATH = Path("data/private/reference/reference.pdf")
-DEFAULT_OUT_DIR = Path("data/private/analysis/pdf_structure")
+DEFAULT_PDF_PATH = Path("private/inputs/reference/reference.pdf")
+DEFAULT_OUT_DIR = Path("private/results/pdf_structure/pdf_structure")
 PDF_ENV_VAR = "TODENSEKKEI_REFERENCE_PDF"
 
 

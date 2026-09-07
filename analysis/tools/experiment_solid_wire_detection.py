@@ -876,7 +876,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--pages", nargs="+", type=int, required=True)
     parser.add_argument("--page-sheet-map", nargs="+", required=True, help="Example: 3=SHEET001")
     parser.add_argument("--dpi", type=int, default=150)
-    parser.add_argument("--out-dir", type=Path, default=Path("data/private/wire_experiments/solid_no_dash_v1"))
+    parser.add_argument("--out-dir", type=Path, default=Path("private/results/wire/solid_no_dash_v1"))
     parser.add_argument("--profile", choices=("strict", "relaxed", "recall"), default="strict")
     parser.add_argument("--recovery", choices=("none", "endpoint_alignment", "vertical_endpoint_alignment"), default="none")
     parser.add_argument("--frame-filter", choices=("reject", "keep"), default="reject")

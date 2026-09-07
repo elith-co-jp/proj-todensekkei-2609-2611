@@ -21,9 +21,9 @@ from urllib.parse import quote, unquote, urlparse
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
 STATIC_DIR = Path(__file__).resolve().parent / "static"
-JOB_ROOT = ROOT_DIR / "data" / "private" / "analysis_ui" / "jobs"
+JOB_ROOT = ROOT_DIR / "private" / "results" / "analysis_ui" / "jobs"
 RUN_SCRIPT = ROOT_DIR / "analysis" / "tools" / "run_yolo_e2e_pipeline.py"
-DEFAULT_GPU_PYTHON = ROOT_DIR / "data" / "private" / "conda_envs" / "yolo-gpu" / "bin" / "python"
+DEFAULT_GPU_PYTHON = ROOT_DIR / "private" / "envs" / "conda_envs" / "yolo-gpu" / "bin" / "python"
 ALLOWED_PDF_EXTENSIONS = {".pdf"}
 ALLOWED_ZIP_EXTENSIONS = {".zip"}
 ALLOWED_MODEL_EXTENSIONS = {".pt", ".pth"}
@@ -245,7 +245,7 @@ def parse_multipart_form(content_type: str, body: bytes) -> dict[str, list[FormF
 
 
 def discover_models() -> list[dict[str, Any]]:
-    yolo_root = ROOT_DIR / "data" / "private" / "yolo"
+    yolo_root = ROOT_DIR / "private" / "training" / "yolo"
     if not yolo_root.exists():
         return []
     candidates = []

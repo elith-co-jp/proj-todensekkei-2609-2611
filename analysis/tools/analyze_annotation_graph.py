@@ -350,7 +350,7 @@ def analyze(zip_path: Path, out_dir: Path) -> dict[str, Any]:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Analyze seq-annotator from-to and netlist graph consistency.")
     parser.add_argument("zip_path", type=Path)
-    parser.add_argument("--out-dir", type=Path, default=Path("data/private/annotation_graph"))
+    parser.add_argument("--out-dir", type=Path, default=Path("private/results/annotation_graph"))
     return parser.parse_args()
 
 

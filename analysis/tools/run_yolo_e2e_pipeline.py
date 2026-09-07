@@ -40,8 +40,11 @@ from experiment_symbol_port_inference import (
 from prepare_yolo_dataset import suppress_text_like_components
 
 
-DEFAULT_MODEL_PATH = Path("data/private/yolo/symbol_detection/runs/from_scratch_60e/weights/best.pt")
-DEFAULT_OUT_DIR = Path("data/private/e2e_yolo")
+DEFAULT_MODEL_PATH = Path(
+    "private/training/yolo/adachi25_train_official5_all_annotated_raw_v1/runs/"
+    "from_scratch_all_symbols_raw_v1/weights/best.pt"
+)
+DEFAULT_OUT_DIR = Path("private/results/e2e")
 FONT_SM = load_font(15)
 FONT_MD = load_font(18)
 DEFAULT_INFERRED_TERMINAL_CLASSES = {"contact_a", "contact_b", "solenoid", "relay_coil"}
@@ -1756,7 +1759,7 @@ def main() -> None:
         "page_sheet_map": page_sheet_map,
         "page_summaries": page_summaries,
         "notes": [
-            "All outputs are local-only artifacts under data/private/.",
+            "All outputs are local-only artifacts under private/.",
             "This is a prototype pipeline: YOLO symbols, image-processing wires, graph candidates, and visual reconstruction.",
         ],
     }
