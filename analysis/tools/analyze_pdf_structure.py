@@ -116,6 +116,14 @@ class DetectedWire:
     nearby_label_ids: list[str]
 
 
+@dataclass(frozen=True)
+class TextRegion:
+    id: str
+    box: Box
+    confidence: float
+    reason: str
+
+
 def default_pdf_path() -> Path:
     if env_path := os.environ.get(PDF_ENV_VAR):
         return Path(env_path)
@@ -724,13 +732,229 @@ def count_line_connections(line: LineSegment, h_lines: list[LineSegment], v_line
 
 
 def remove_line_mask_from_binary(binary: np.ndarray, h_lines: list[LineSegment], v_lines: list[LineSegment]) -> Image.Image:
+    remaining = remove_line_pixels_from_binary(binary, h_lines, v_lines)
+    return Image.fromarray(255 - remaining.astype(np.uint8), mode="L").convert("RGB")
+
+
+def remove_line_pixels_from_binary(binary: np.ndarray, h_lines: list[LineSegment], v_lines: list[LineSegment]) -> np.ndarray:
     line_pixels = np.zeros_like(binary)
     for line in [*h_lines, *v_lines]:
         box = line.box.padded(4, binary.shape[1], binary.shape[0])
         cv2.rectangle(line_pixels, (box.x0, box.y0), (box.x1, box.y1), 255, thickness=-1)
     remaining = binary.copy()
     remaining[line_pixels > 0] = 0
-    return Image.fromarray(255 - remaining.astype(np.uint8), mode="L").convert("RGB")
+    return remaining
+
+
+def detect_text_regions_from_components(binary_without_lines: np.ndarray, regions: PageRegions) -> list[TextRegion]:
+    height, width = binary_without_lines.shape
+    component_count, component_labels, stats, centroids = cv2.connectedComponentsWithStats(
+        (binary_without_lines > 0).astype(np.uint8),
+        connectivity=8,
+    )
+    text_pixels = np.zeros_like(binary_without_lines)
+
+    for component_id in range(1, component_count):
+        x, y, w, h, area = (int(value) for value in stats[component_id])
+        if area < 5 or area > 1800:
+            continue
+        if w < 2 or h < 3 or w > 95 or h > 58:
+            continue
+        if w >= 45 and h <= 3:
+            continue
+        if h >= 45 and w <= 3:
+            continue
+        if max(w / max(1, h), h / max(1, w)) > 18:
+            continue
+        cx, cy = centroids[component_id]
+        if regions.drawing_area is not None and not regions.drawing_area.contains_point(float(cx), float(cy)):
+            continue
+        text_pixels[component_labels == component_id] = 255
+
+    if not np.any(text_pixels):
+        return []
+
+    horizontal_join = cv2.getStructuringElement(cv2.MORPH_RECT, (23, 5))
+    grouped = cv2.dilate(text_pixels, horizontal_join, iterations=1)
+    grouped = cv2.morphologyEx(grouped, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_RECT, (5, 3)), iterations=1)
+    group_count, group_labels, group_stats, _group_centroids = cv2.connectedComponentsWithStats(
+        (grouped > 0).astype(np.uint8),
+        connectivity=8,
+    )
+
+    text_regions: list[TextRegion] = []
+    for group_id in range(1, group_count):
+        x, y, w, h, _area = (int(value) for value in group_stats[group_id])
+        box = Box(x, y, x + w, y + h).padded(2, width, height)
+        cx, cy = box.center()
+        if regions.drawing_area is not None and not regions.drawing_area.contains_point(cx, cy):
+            continue
+        if box.width < 8 or box.height < 5 or box.width > 260 or box.height > 70:
+            continue
+        if box.width >= 180 and box.height <= 9:
+            continue
+        ink_count = int(np.count_nonzero(text_pixels[group_labels == group_id]))
+        if ink_count < 6:
+            continue
+        ink_density = ink_count / max(1, box.area)
+        if ink_density > 0.72:
+            continue
+        confidence = min(0.95, 0.25 + min(0.5, ink_count / 160.0) + min(0.2, box.width / 220.0))
+        text_regions.append(
+            TextRegion(
+                id=f"text_region_{len(text_regions) + 1:03d}",
+                box=box,
+                confidence=round(confidence, 3),
+                reason="component_text_candidate",
+            )
+        )
+    return text_regions
+
+
+def detect_text_regions_from_ocr_results(ocr_results: list[OcrResult], width: int, height: int) -> list[TextRegion]:
+    text_regions: list[TextRegion] = []
+    for item in ocr_results:
+        if item.confidence < 0.12:
+            continue
+        box = item.box.padded(3, width, height)
+        if box.width < 4 or box.height < 4:
+            continue
+        text_regions.append(
+            TextRegion(
+                id=f"text_region_{len(text_regions) + 1:03d}",
+                box=box,
+                confidence=item.confidence,
+                reason=f"ocr_{item.source}",
+            )
+        )
+    return text_regions
+
+
+def erase_text_regions_from_binary(binary: np.ndarray, text_regions: list[TextRegion], padding: int = 2) -> np.ndarray:
+    if not text_regions:
+        return binary
+    height, width = binary.shape
+    masked = binary.copy()
+    for region in text_regions:
+        box = region.box.padded(padding, width, height)
+        masked[box.y0 : box.y1 + 1, box.x0 : box.x1 + 1] = 0
+    return masked
+
+
+def erase_text_pixels_from_binary(
+    binary: np.ndarray,
+    text_pixel_candidates: np.ndarray,
+    text_regions: list[TextRegion],
+    padding: int = 2,
+) -> np.ndarray:
+    if not text_regions:
+        return binary
+    height, width = binary.shape
+    region_mask = np.zeros_like(binary)
+    for region in text_regions:
+        box = region.box.padded(padding, width, height)
+        region_mask[box.y0 : box.y1 + 1, box.x0 : box.x1 + 1] = 255
+    masked = binary.copy()
+    masked[(region_mask > 0) & (text_pixel_candidates > 0)] = 0
+    return masked
+
+
+def detect_ocr_text_components(
+    binary_without_lines: np.ndarray,
+    ocr_results: list[OcrResult],
+    width: int,
+    height: int,
+) -> tuple[np.ndarray, list[TextRegion]]:
+    ocr_boxes = [
+        item.box.padded(3, width, height)
+        for item in ocr_results
+        if item.confidence >= 0.12 and item.box.width >= 4 and item.box.height >= 4
+    ]
+    text_pixels = np.zeros_like(binary_without_lines)
+    if not ocr_boxes:
+        return text_pixels, []
+
+    component_count, component_labels, stats, centroids = cv2.connectedComponentsWithStats(
+        (binary_without_lines > 0).astype(np.uint8),
+        connectivity=8,
+    )
+    text_regions: list[TextRegion] = []
+    for component_id in range(1, component_count):
+        x, y, w, h, area = (int(value) for value in stats[component_id])
+        if area < 3 or area > 900:
+            continue
+        if w < 1 or h < 2 or w > 85 or h > 55:
+            continue
+        if w >= 45 and h <= 4:
+            continue
+        if h >= 45 and w <= 4:
+            continue
+        if max(w / max(1, h), h / max(1, w)) > 14:
+            continue
+        cx, cy = centroids[component_id]
+        if not any(box.contains_point(float(cx), float(cy)) for box in ocr_boxes):
+            continue
+        text_pixels[component_labels == component_id] = 255
+        box = Box(x, y, x + w, y + h).padded(1, width, height)
+        text_regions.append(
+            TextRegion(
+                id=f"text_region_{len(text_regions) + 1:03d}",
+                box=box,
+                confidence=0.75,
+                reason="ocr_text_component",
+            )
+        )
+
+    if np.any(text_pixels):
+        text_pixels = cv2.dilate(text_pixels, cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2)), iterations=1)
+    return text_pixels, text_regions
+
+
+def detect_ocr_box_ink_text_pixels(
+    binary: np.ndarray,
+    ocr_results: list[OcrResult],
+    width: int,
+    height: int,
+) -> tuple[np.ndarray, list[TextRegion]]:
+    text_pixels = np.zeros_like(binary)
+    text_regions: list[TextRegion] = []
+    for item in ocr_results:
+        if item.confidence < 0.12 or item.box.width < 4 or item.box.height < 4:
+            continue
+        ocr_box = item.box.padded(2, width, height)
+        crop = (binary[ocr_box.y0 : ocr_box.y1 + 1, ocr_box.x0 : ocr_box.x1 + 1] > 0).astype(np.uint8)
+        if crop.size == 0:
+            continue
+        component_count, component_labels, stats, _centroids = cv2.connectedComponentsWithStats(crop, connectivity=8)
+        for component_id in range(1, component_count):
+            x, y, w, h, area = (int(value) for value in stats[component_id])
+            if area < 2 or area > 1600:
+                continue
+            aspect = max(w / max(1, h), h / max(1, w))
+            long_horizontal_line = w >= 70 and h <= 6 and aspect >= 12
+            long_vertical_line = h >= 70 and w <= 6 and aspect >= 12
+            if long_horizontal_line or long_vertical_line:
+                continue
+            if w > 120 or h > 80:
+                continue
+            gx0 = ocr_box.x0 + x
+            gy0 = ocr_box.y0 + y
+            gx1 = gx0 + w
+            gy1 = gy0 + h
+            component_mask = component_labels[y : y + h, x : x + w] == component_id
+            text_pixels[gy0:gy1, gx0:gx1][component_mask] = 255
+            text_regions.append(
+                TextRegion(
+                    id=f"text_region_{len(text_regions) + 1:03d}",
+                    box=Box(gx0, gy0, gx1, gy1).padded(1, width, height),
+                    confidence=min(0.95, max(0.2, item.confidence)),
+                    reason="ocr_box_ink_text_component",
+                )
+            )
+
+    if np.any(text_pixels):
+        text_pixels = cv2.dilate(text_pixels, cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2)), iterations=1)
+    return text_pixels, text_regions
 
 
 def box_from_ocr_points(points: Iterable[Iterable[float]]) -> Box:
@@ -935,6 +1159,25 @@ def line_label_overlap_ratio(line: LineSegment, labels: list[DetectedLabel], pad
     return merged_span_length(spans) / max(1, line.length)
 
 
+def line_text_region_overlap_ratio(line: LineSegment, text_regions: list[TextRegion], padding: int = 3) -> float:
+    spans: list[tuple[int, int]] = []
+    axis = line_axis(line)
+    start, end = line_span(line)
+    for region in text_regions:
+        box = region.box.padded(padding, 10_000, 10_000)
+        if line.orientation == "h":
+            if box.y0 <= axis <= box.y1:
+                overlap = _overlap(start, end, box.x0, box.x1)
+                if overlap:
+                    spans.append((max(start, box.x0), min(end, box.x1)))
+        else:
+            if box.x0 <= axis <= box.x1:
+                overlap = _overlap(start, end, box.y0, box.y1)
+                if overlap:
+                    spans.append((max(start, box.y0), min(end, box.y1)))
+    return merged_span_length(spans) / max(1, line.length)
+
+
 def line_box_distance(line: LineSegment, box: Box) -> float:
     line_box = line.box
     dx = max(line_box.x0 - box.x1, box.x0 - line_box.x1, 0)
@@ -954,6 +1197,7 @@ def build_detected_wires(
     v_lines: list[LineSegment],
     labels: list[DetectedLabel],
     regions: PageRegions,
+    text_regions: list[TextRegion] | None = None,
 ) -> list[DetectedWire]:
     merged_h = merge_candidate_lines(
         h_lines,
@@ -981,6 +1225,7 @@ def build_detected_wires(
             continue
 
         label_overlap = line_label_overlap_ratio(line, labels)
+        text_overlap = line_text_region_overlap_ratio(line, text_regions or [])
         connection_count = count_line_connections(line, merged_h, merged_v)
         visible_coverage = line_ink_coverage(binary, line, half_width=5 if line.orientation == "v" else 4)
         accept = False
@@ -988,16 +1233,17 @@ def build_detected_wires(
         reason = "rejected"
 
         if line.orientation == "h":
-            if line.length >= 500 and label_overlap <= 0.25 and visible_coverage >= 0.35:
+            medium_text_threshold = 0.22 if line.length < 260 else 0.48
+            if line.length >= 500 and label_overlap <= 0.25 and text_overlap <= 0.75 and visible_coverage >= 0.35:
                 accept, confidence, reason = True, 0.9, "long_horizontal_bus"
-            elif line.length >= 130 and connection_count >= 2 and label_overlap <= 0.28 and visible_coverage >= 0.38:
+            elif line.length >= 130 and connection_count >= 2 and label_overlap <= 0.28 and text_overlap <= medium_text_threshold and visible_coverage >= 0.38:
                 accept, confidence, reason = True, 0.72, "connected_horizontal_wire"
-            elif line.length >= 80 and connection_count >= 1 and label_overlap <= 0.12 and visible_coverage >= 0.45:
+            elif line.length >= 80 and connection_count >= 1 and label_overlap <= 0.12 and text_overlap <= 0.10 and visible_coverage >= 0.45:
                 accept, confidence, reason = True, 0.55, "short_horizontal_branch"
         else:
-            if line.length >= 130 and label_overlap <= 0.78 and visible_coverage >= 0.35:
+            if line.length >= 130 and label_overlap <= 0.78 and text_overlap <= 0.90 and visible_coverage >= 0.35:
                 accept, confidence, reason = True, 0.78 if connection_count else 0.62, "long_vertical_wire"
-            elif line.length >= 70 and connection_count >= 1 and label_overlap <= 0.25 and visible_coverage >= 0.42:
+            elif line.length >= 70 and connection_count >= 1 and label_overlap <= 0.25 and text_overlap <= 0.45 and visible_coverage >= 0.42:
                 accept, confidence, reason = True, 0.56, "connected_vertical_drop"
 
         if not accept:
@@ -1203,7 +1449,14 @@ def write_json(path: Path, payload: dict | list) -> None:
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-def analyze_page(pdf_path: Path, page_number: int, dpi: int, out_dir: Path, run_ocr: bool) -> dict:
+def analyze_page(
+    pdf_path: Path,
+    page_number: int,
+    dpi: int,
+    out_dir: Path,
+    run_ocr: bool,
+    wire_text_mask: str = "none",
+) -> dict:
     page_dir = out_dir / f"page_{page_number:03d}"
     page_dir.mkdir(parents=True, exist_ok=True)
     image = render_page(pdf_path, page_number, dpi)
@@ -1214,10 +1467,119 @@ def analyze_page(pdf_path: Path, page_number: int, dpi: int, out_dir: Path, run_
     regions = detect_regions(width, height, base_h, base_v)
     h_lines, v_lines, restored_v_lines = build_initial_wire_candidates(binary, regions, width, height)
 
+    line_removed_binary = remove_line_pixels_from_binary(binary, h_lines, v_lines)
     line_removed_input = remove_line_mask_from_binary(binary, h_lines, v_lines)
-    ocr_results, ocr_status = run_easyocr(image, line_removed_input, regions, enabled=run_ocr)
+    ocr_results, ocr_status = run_easyocr(
+        image,
+        line_removed_input,
+        regions,
+        enabled=run_ocr
+        or wire_text_mask
+        in {
+            "ocr",
+            "components_ocr",
+            "ocr_erase",
+            "components_ocr_erase",
+            "ocr_pixel_erase",
+            "components_ocr_pixel_erase",
+            "ocr_component_erase",
+            "components_ocr_component_erase",
+            "ocr_box_ink_erase",
+            "components_ocr_box_ink_erase",
+        },
+    )
+    if wire_text_mask == "components":
+        text_regions = detect_text_regions_from_components(line_removed_binary, regions)
+    elif wire_text_mask == "ocr":
+        text_regions = detect_text_regions_from_ocr_results(ocr_results, width, height)
+    elif wire_text_mask == "components_ocr":
+        component_regions = detect_text_regions_from_components(line_removed_binary, regions)
+        ocr_regions = detect_text_regions_from_ocr_results(ocr_results, width, height)
+        text_regions = [
+            TextRegion(
+                id=f"text_region_{index:03d}",
+                box=region.box,
+                confidence=region.confidence,
+                reason=region.reason,
+            )
+            for index, region in enumerate([*component_regions, *ocr_regions], start=1)
+        ]
+    elif wire_text_mask == "ocr_erase":
+        text_regions = detect_text_regions_from_ocr_results(ocr_results, width, height)
+        binary = erase_text_regions_from_binary(binary, text_regions)
+        h_lines, v_lines, restored_v_lines = build_initial_wire_candidates(binary, regions, width, height)
+    elif wire_text_mask == "components_ocr_erase":
+        component_regions = detect_text_regions_from_components(line_removed_binary, regions)
+        ocr_regions = detect_text_regions_from_ocr_results(ocr_results, width, height)
+        text_regions = [
+            TextRegion(
+                id=f"text_region_{index:03d}",
+                box=region.box,
+                confidence=region.confidence,
+                reason=region.reason,
+            )
+            for index, region in enumerate([*component_regions, *ocr_regions], start=1)
+        ]
+        binary = erase_text_regions_from_binary(binary, text_regions)
+        h_lines, v_lines, restored_v_lines = build_initial_wire_candidates(binary, regions, width, height)
+    elif wire_text_mask == "ocr_pixel_erase":
+        text_regions = detect_text_regions_from_ocr_results(ocr_results, width, height)
+        binary = erase_text_pixels_from_binary(binary, line_removed_binary, text_regions)
+        h_lines, v_lines, restored_v_lines = build_initial_wire_candidates(binary, regions, width, height)
+    elif wire_text_mask == "components_ocr_pixel_erase":
+        component_regions = detect_text_regions_from_components(line_removed_binary, regions)
+        ocr_regions = detect_text_regions_from_ocr_results(ocr_results, width, height)
+        text_regions = [
+            TextRegion(
+                id=f"text_region_{index:03d}",
+                box=region.box,
+                confidence=region.confidence,
+                reason=region.reason,
+            )
+            for index, region in enumerate([*component_regions, *ocr_regions], start=1)
+        ]
+        binary = erase_text_pixels_from_binary(binary, line_removed_binary, text_regions)
+        h_lines, v_lines, restored_v_lines = build_initial_wire_candidates(binary, regions, width, height)
+    elif wire_text_mask == "ocr_component_erase":
+        text_pixel_mask, text_regions = detect_ocr_text_components(line_removed_binary, ocr_results, width, height)
+        binary = erase_text_pixels_from_binary(binary, text_pixel_mask, text_regions)
+        h_lines, v_lines, restored_v_lines = build_initial_wire_candidates(binary, regions, width, height)
+    elif wire_text_mask == "components_ocr_component_erase":
+        component_regions = detect_text_regions_from_components(line_removed_binary, regions)
+        text_pixel_mask, ocr_component_regions = detect_ocr_text_components(line_removed_binary, ocr_results, width, height)
+        text_regions = [
+            TextRegion(
+                id=f"text_region_{index:03d}",
+                box=region.box,
+                confidence=region.confidence,
+                reason=region.reason,
+            )
+            for index, region in enumerate([*component_regions, *ocr_component_regions], start=1)
+        ]
+        binary = erase_text_pixels_from_binary(binary, text_pixel_mask, ocr_component_regions)
+        h_lines, v_lines, restored_v_lines = build_initial_wire_candidates(binary, regions, width, height)
+    elif wire_text_mask == "ocr_box_ink_erase":
+        text_pixel_mask, text_regions = detect_ocr_box_ink_text_pixels(binary, ocr_results, width, height)
+        binary = erase_text_pixels_from_binary(binary, text_pixel_mask, text_regions)
+        h_lines, v_lines, restored_v_lines = build_initial_wire_candidates(binary, regions, width, height)
+    elif wire_text_mask == "components_ocr_box_ink_erase":
+        component_regions = detect_text_regions_from_components(line_removed_binary, regions)
+        text_pixel_mask, ocr_box_regions = detect_ocr_box_ink_text_pixels(binary, ocr_results, width, height)
+        text_regions = [
+            TextRegion(
+                id=f"text_region_{index:03d}",
+                box=region.box,
+                confidence=region.confidence,
+                reason=region.reason,
+            )
+            for index, region in enumerate([*component_regions, *ocr_box_regions], start=1)
+        ]
+        binary = erase_text_pixels_from_binary(binary, text_pixel_mask, ocr_box_regions)
+        h_lines, v_lines, restored_v_lines = build_initial_wire_candidates(binary, regions, width, height)
+    else:
+        text_regions = []
     labels = build_detected_labels(ocr_results)
-    wires = build_detected_wires(binary, h_lines, v_lines, labels, regions)
+    wires = build_detected_wires(binary, h_lines, v_lines, labels, regions, text_regions=text_regions)
     graph = build_connection_graph(wires, labels)
 
     accepted_labels = [label for label in labels if label.accepted]
@@ -1250,6 +1612,15 @@ def analyze_page(pdf_path: Path, page_number: int, dpi: int, out_dir: Path, run_
         },
     )
     write_json(
+        page_dir / "detected_text_regions.json",
+        {
+            **common,
+            "wire_text_mask": wire_text_mask,
+            "text_region_count": len(text_regions),
+            "text_regions": [asdict(region) for region in text_regions],
+        },
+    )
+    write_json(
         page_dir / "connection_graph.json",
         {
             **common,
@@ -1259,6 +1630,7 @@ def analyze_page(pdf_path: Path, page_number: int, dpi: int, out_dir: Path, run_
             "edge_count": len(graph["edges"]),
             "wires": [asdict(wire) for wire in wires],
             "labels": [asdict(label) for label in accepted_labels],
+            "text_regions": [asdict(region) for region in text_regions],
             "nodes": graph["nodes"],
             "edges": graph["edges"],
         },
@@ -1286,6 +1658,8 @@ def analyze_page(pdf_path: Path, page_number: int, dpi: int, out_dir: Path, run_
         "vertical_candidate_count": len(v_lines),
         "restored_vertical_segment_count": len(restored_v_lines),
         "ocr_status": ocr_status,
+        "wire_text_mask": wire_text_mask,
+        "detected_text_region_count": len(text_regions),
         "ocr_result_count": len(ocr_results),
         "detected_wire_count": len(wires),
         "detected_horizontal_wire_count": sum(wire.orientation == "h" for wire in wires),
@@ -1304,6 +1678,7 @@ def analyze_page(pdf_path: Path, page_number: int, dpi: int, out_dir: Path, run_
             "final_extraction_review": str(page_dir / "final_extraction_review.png"),
             "detected_wires": str(page_dir / "detected_wires.json"),
             "detected_labels": str(page_dir / "detected_labels.json"),
+            "detected_text_regions": str(page_dir / "detected_text_regions.json"),
             "connection_graph": str(page_dir / "connection_graph.json"),
             "summary": str(page_dir / "summary.json"),
         },
@@ -1319,6 +1694,24 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dpi", type=int, default=200)
     parser.add_argument("--out-dir", type=Path, default=DEFAULT_OUT_DIR)
     parser.add_argument("--ocr", choices=("none", "easyocr"), default="none")
+    parser.add_argument(
+        "--wire-text-mask",
+        choices=(
+            "none",
+            "components",
+            "ocr",
+            "components_ocr",
+            "ocr_erase",
+            "components_ocr_erase",
+            "ocr_pixel_erase",
+            "components_ocr_pixel_erase",
+            "ocr_component_erase",
+            "components_ocr_component_erase",
+            "ocr_box_ink_erase",
+            "components_ocr_box_ink_erase",
+        ),
+        default="none",
+    )
     parser.add_argument("--print", choices=("summary", "full", "none"), default="summary")
     return parser.parse_args()
 
@@ -1330,7 +1723,14 @@ def main() -> None:
             f"PDF not found: {args.pdf}. Pass --pdf or set {PDF_ENV_VAR}; "
             "do not commit private PDFs or generated artifacts."
         )
-    summary = analyze_page(args.pdf, args.page, args.dpi, args.out_dir, run_ocr=args.ocr == "easyocr")
+    summary = analyze_page(
+        args.pdf,
+        args.page,
+        args.dpi,
+        args.out_dir,
+        run_ocr=args.ocr == "easyocr",
+        wire_text_mask=args.wire_text_mask,
+    )
     if args.print == "none":
         return
     if args.print == "full":
@@ -1341,6 +1741,8 @@ def main() -> None:
         "page": summary["page"],
         "dpi": summary["dpi"],
         "ocr_status": summary["ocr_status"],
+        "wire_text_mask": summary["wire_text_mask"],
+        "detected_text_region_count": summary["detected_text_region_count"],
         "detected_wire_count": summary["detected_wire_count"],
         "detected_horizontal_wire_count": summary["detected_horizontal_wire_count"],
         "detected_vertical_wire_count": summary["detected_vertical_wire_count"],

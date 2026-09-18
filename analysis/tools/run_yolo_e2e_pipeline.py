@@ -67,12 +67,19 @@ def parse_pages(values: list[str]) -> list[int]:
     return sorted(pages)
 
 
-def ensure_analysis_outputs(pdf: Path, pages: list[int], analysis_root: Path, dpi: int, run_ocr: bool) -> None:
+def ensure_analysis_outputs(
+    pdf: Path,
+    pages: list[int],
+    analysis_root: Path,
+    dpi: int,
+    run_ocr: bool,
+    wire_text_mask: str,
+) -> None:
     for page in pages:
         page_dir = analysis_root / f"page_{page:03d}"
         if (page_dir / "connection_graph.json").exists() and (page_dir / "base.png").exists():
             continue
-        analyze_page(pdf, page, dpi, analysis_root, run_ocr=run_ocr)
+        analyze_page(pdf, page, dpi, analysis_root, run_ocr=run_ocr, wire_text_mask=wire_text_mask)
 
 
 def box_center(box: dict[str, int | float]) -> tuple[float, float]:
@@ -137,6 +144,127 @@ def filter_symbols_by_label_overlap(
             continue
         filtered.append(symbol)
     return filtered, removed
+
+
+def line_box_overlap_ratio(
+    wire: dict[str, Any],
+    box: dict[str, int | float],
+    *,
+    padding: float = 0.0,
+) -> float:
+    start, end = wire_points(wire)
+    length = abs(float(end[0]) - float(start[0])) + abs(float(end[1]) - float(start[1]))
+    if length <= 0:
+        return 0.0
+    if str(wire.get("orientation") or "") == "h" or abs(float(end[0]) - float(start[0])) >= abs(float(end[1]) - float(start[1])):
+        axis = (float(start[1]) + float(end[1])) / 2
+        if not (float(box["y0"]) - padding <= axis <= float(box["y1"]) + padding):
+            return 0.0
+        span_start, span_end = sorted((float(start[0]), float(end[0])))
+        overlap = max(0.0, min(span_end, float(box["x1"]) + padding) - max(span_start, float(box["x0"]) - padding))
+        return overlap / length
+    axis = (float(start[0]) + float(end[0])) / 2
+    if not (float(box["x0"]) - padding <= axis <= float(box["x1"]) + padding):
+        return 0.0
+    span_start, span_end = sorted((float(start[1]), float(end[1])))
+    overlap = max(0.0, min(span_end, float(box["y1"]) + padding) - max(span_start, float(box["y0"]) - padding))
+    return overlap / length
+
+
+def filter_wires_by_other_symbol_mask(
+    payload: dict[str, Any],
+    symbols: list[dict[str, Any]],
+    *,
+    mode: str,
+    confidence_threshold: float,
+    overlap_threshold: float,
+    min_area_ratio: float,
+    max_area_ratio: float,
+    min_aspect_ratio: float,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    if mode == "none":
+        return payload, {"mode": mode, "enabled": False}
+
+    width = int(payload["image_size"]["width"])
+    height = int(payload["image_size"]["height"])
+    page_area = max(1.0, float(width * height))
+    blockers: list[dict[str, Any]] = []
+    for symbol in symbols:
+        class_name = str(symbol.get("class_name") or symbol.get("type") or "")
+        if class_name != "other" or float(symbol.get("confidence") or 0.0) < confidence_threshold:
+            continue
+        box = symbol.get("bbox")
+        if not box:
+            continue
+        area_ratio = box_area(box) / page_area
+        box_width = max(1.0, float(box["x1"]) - float(box["x0"]))
+        box_height = max(1.0, float(box["y1"]) - float(box["y0"]))
+        aspect_ratio = box_width / box_height
+        if area_ratio < min_area_ratio or area_ratio > max_area_ratio or aspect_ratio < min_aspect_ratio:
+            continue
+        blockers.append({"symbol_id": symbol["id"], "box": box, "area_ratio": round(area_ratio, 4), "aspect_ratio": round(aspect_ratio, 3)})
+
+    if not blockers:
+        return payload, {
+            "mode": mode,
+            "enabled": True,
+            "blocker_count": 0,
+            "removed_wire_count": 0,
+            "removed_edge_count": 0,
+            "removed_node_count": 0,
+        }
+
+    removed_wire_ids: set[str] = set()
+    removed_by_reason: Counter[str] = Counter()
+    for wire in payload.get("wires", []):
+        orientation = str(wire.get("orientation") or "")
+        if mode == "io-card-horizontal" and orientation != "h":
+            continue
+        max_overlap = max((line_box_overlap_ratio(wire, blocker["box"]) for blocker in blockers), default=0.0)
+        if max_overlap >= overlap_threshold:
+            removed_wire_ids.add(str(wire["id"]))
+            removed_by_reason[f"{mode}_overlap"] += 1
+
+    if not removed_wire_ids:
+        return payload, {
+            "mode": mode,
+            "enabled": True,
+            "blocker_count": len(blockers),
+            "removed_wire_count": 0,
+            "removed_edge_count": 0,
+            "removed_node_count": 0,
+            "blockers": blockers,
+        }
+
+    original_edges = list(payload.get("edges", []))
+    kept_edges = [edge for edge in original_edges if str(edge.get("wire_id") or "") not in removed_wire_ids]
+    kept_node_ids = {
+        str(edge.get("from_node_id"))
+        for edge in kept_edges
+        if edge.get("from_node_id") is not None
+    } | {
+        str(edge.get("to_node_id"))
+        for edge in kept_edges
+        if edge.get("to_node_id") is not None
+    }
+    kept_nodes = [node for node in payload.get("nodes", []) if str(node.get("id")) in kept_node_ids]
+    filtered_payload = {
+        **payload,
+        "wires": [wire for wire in payload.get("wires", []) if str(wire.get("id")) not in removed_wire_ids],
+        "edges": kept_edges,
+        "nodes": kept_nodes,
+    }
+    return filtered_payload, {
+        "mode": mode,
+        "enabled": True,
+        "blocker_count": len(blockers),
+        "removed_wire_count": len(removed_wire_ids),
+        "removed_edge_count": len(original_edges) - len(kept_edges),
+        "removed_node_count": len(payload.get("nodes", [])) - len(kept_nodes),
+        "removed_by_reason": dict(sorted(removed_by_reason.items())),
+        "removed_wire_ids": sorted(removed_wire_ids),
+        "blockers": blockers,
+    }
 
 
 def min_overlap_ratio(a: dict[str, int | float], b: dict[str, int | float]) -> float:
@@ -387,11 +515,13 @@ def augment_symbols_with_gold(
     symbols: list[dict[str, Any]],
     *,
     project: dict[str, Any] | None,
-    classes: set[str],
+    classes: set[str] | None,
     iou_threshold: float,
     min_overlap_threshold: float,
     unmatched_yolo: str,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    if classes is None:
+        return symbols, {"enabled": False, "reason": "disabled"}
     if project is None:
         return symbols, {"enabled": False}
 
@@ -1451,7 +1581,7 @@ def process_page(
     gold_project: dict[str, Any] | None,
     annotated_sheets: set[str],
     external_reference_source: str,
-    gold_symbol_classes: set[str],
+    gold_symbol_classes: set[str] | None,
     gold_match_iou: float,
     gold_match_min_overlap: float,
     gold_unmatched_yolo: str,
@@ -1464,6 +1594,12 @@ def process_page(
     junction_node_policy: str,
     junction_node_classes: set[str],
     junction_node_threshold: float,
+    other_wire_mask: str,
+    other_wire_mask_confidence: float,
+    other_wire_mask_overlap: float,
+    other_wire_mask_min_area_ratio: float,
+    other_wire_mask_max_area_ratio: float,
+    other_wire_mask_min_aspect_ratio: float,
 ) -> dict[str, Any]:
     page_dir = analysis_root / f"page_{page:03d}"
     payload = build_final_output_from_analysis(page_dir, "validation_pdf_with_yolo")
@@ -1511,6 +1647,16 @@ def process_page(
         scale=symbol_ocr_scale,
         allowlist=symbol_ocr_allowlist,
         label_source=symbol_label_source,
+    )
+    payload, other_wire_mask_info = filter_wires_by_other_symbol_mask(
+        payload,
+        symbols,
+        mode=other_wire_mask,
+        confidence_threshold=other_wire_mask_confidence,
+        overlap_threshold=other_wire_mask_overlap,
+        min_area_ratio=other_wire_mask_min_area_ratio,
+        max_area_ratio=other_wire_mask_max_area_ratio,
+        min_aspect_ratio=other_wire_mask_min_aspect_ratio,
     )
     inferred_terminal_config = port_inference_config(inferred_terminal_config_name)
     payload = enrich_symbols_and_graph(
@@ -1579,6 +1725,8 @@ def process_page(
                 "input_preprocessing": preprocess_info,
                 "class_names": model_names,
             },
+            "wire_text_mask": payload.get("quality", {}).get("wire_text_mask"),
+            "other_wire_mask": other_wire_mask_info,
             "symbol_label_ocr": {
                 "engine": symbol_ocr_engine,
                 "classes": sorted(symbol_ocr_classes),
@@ -1629,6 +1777,11 @@ def parse_args() -> argparse.Namespace:
         help="build page-continuation nodes from annotated other symbols whose label is ERxxxxxへ",
     )
     parser.add_argument("--gold-symbol-classes", nargs="*", default=[])
+    parser.add_argument(
+        "--disable-gold-symbol-assist",
+        action="store_true",
+        help="do not replace or supplement YOLO detections with annotation symbols",
+    )
     parser.add_argument("--gold-match-iou", type=float, default=0.25)
     parser.add_argument("--gold-match-min-overlap", type=float, default=0.65)
     parser.add_argument("--gold-unmatched-yolo", choices=("keep", "drop"), default="keep")
@@ -1652,6 +1805,30 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--junction-node-classes", nargs="*", default=["junction"])
     parser.add_argument("--junction-node-threshold", type=float, default=24.0)
     parser.add_argument("--dpi", type=int, default=200)
+    parser.add_argument(
+        "--wire-text-mask",
+        choices=(
+            "none",
+            "components",
+            "ocr",
+            "components_ocr",
+            "ocr_erase",
+            "components_ocr_erase",
+            "ocr_pixel_erase",
+            "components_ocr_pixel_erase",
+            "ocr_component_erase",
+            "components_ocr_component_erase",
+            "ocr_box_ink_erase",
+            "components_ocr_box_ink_erase",
+        ),
+        default="none",
+    )
+    parser.add_argument("--other-wire-mask", choices=("none", "io-card-horizontal"), default="none")
+    parser.add_argument("--other-wire-mask-confidence", type=float, default=0.85)
+    parser.add_argument("--other-wire-mask-overlap", type=float, default=0.85)
+    parser.add_argument("--other-wire-mask-min-area-ratio", type=float, default=0.005)
+    parser.add_argument("--other-wire-mask-max-area-ratio", type=float, default=0.08)
+    parser.add_argument("--other-wire-mask-min-aspect-ratio", type=float, default=2.0)
     parser.add_argument("--imgsz", type=int, default=640)
     parser.add_argument("--conf", type=float, default=0.05)
     parser.add_argument("--iou", type=float, default=0.45)
@@ -1706,7 +1883,14 @@ def main() -> None:
 
         symbol_ocr_reader = RapidOCR()
 
-    ensure_analysis_outputs(args.pdf, pages, args.analysis_root, args.dpi, run_ocr=not args.skip_ocr)
+    ensure_analysis_outputs(
+        args.pdf,
+        pages,
+        args.analysis_root,
+        args.dpi,
+        run_ocr=not args.skip_ocr,
+        wire_text_mask=args.wire_text_mask,
+    )
     page_summaries = [
         process_page(
             page,
@@ -1733,7 +1917,7 @@ def main() -> None:
             gold_project=project_by_sheet.get(page_sheet_map.get(str(page), "")),
             annotated_sheets=annotated_sheets,
             external_reference_source=args.external_reference_source,
-            gold_symbol_classes=set(args.gold_symbol_classes),
+            gold_symbol_classes=None if args.disable_gold_symbol_assist else set(args.gold_symbol_classes),
             gold_match_iou=args.gold_match_iou,
             gold_match_min_overlap=args.gold_match_min_overlap,
             gold_unmatched_yolo=args.gold_unmatched_yolo,
@@ -1746,6 +1930,12 @@ def main() -> None:
             junction_node_policy=args.junction_node_policy,
             junction_node_classes=set(args.junction_node_classes),
             junction_node_threshold=args.junction_node_threshold,
+            other_wire_mask=args.other_wire_mask,
+            other_wire_mask_confidence=args.other_wire_mask_confidence,
+            other_wire_mask_overlap=args.other_wire_mask_overlap,
+            other_wire_mask_min_area_ratio=args.other_wire_mask_min_area_ratio,
+            other_wire_mask_max_area_ratio=args.other_wire_mask_max_area_ratio,
+            other_wire_mask_min_aspect_ratio=args.other_wire_mask_min_aspect_ratio,
         )
         for page in pages
     ]
@@ -1756,6 +1946,15 @@ def main() -> None:
         "pages": pages,
         "model": str(args.model),
         "annotation_zip": str(args.annotation_zip) if args.annotation_zip else None,
+        "wire_text_mask": args.wire_text_mask,
+        "other_wire_mask": {
+            "mode": args.other_wire_mask,
+            "confidence": args.other_wire_mask_confidence,
+            "overlap": args.other_wire_mask_overlap,
+            "min_area_ratio": args.other_wire_mask_min_area_ratio,
+            "max_area_ratio": args.other_wire_mask_max_area_ratio,
+            "min_aspect_ratio": args.other_wire_mask_min_aspect_ratio,
+        },
         "page_sheet_map": page_sheet_map,
         "page_summaries": page_summaries,
         "notes": [

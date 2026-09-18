@@ -37,6 +37,24 @@ def write_json(path: Path, payload: Any) -> None:
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def resolve_artifact_path(value: str | Path) -> Path:
+    path = Path(value)
+    if path.exists():
+        return path
+
+    normalized = str(value).replace("\\", "/")
+    replacements = [
+        ("data/private/analysis/", "private/results/pdf_structure/"),
+        ("data/private/e2e_yolo/", "private/results/e2e/"),
+    ]
+    for old, new in replacements:
+        if normalized.startswith(old):
+            candidate = Path(new + normalized[len(old) :])
+            if candidate.exists():
+                return candidate
+    return path
+
+
 def parse_mapping(items: list[str]) -> dict[str, str]:
     mapping: dict[str, str] = {}
     for item in items:
@@ -126,9 +144,8 @@ def is_four_port_symbol(class_name: str, box: dict[str, int | float], four_port_
     return class_name in {"contact_a", "contact_b"} and height >= four_port_height_px
 
 
-def candidate_key(candidate: dict[str, Any], grid: float = 3.0) -> tuple[str, int, int]:
+def candidate_key(candidate: dict[str, Any], grid: float = 3.0) -> tuple[int, int]:
     return (
-        str(candidate.get("wire_id") or ""),
         round(float(candidate["point"][0]) / grid),
         round(float(candidate["point"][1]) / grid),
     )
@@ -157,6 +174,10 @@ def infer_ports_for_symbol(
     four_port = is_four_port_symbol(class_name, box, float(config["four_port_height_px"]))
     require_point_on_wire_span = bool(config.get("require_point_on_wire_span", True))
     two_port_contact_orientation = str(config.get("two_port_contact_orientation", "all"))
+    contact_outer_terminal_margin_px = float(config.get("contact_outer_terminal_margin_px", 0.0))
+    contact_max_wire_axes = int(config.get("contact_max_wire_axes", 0) or 0)
+    contact_min_terminal_rel_x = config.get("contact_min_terminal_rel_x")
+    contact_max_terminal_rel_x = config.get("contact_max_terminal_rel_x")
 
     candidates: list[dict[str, Any]] = []
     for wire in wires:
@@ -178,6 +199,13 @@ def infer_ports_for_symbol(
                 continue
             if mode == "bbox_edge":
                 points = [(clamp(axis, x0, x1), y0), (clamp(axis, x0, x1), y1)]
+            elif class_name in {"contact_a", "contact_b"} and contact_outer_terminal_margin_px > 0 and not four_port:
+                y_values = [y0 - contact_outer_terminal_margin_px, y0 + 0.32 * height, y0 + 0.68 * height, y1 + contact_outer_terminal_margin_px]
+                points = [
+                    (clamp(axis, x0, x1), y)
+                    for y in y_values
+                    if not require_point_on_wire_span or span_start - margin_px <= y <= span_end + margin_px
+                ]
             else:
                 points = [
                     (clamp(axis, x0, x1), y0 + ratio * height)
@@ -193,6 +221,13 @@ def infer_ports_for_symbol(
                 continue
             if mode == "bbox_edge":
                 points = [(x0, clamp(axis, y0, y1)), (x1, clamp(axis, y0, y1))]
+            elif class_name in {"contact_a", "contact_b"} and contact_outer_terminal_margin_px > 0 and not four_port:
+                x_values = [x0 - contact_outer_terminal_margin_px, x0 + 0.32 * width, x0 + 0.68 * width, x1 + contact_outer_terminal_margin_px]
+                points = [
+                    (x, clamp(axis, y0, y1))
+                    for x in x_values
+                    if not require_point_on_wire_span or span_start - margin_px <= x <= span_end + margin_px
+                ]
             else:
                 points = [
                     (x0 + ratio * width, clamp(axis, y0, y1))
@@ -221,7 +256,36 @@ def infer_ports_for_symbol(
                 }
             )
 
-    deduped: dict[tuple[str, int, int], dict[str, Any]] = {}
+    if class_name in {"contact_a", "contact_b"} and (
+        contact_min_terminal_rel_x is not None or contact_max_terminal_rel_x is not None
+    ):
+        filtered_candidates = []
+        for candidate in candidates:
+            rel_x = (float(candidate["point"][0]) - x0) / width
+            if contact_min_terminal_rel_x is not None and rel_x < float(contact_min_terminal_rel_x):
+                continue
+            if contact_max_terminal_rel_x is not None and rel_x > float(contact_max_terminal_rel_x):
+                continue
+            filtered_candidates.append(candidate)
+        candidates = filtered_candidates
+
+    if class_name in {"contact_a", "contact_b"} and not four_port and contact_max_wire_axes > 0:
+        by_wire: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        for candidate in candidates:
+            by_wire[str(candidate.get("wire_id") or "")].append(candidate)
+        ranked_wires = sorted(
+            by_wire.items(),
+            key=lambda item: (
+                -sum(float(candidate.get("ink_ratio") or 0.0) for candidate in item[1]),
+                -max(float(candidate.get("wire_visible_coverage") or 0.0) for candidate in item[1]),
+                -len(item[1]),
+                item[0],
+            ),
+        )
+        allowed_wire_ids = {wire_id for wire_id, _items in ranked_wires[:contact_max_wire_axes]}
+        candidates = [candidate for candidate in candidates if str(candidate.get("wire_id") or "") in allowed_wire_ids]
+
+    deduped: dict[tuple[int, int], dict[str, Any]] = {}
     for candidate in candidates:
         key = candidate_key(candidate)
         previous = deduped.get(key)
@@ -353,7 +417,7 @@ def evaluate_page(
     out_dir: Path,
 ) -> dict[str, Any]:
     payload = read_json(page_dir / "final_output.json")
-    source_image = Image.open(payload["source"]["base_image"]).convert("RGB")
+    source_image = Image.open(resolve_artifact_path(payload["source"]["base_image"])).convert("RGB")
     wires = payload.get("wires", [])
     gold_symbols = gold_symbols_from_project(project, target_classes)
 
@@ -526,8 +590,13 @@ def default_configs() -> list[dict[str, Any]]:
         {**base, "name": "template_confident_relaxed_span_ink02", "mode": "template", "min_wire_confidence": 0.7, "min_visible_coverage": 0.75, "min_ink_ratio": 0.02, "require_point_on_wire_span": False},
         {**base, "name": "template_confident_v2_vertical_ink02", "mode": "template", "min_wire_confidence": 0.7, "min_visible_coverage": 0.75, "min_ink_ratio": 0.02, "two_port_contact_orientation": "vertical"},
         {**base, "name": "template_confident_v2_vertical_relaxed_span_ink02", "mode": "template", "min_wire_confidence": 0.7, "min_visible_coverage": 0.75, "min_ink_ratio": 0.02, "two_port_contact_orientation": "vertical", "require_point_on_wire_span": False},
+        {**base, "name": "template_confident_relaxed_span_ink02_contact_left65", "mode": "template", "min_wire_confidence": 0.7, "min_visible_coverage": 0.75, "min_ink_ratio": 0.02, "require_point_on_wire_span": False, "contact_max_terminal_rel_x": 0.65},
+        {**base, "name": "template_confident_v2_vertical_relaxed_span_ink02_contact_two_port", "mode": "template", "min_wire_confidence": 0.7, "min_visible_coverage": 0.75, "min_ink_ratio": 0.02, "two_port_contact_orientation": "vertical", "require_point_on_wire_span": False, "four_port_height_px": 9999},
+        {**base, "name": "template_confident_v2_vertical_relaxed_span_ink02_contact_one_axis", "mode": "template", "min_wire_confidence": 0.7, "min_visible_coverage": 0.75, "min_ink_ratio": 0.02, "two_port_contact_orientation": "vertical", "require_point_on_wire_span": False, "four_port_height_px": 9999, "contact_max_wire_axes": 1},
         {**base, "name": "template_ink", "mode": "template", "min_ink_ratio": 0.05},
         {**base, "name": "template_confident_ink", "mode": "template", "min_wire_confidence": 0.7, "min_visible_coverage": 0.75, "min_ink_ratio": 0.05},
+        {**base, "name": "template_confident_relaxed_span_contact_outer8_ink02", "mode": "template", "min_wire_confidence": 0.7, "min_visible_coverage": 0.75, "min_ink_ratio": 0.02, "require_point_on_wire_span": False, "contact_outer_terminal_margin_px": 8},
+        {**base, "name": "template_confident_relaxed_span_contact_outer12_ink02", "mode": "template", "min_wire_confidence": 0.7, "min_visible_coverage": 0.75, "min_ink_ratio": 0.02, "require_point_on_wire_span": False, "contact_outer_terminal_margin_px": 12},
     ]
 
 

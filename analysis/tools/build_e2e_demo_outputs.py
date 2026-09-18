@@ -157,6 +157,7 @@ def build_final_output_from_analysis(page_dir: Path, source_type: str) -> dict[s
     ]
     graph_for_connections = {**graph_json, "wires": wires}
     connections = build_connection_candidates(graph_for_connections, labels)
+    text_regions = graph_json.get("text_regions", [])
 
     return {
         "schema_version": "todensekkei.sequence_extraction.demo.v1",
@@ -173,6 +174,7 @@ def build_final_output_from_analysis(page_dir: Path, source_type: str) -> dict[s
         "regions": summary.get("regions", {}),
         "symbols": [],
         "labels": labels,
+        "text_regions": text_regions,
         "wires": wires,
         "nodes": graph_json.get("nodes", []),
         "edges": graph_json.get("edges", []),
@@ -189,6 +191,8 @@ def build_final_output_from_analysis(page_dir: Path, source_type: str) -> dict[s
             "wire_visible_coverage_min": summary.get("wire_visible_coverage_min"),
             "wire_visible_coverage_avg": summary.get("wire_visible_coverage_avg"),
             "ocr_status": summary.get("ocr_status"),
+            "wire_text_mask": summary.get("wire_text_mask", "none"),
+            "detected_text_region_count": summary.get("detected_text_region_count", 0),
         },
         "notes": [
             "symbols is empty for validation PDF because real symbol classes and trained detector are pending.",

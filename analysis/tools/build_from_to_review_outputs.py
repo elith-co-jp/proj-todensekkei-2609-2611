@@ -35,6 +35,26 @@ def write_json(path: Path, payload: Any) -> None:
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def resolve_artifact_path(value: str | Path) -> Path:
+    path = Path(value)
+    if path.exists():
+        return path
+
+    normalized = str(value).replace("\\", "/")
+    replacements = [
+        ("data/private/analysis/", "private/results/pdf_structure/"),
+        ("data/private/e2e_yolo/", "private/results/e2e/"),
+        ("data/private/yolo/", "private/training/yolo/"),
+        ("data/private/annotation_fixes/", "private/inputs/annotation_fixes/"),
+    ]
+    for old, new in replacements:
+        if normalized.startswith(old):
+            candidate = Path(new + normalized[len(old) :])
+            if candidate.exists():
+                return candidate
+    return path
+
+
 def parse_mapping(items: list[str]) -> dict[str, str]:
     mapping: dict[str, str] = {}
     for item in items:
@@ -82,6 +102,95 @@ def segment_orientation(start: tuple[float, float], end: tuple[float, float]) ->
 
 def segment_bounds(start: tuple[float, float], end: tuple[float, float]) -> tuple[float, float, float, float]:
     return min(start[0], end[0]), min(start[1], end[1]), max(start[0], end[0]), max(start[1], end[1])
+
+
+def merged_span_length(spans: list[tuple[int, int]]) -> int:
+    if not spans:
+        return 0
+    ordered = sorted(spans)
+    merged = [ordered[0]]
+    for start, end in ordered[1:]:
+        if start > merged[-1][1]:
+            merged.append((start, end))
+        else:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+    return sum(end - start for start, end in merged)
+
+
+def payload_box(item: dict[str, Any]) -> dict[str, float] | None:
+    box = item.get("box") or item.get("bbox")
+    if not box:
+        return None
+    try:
+        return {
+            "x0": float(box["x0"]),
+            "y0": float(box["y0"]),
+            "x1": float(box["x1"]),
+            "y1": float(box["y1"]),
+        }
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def segment_text_overlap_ratio(
+    start: tuple[float, float],
+    end: tuple[float, float],
+    text_regions: list[dict[str, Any]],
+    *,
+    padding: float = 3.0,
+) -> float:
+    length = abs(end[0] - start[0]) + abs(end[1] - start[1])
+    if length <= 0:
+        return 0.0
+    spans: list[tuple[int, int]] = []
+    if abs(end[0] - start[0]) >= abs(end[1] - start[1]):
+        axis = (start[1] + end[1]) / 2
+        span_start, span_end = sorted((start[0], end[0]))
+        for region in text_regions:
+            box = payload_box(region)
+            if not box:
+                continue
+            if float(box["y0"]) - padding <= axis <= float(box["y1"]) + padding:
+                overlap = max(0.0, min(span_end, float(box["x1"]) + padding) - max(span_start, float(box["x0"]) - padding))
+                if overlap:
+                    spans.append((round(max(span_start, float(box["x0"]) - padding)), round(min(span_end, float(box["x1"]) + padding))))
+    else:
+        axis = (start[0] + end[0]) / 2
+        span_start, span_end = sorted((start[1], end[1]))
+        for region in text_regions:
+            box = payload_box(region)
+            if not box:
+                continue
+            if float(box["x0"]) - padding <= axis <= float(box["x1"]) + padding:
+                overlap = max(0.0, min(span_end, float(box["y1"]) + padding) - max(span_start, float(box["y0"]) - padding))
+                if overlap:
+                    spans.append((round(max(span_start, float(box["y0"]) - padding)), round(min(span_end, float(box["y1"]) + padding))))
+    return merged_span_length(spans) / max(1.0, length)
+
+
+def segment_box_overlap_ratio(
+    start: tuple[float, float],
+    end: tuple[float, float],
+    box: dict[str, float],
+    *,
+    padding: float = 0.0,
+) -> float:
+    length = abs(end[0] - start[0]) + abs(end[1] - start[1])
+    if length <= 0:
+        return 0.0
+    if abs(end[0] - start[0]) >= abs(end[1] - start[1]):
+        axis = (start[1] + end[1]) / 2
+        span_start, span_end = sorted((start[0], end[0]))
+        if not (float(box["y0"]) - padding <= axis <= float(box["y1"]) + padding):
+            return 0.0
+        overlap = max(0.0, min(span_end, float(box["x1"]) + padding) - max(span_start, float(box["x0"]) - padding))
+        return overlap / max(1.0, length)
+    axis = (start[0] + end[0]) / 2
+    span_start, span_end = sorted((start[1], end[1]))
+    if not (float(box["x0"]) - padding <= axis <= float(box["x1"]) + padding):
+        return 0.0
+    overlap = max(0.0, min(span_end, float(box["y1"]) + padding) - max(span_start, float(box["y0"]) - padding))
+    return overlap / max(1.0, length)
 
 
 def metric(tp: int, fp: int, fn: int) -> dict[str, int | float | None]:
@@ -351,6 +460,7 @@ def make_predicted_terminals(
                         "class_name": class_name,
                         "point": point,
                         "wire_id": link.get("wire_id"),
+                        "wire_id_hint": terminal.get("wire_id_hint"),
                         "node_id": link.get("node_id"),
                         "link_index": link_index,
                     }
@@ -396,18 +506,31 @@ def build_predicted_graph_pairs(
     wire_gap_bridge_terminal_anchor_threshold: float,
     terminal_terminal_bridge_classes: set[str],
     terminal_terminal_bridge_max: float,
+    gap_bridge_text_overlap_max: float,
+    gap_bridge_symbol_overlap_max: float,
+    nonconductive_anchor_policy: str,
     bridge_stats: Counter[str] | None = None,
 ) -> set[tuple[str, str]]:
     nodes_by_id = {str(node["id"]): node for node in payload.get("nodes", [])}
     edges = list(payload.get("edges", []))
     wires_by_id = {str(wire["id"]): wire for wire in payload.get("wires", [])}
     conductive_nodes = conductive_junction_nodes(payload)
+    text_regions = list(payload.get("text_regions") or [])
     graph: dict[str, set[str]] = defaultdict(set)
     coords: dict[str, tuple[float, float]] = {}
     terminal_by_stop: dict[str, str] = {}
     stop_by_member: dict[str, str] = {}
     terminal_members_by_graph_node: dict[str, set[str]] = defaultdict(set)
     stats = bridge_stats if bridge_stats is not None else Counter()
+    symbol_boxes: dict[str, tuple[str, dict[str, float]]] = {}
+    for record in terminal_records:
+        symbol_id = str(record.get("symbol_id") or "")
+        if not symbol_id or symbol_id in symbol_boxes:
+            continue
+        box = payload_box(record)
+        if not box:
+            continue
+        symbol_boxes[symbol_id] = (str(record.get("class_name") or ""), box)
 
     def graph_node_id(node_id: str, wire_id: str | None) -> str:
         node = nodes_by_id.get(str(node_id), {})
@@ -420,6 +543,21 @@ def build_predicted_graph_pairs(
             return
         graph[left].add(right)
         graph[right].add(left)
+
+    def crosses_blocking_symbol(
+        start: tuple[float, float],
+        end: tuple[float, float],
+        *,
+        allowed_symbol_ids: set[str],
+    ) -> bool:
+        if gap_bridge_symbol_overlap_max >= 1.0:
+            return False
+        for symbol_id, (class_name, box) in symbol_boxes.items():
+            if symbol_id in allowed_symbol_ids or class_name == "junction":
+                continue
+            if segment_box_overlap_ratio(start, end, box) > gap_bridge_symbol_overlap_max:
+                return True
+        return False
 
     edge_segments: dict[str, dict[str, Any]] = {}
     edges_by_wire: dict[str, list[dict[str, Any]]] = defaultdict(list)
@@ -451,6 +589,34 @@ def build_predicted_graph_pairs(
         wire_id = str(edge.get("wire_id") or "")
         incident_wire_by_node[str(edge.get("from_node_id"))].add(wire_id)
         incident_wire_by_node[str(edge.get("to_node_id"))].add(wire_id)
+
+    def is_nonconductive_junction_node(node_id: str) -> bool:
+        node = nodes_by_id.get(str(node_id), {})
+        return str(node.get("type") or "") == "junction" and str(node_id) not in conductive_nodes
+
+    def nearest_incident_wire_id(node_id: str, point: tuple[float, float]) -> str | None:
+        candidates: list[tuple[float, str]] = []
+        for incident_wire_id in incident_wire_by_node.get(str(node_id), set()):
+            if not incident_wire_id:
+                continue
+            for segment in edges_by_wire.get(incident_wire_id, []):
+                if str(segment.get("from_node_id")) != str(node_id) and str(segment.get("to_node_id")) != str(node_id):
+                    continue
+                _t, distance, _projection = point_segment_projection(point, segment["start"], segment["end"])
+                candidates.append((distance, incident_wire_id))
+        if not candidates:
+            return None
+        return min(candidates, key=lambda item: (item[0], item[1]))[1]
+
+    def graph_ids_for_anchor_node(record: dict[str, Any], node_id: str, preferred_wire_id: str | None) -> list[str]:
+        incident_wires = incident_wire_by_node.get(str(node_id), set())
+        if nonconductive_anchor_policy == "preferred" and preferred_wire_id:
+            return [graph_node_id(node_id, preferred_wire_id)]
+        if nonconductive_anchor_policy == "preferred" and is_nonconductive_junction_node(str(node_id)):
+            point = (float(record["point"][0]), float(record["point"][1]))
+            nearest_wire_id = nearest_incident_wire_id(str(node_id), point)
+            return [graph_node_id(node_id, nearest_wire_id)] if nearest_wire_id else [graph_node_id(node_id, None)]
+        return [graph_node_id(node_id, incident_wire_id) for incident_wire_id in sorted(incident_wires)] or [graph_node_id(node_id, None)]
 
     def bridge_terminal_to_collinear_wire(record: dict[str, Any], stop_id: str) -> bool:
         if terminal_gap_bridge_max <= 0:
@@ -506,6 +672,18 @@ def build_predicted_graph_pairs(
         _score, gap, edge_id, t, endpoint_node = best
         segment = edge_segments[edge_id]
         wire_id = str(segment.get("wire_id") or "")
+        terminal_point = (float(record["point"][0]), float(record["point"][1]))
+        if endpoint_node:
+            bridge_end = node_point(nodes_by_id[endpoint_node])
+        else:
+            _projection_t, _distance, bridge_end = point_segment_projection(terminal_point, segment["start"], segment["end"])
+        text_overlap = segment_text_overlap_ratio(terminal_point, bridge_end, text_regions)
+        if text_overlap > gap_bridge_text_overlap_max:
+            stats["terminal_gap_bridge_rejected_text_overlap_count"] += 1
+            return False
+        if crosses_blocking_symbol(terminal_point, bridge_end, allowed_symbol_ids={str(record.get("symbol_id") or "")}):
+            stats["terminal_gap_bridge_rejected_symbol_overlap_count"] += 1
+            return False
         if endpoint_node:
             add_graph_edge(stop_id, graph_node_id(endpoint_node, wire_id))
         else:
@@ -571,6 +749,12 @@ def build_predicted_graph_pairs(
                     if endpoint_key not in best_by_endpoint or gap < best_by_endpoint[endpoint_key][0]:
                         best_by_endpoint[endpoint_key] = candidate
         for index, (endpoint_key, (gap, target_edge_id, t, projection, _wire_id)) in enumerate(best_by_endpoint.items(), start=1):
+            if segment_text_overlap_ratio(coords[endpoint_key], projection, text_regions) > gap_bridge_text_overlap_max:
+                stats["wire_gap_bridge_rejected_text_overlap_count"] += 1
+                continue
+            if crosses_blocking_symbol(coords[endpoint_key], projection, allowed_symbol_ids=set()):
+                stats["wire_gap_bridge_rejected_symbol_overlap_count"] += 1
+                continue
             bridge_id = f"bridge:{index:05d}:{target_edge_id}"
             coords[bridge_id] = projection
             stops_by_edge[target_edge_id].append((t, bridge_id))
@@ -632,6 +816,16 @@ def build_predicted_graph_pairs(
                 bridge_pairs.add(sorted_pair(current["stop_id"], other["stop_id"]))
 
         for left, right in sorted(bridge_pairs):
+            left_symbol_id = ""
+            right_symbol_id = ""
+            for record in terminals:
+                if record["stop_id"] == left:
+                    left_symbol_id = str(record.get("symbol_id") or "")
+                elif record["stop_id"] == right:
+                    right_symbol_id = str(record.get("symbol_id") or "")
+            if crosses_blocking_symbol(coords[left], coords[right], allowed_symbol_ids={left_symbol_id, right_symbol_id}):
+                stats["terminal_terminal_bridge_rejected_symbol_overlap_count"] += 1
+                continue
             add_graph_edge(left, right)
             stats["terminal_terminal_bridge_count"] += 1
 
@@ -659,9 +853,8 @@ def build_predicted_graph_pairs(
             if candidate_node_id and node_distance <= node_anchor_threshold:
                 anchor_node_id = candidate_node_id
         if anchor_node_id:
-            wire_ids = incident_wire_by_node.get(str(anchor_node_id)) or {wire_id or None}
-            for incident_wire in wire_ids:
-                graph_id = graph_node_id(str(anchor_node_id), incident_wire)
+            preferred_wire_id = str(wire_id or record.get("wire_id_hint") or "")
+            for graph_id in graph_ids_for_anchor_node(record, str(anchor_node_id), preferred_wire_id or None):
                 terminal_members_by_graph_node[graph_id].add(str(record["member_key"]))
                 add_graph_edge(stop_id, graph_id)
             continue
@@ -674,9 +867,9 @@ def build_predicted_graph_pairs(
             stops_by_edge[str(best["id"])].append((t, stop_id))
             continue
         if node_id:
-            wire_ids = incident_wire_by_node.get(str(node_id)) or {None}
-            for incident_wire in wire_ids:
-                add_graph_edge(stop_id, graph_node_id(str(node_id), incident_wire))
+            preferred_wire_id = str(wire_id or record.get("wire_id_hint") or "")
+            for graph_id in graph_ids_for_anchor_node(record, str(node_id), preferred_wire_id or None):
+                add_graph_edge(stop_id, graph_id)
             continue
         bridge_terminal_to_collinear_wire(record, stop_id)
 
@@ -808,6 +1001,201 @@ def split_extra_pairs(
     return hard_extra, indirect
 
 
+def gold_path_through_classes(
+    left: str,
+    right: str,
+    gold_pairs: set[tuple[str, str]],
+    member_info: dict[str, dict[str, Any]],
+    *,
+    max_edges: int,
+    intermediate_classes: set[str],
+    internal_path_classes: set[str],
+) -> list[tuple[str, str]]:
+    if max_edges < 2:
+        return []
+
+    adjacency = connected_by_member(gold_pairs)
+    queue: list[list[str]] = [[left]]
+    visited: set[tuple[str, int]] = {(left, 0)}
+    while queue:
+        path = queue.pop(0)
+        current = path[-1]
+        edge_count = len(path) - 1
+        if edge_count >= max_edges:
+            continue
+        for next_member in sorted(adjacency.get(current, set())):
+            if next_member in path:
+                continue
+            if next_member != right:
+                class_name = str(member_info.get(next_member, {}).get("class_name") or "")
+                if class_name not in intermediate_classes and not is_allowed_path_intermediate(
+                    next_member,
+                    left,
+                    right,
+                    member_info,
+                    internal_path_classes=internal_path_classes,
+                ):
+                    continue
+            next_path = [*path, next_member]
+            if next_member == right:
+                return [sorted_pair(a, b) for a, b in zip(next_path, next_path[1:])]
+            state = (next_member, len(next_path) - 1)
+            if state not in visited:
+                visited.add(state)
+                queue.append(next_path)
+    return []
+
+
+def split_excluded_intermediate_pairs(
+    raw_extra: set[tuple[str, str]],
+    full_gold_pairs: set[tuple[str, str]],
+    full_member_info: dict[str, dict[str, Any]],
+    evaluated_member_info: dict[str, dict[str, Any]],
+    *,
+    intermediate_classes: set[str],
+    internal_path_classes: set[str],
+    max_edges: int,
+) -> set[tuple[str, str]]:
+    if max_edges < 2 or not intermediate_classes:
+        return set()
+
+    tolerated: set[tuple[str, str]] = set()
+    for left, right in raw_extra:
+        if left not in evaluated_member_info or right not in evaluated_member_info:
+            continue
+        path = gold_path_through_classes(
+            left,
+            right,
+            full_gold_pairs,
+            full_member_info,
+            max_edges=max_edges,
+            intermediate_classes=intermediate_classes,
+            internal_path_classes=internal_path_classes,
+        )
+        if path:
+            tolerated.add((left, right))
+    return tolerated
+
+
+def is_junction_member(key: str, member_info: dict[str, dict[str, Any]]) -> bool:
+    return str(member_info.get(key, {}).get("class_name") or "") == "junction"
+
+
+def member_symbol_ref(key: str, member_info: dict[str, dict[str, Any]]) -> str:
+    return str(member_info.get(key, {}).get("symbol_ref") or key.split(":", 1)[0])
+
+
+def is_allowed_path_intermediate(
+    key: str,
+    left: str,
+    right: str,
+    member_info: dict[str, dict[str, Any]],
+    *,
+    internal_path_classes: set[str],
+) -> bool:
+    if is_junction_member(key, member_info):
+        return True
+    info = member_info.get(key)
+    if not info:
+        return False
+    if str(info.get("class_name") or "") not in internal_path_classes:
+        return False
+    return str(info.get("symbol_ref") or "") in {
+        member_symbol_ref(left, member_info),
+        member_symbol_ref(right, member_info),
+    }
+
+
+def gold_path_through_junctions(
+    left: str,
+    right: str,
+    gold_pairs: set[tuple[str, str]],
+    member_info: dict[str, dict[str, Any]],
+    *,
+    max_edges: int,
+    internal_path_classes: set[str],
+) -> list[tuple[str, str]]:
+    if max_edges < 2:
+        return []
+
+    adjacency = connected_by_member(gold_pairs)
+    queue: list[list[str]] = [[left]]
+    visited: set[tuple[str, int]] = {(left, 0)}
+    while queue:
+        path = queue.pop(0)
+        current = path[-1]
+        edge_count = len(path) - 1
+        if edge_count >= max_edges:
+            continue
+        for next_member in sorted(adjacency.get(current, set())):
+            if next_member in path:
+                continue
+            if next_member != right and not is_allowed_path_intermediate(
+                next_member,
+                left,
+                right,
+                member_info,
+                internal_path_classes=internal_path_classes,
+            ):
+                continue
+            next_path = [*path, next_member]
+            if next_member == right:
+                if len(next_path) <= 2:
+                    return []
+                return [sorted_pair(a, b) for a, b in zip(next_path, next_path[1:])]
+            state = (next_member, len(next_path) - 1)
+            if state not in visited:
+                visited.add(state)
+                queue.append(next_path)
+    return []
+
+
+def apply_junction_path_tolerance(
+    gold_pairs: set[tuple[str, str]],
+    pred_pairs: set[tuple[str, str]],
+    member_info: dict[str, dict[str, Any]],
+    *,
+    max_edges: int,
+    internal_path_classes: set[str],
+) -> dict[str, Any]:
+    exact_pairs = gold_pairs & pred_pairs
+    covered_gold_pairs = set(exact_pairs)
+    tolerated_pred_pairs: set[tuple[str, str]] = set()
+    coverage_rows: list[dict[str, Any]] = []
+
+    if max_edges >= 2:
+        for left, right in sorted(pred_pairs - gold_pairs):
+            if left not in member_info or right not in member_info:
+                continue
+            path_edges = gold_path_through_junctions(
+                left,
+                right,
+                gold_pairs,
+                member_info,
+                max_edges=max_edges,
+                internal_path_classes=internal_path_classes,
+            )
+            if not path_edges:
+                continue
+            tolerated_pred_pairs.add((left, right))
+            covered_gold_pairs.update(path_edges)
+            coverage_rows.append(
+                {
+                    "pred_from": left,
+                    "pred_to": right,
+                    "covered_gold_pairs": [{"from": a, "to": b} for a, b in path_edges],
+                }
+            )
+
+    return {
+        "exact_pairs": exact_pairs,
+        "covered_gold_pairs": covered_gold_pairs,
+        "junction_path_covered_pairs": covered_gold_pairs - exact_pairs,
+        "tolerated_pred_pairs": tolerated_pred_pairs,
+        "coverage_rows": coverage_rows,
+    }
+
+
 def draw_text_box(draw: ImageDraw.ImageDraw, xy: tuple[int, int], lines: list[str]) -> None:
     x, y = xy
     line_h = 22
@@ -843,9 +1231,12 @@ def draw_from_to_review(
     *,
     gold_pairs: set[tuple[str, str]],
     pred_pairs: set[tuple[str, str]],
+    ok_pairs: set[tuple[str, str]],
+    missing_pairs: set[tuple[str, str]],
     hard_extra_pairs: set[tuple[str, str]],
     indirect_pairs: set[tuple[str, str]],
     detected_member_keys: set[str],
+    endpoint_status_by_key: dict[str, str],
     member_info: dict[str, dict[str, Any]],
     pred_member_info: dict[str, dict[str, Any]],
     summary: dict[str, Any],
@@ -853,7 +1244,6 @@ def draw_from_to_review(
     canvas = Image.blend(source.convert("RGB"), Image.new("RGB", source.size, "white"), 0.18)
     draw = ImageDraw.Draw(canvas)
     all_info = {**pred_member_info, **member_info}
-    missing = sorted(gold_pairs - pred_pairs)
 
     def point_for(key: str) -> tuple[int, int] | None:
         info = all_info.get(key)
@@ -861,12 +1251,12 @@ def draw_from_to_review(
             return None
         return round(float(info["point"][0])), round(float(info["point"][1]))
 
-    for left, right in sorted(indirect_pairs):
+    for left, right in sorted(ok_pairs):
         p1 = point_for(left)
         p2 = point_for(right)
         if p1 and p2:
-            draw.line((p1, p2), fill=INDIRECT_COLOR, width=2)
-    for left, right in missing:
+            draw.line((p1, p2), fill=OK_COLOR, width=2)
+    for left, right in sorted(missing_pairs):
         p1 = point_for(left)
         p2 = point_for(right)
         if p1 and p2:
@@ -881,12 +1271,14 @@ def draw_from_to_review(
     pred_connected = connected_by_member(pred_pairs)
     status_counts: Counter[str] = Counter()
     for key, info in member_info.items():
-        if key not in detected_member_keys:
-            status = "terminal_missing"
-        elif gold_connected.get(key, set()) == pred_connected.get(key, set()):
-            status = "ok"
-        else:
-            status = "ng"
+        status = endpoint_status_by_key.get(key)
+        if not status:
+            if key not in detected_member_keys:
+                status = "terminal_missing"
+            elif gold_connected.get(key, set()) == pred_connected.get(key, set()):
+                status = "ok"
+            else:
+                status = "ng"
         status_counts[status] += 1
         x, y = point_for(key) or (0, 0)
         if status == "ok":
@@ -906,16 +1298,16 @@ def draw_from_to_review(
         draw.ellipse((x - 7, y - 7, x + 7, y + 7), fill=EXTRA_COLOR, outline="white", width=2)
 
     lines = [
-        "blue point: OK / red point: connected_to NG / green point: terminal not detected",
-        "red line: missing / orange: hard extra / gray: indirect",
+        "line: blue OK / orange extra / red missing",
+        "point: blue OK / red NG / green terminal missing",
         f"precision {summary['precision']}  recall {summary['recall']}  f1 {summary['f1']}",
-        f"tp/hard_fp/indirect/fn {summary['tp']} / {summary['hard_fp']} / {summary['indirect']} / {summary['fn']}",
+        f"ok/extra/missing/gold-path {len(ok_pairs)} / {summary['hard_fp']} / {len(missing_pairs)} / {summary['excluded_intermediate']}",
         f"terminals ok/ng/missing {status_counts.get('ok', 0)} / {status_counts.get('ng', 0)} / {status_counts.get('terminal_missing', 0)}",
     ]
     draw_text_box(draw, (18, 18), lines)
 
     original_panel = draw_title(source.convert("RGB"), "Original", "source drawing")
-    review_panel = draw_title(canvas, "From-to Review", "lines show mismatched or indirect predicted connections")
+    review_panel = draw_title(canvas, "From-to Review", "blue OK / orange extra / red missing")
     output = make_side_by_side(original_panel, review_panel)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     output.save(out_path)
@@ -954,8 +1346,16 @@ def process_page(
     wire_gap_bridge_terminal_anchor_threshold: float,
     terminal_terminal_bridge_classes: set[str],
     terminal_terminal_bridge_max: float,
+    gap_bridge_text_overlap_max: float,
+    gap_bridge_symbol_overlap_max: float,
+    junction_path_tolerance_max_edges: int,
+    path_tolerance_internal_classes: set[str],
+    excluded_intermediate_classes: set[str],
+    excluded_intermediate_tolerance_max_edges: int,
+    endpoint_status_mode: str,
     eval_symbol_match_iou: float,
     eval_symbol_match_min_overlap: float,
+    nonconductive_anchor_policy: str,
     out_dir: Path,
 ) -> dict[str, Any]:
     payload = read_json(page_dir / "final_output.json")
@@ -967,9 +1367,11 @@ def process_page(
         iou_threshold=eval_symbol_match_iou,
         min_overlap_threshold=eval_symbol_match_min_overlap,
     )
-    source = Image.open(payload["source"]["base_image"]).convert("RGB")
+    source = Image.open(resolve_artifact_path(payload["source"]["base_image"])).convert("RGB")
     member_info = make_gold_member_info(project, include_classes, exclude_classes)
     gold_pairs = make_gold_direct_pairs(project, member_info, exclude_classes)
+    full_member_info = make_gold_member_info(project, include_classes | excluded_intermediate_classes, set())
+    full_gold_pairs = make_gold_direct_pairs(project, full_member_info, set())
     terminal_records, pred_member_info = make_predicted_terminals(
         payload,
         member_info,
@@ -992,6 +1394,9 @@ def process_page(
         wire_gap_bridge_terminal_anchor_threshold=wire_gap_bridge_terminal_anchor_threshold,
         terminal_terminal_bridge_classes=terminal_terminal_bridge_classes,
         terminal_terminal_bridge_max=terminal_terminal_bridge_max,
+        gap_bridge_text_overlap_max=gap_bridge_text_overlap_max,
+        gap_bridge_symbol_overlap_max=gap_bridge_symbol_overlap_max,
+        nonconductive_anchor_policy=nonconductive_anchor_policy,
         bridge_stats=bridge_stats,
     )
     pred_pairs = {
@@ -1001,19 +1406,45 @@ def process_page(
         if pair[1] in member_info or pair[1] in pred_member_info
     }
 
-    tp = gold_pairs & pred_pairs
-    raw_extra_pairs = pred_pairs - gold_pairs
+    direct_tp = gold_pairs & pred_pairs
+    direct_raw_extra_pairs = pred_pairs - gold_pairs
+    direct_fn = gold_pairs - pred_pairs
+    coverage = apply_junction_path_tolerance(
+        gold_pairs,
+        pred_pairs,
+        member_info,
+        max_edges=junction_path_tolerance_max_edges,
+        internal_path_classes=path_tolerance_internal_classes,
+    )
+    tp = coverage["covered_gold_pairs"]
+    raw_extra_pairs = pred_pairs - gold_pairs - coverage["tolerated_pred_pairs"]
+    excluded_intermediate_pairs = split_excluded_intermediate_pairs(
+        raw_extra_pairs,
+        full_gold_pairs,
+        full_member_info,
+        member_info,
+        intermediate_classes=excluded_intermediate_classes,
+        internal_path_classes=path_tolerance_internal_classes,
+        max_edges=excluded_intermediate_tolerance_max_edges,
+    )
+    raw_extra_pairs = raw_extra_pairs - excluded_intermediate_pairs
     hard_extra_pairs, indirect_pairs = split_extra_pairs(raw_extra_pairs, gold_pairs, member_info)
-    fn = gold_pairs - pred_pairs
+    fn = gold_pairs - tp
     pair_metric = metric(len(tp), len(hard_extra_pairs), len(fn))
-    strict_metric = metric(len(tp), len(raw_extra_pairs), len(fn))
+    strict_metric = metric(len(direct_tp), len(direct_raw_extra_pairs), len(direct_fn))
     gold_connected = connected_by_member(gold_pairs)
     pred_connected = connected_by_member(pred_pairs)
+    covered_connected = connected_by_member(tp)
+    hard_extra_connected = connected_by_member(hard_extra_pairs)
     endpoint_status: Counter[str] = Counter()
     endpoint_status_by_key: dict[str, str] = {}
     for key in member_info:
         if key not in detected_member_keys:
             status = "terminal_missing"
+        elif endpoint_status_mode == "covered":
+            missing_partners = gold_connected.get(key, set()) - covered_connected.get(key, set())
+            hard_extra_partners = hard_extra_connected.get(key, set())
+            status = "ok" if not missing_partners and not hard_extra_partners else "ng"
         elif gold_connected.get(key, set()) == pred_connected.get(key, set()):
             status = "ok"
         else:
@@ -1027,15 +1458,19 @@ def process_page(
         **pair_metric,
         "hard_fp": len(hard_extra_pairs),
         "indirect": len(indirect_pairs),
+        "excluded_intermediate": len(excluded_intermediate_pairs),
     }
     draw_from_to_review(
         source,
         review_png,
         gold_pairs=gold_pairs,
         pred_pairs=pred_pairs,
+        ok_pairs=set(direct_tp) | set(coverage["junction_path_covered_pairs"]),
+        missing_pairs=fn,
         hard_extra_pairs=hard_extra_pairs,
         indirect_pairs=indirect_pairs,
         detected_member_keys=detected_member_keys,
+        endpoint_status_by_key=endpoint_status_by_key,
         member_info=member_info,
         pred_member_info=pred_member_info,
         summary=draw_summary,
@@ -1044,10 +1479,12 @@ def process_page(
     edge_rows = []
     all_info = {**pred_member_info, **member_info}
     for status, pairs in (
-        ("ok", sorted(tp)),
+        ("ok", sorted(direct_tp)),
+        ("junction_path_covered", sorted(coverage["junction_path_covered_pairs"])),
         ("missing", sorted(fn)),
         ("extra", sorted(hard_extra_pairs)),
         ("indirect", sorted(indirect_pairs)),
+        ("excluded_intermediate", sorted(excluded_intermediate_pairs)),
     ):
         for left, right in pairs:
             edge_rows.append(
@@ -1075,9 +1512,18 @@ def process_page(
             "definition": "direct from-to pairs; ok/missing/extra/indirect are compared against annotation connections",
             "status_legend": {
                 "ok": "predicted direct from-to pair matches annotation",
+                "junction_path_covered": "annotation direct pair was covered by a predicted pair across a gold junction-only path",
                 "missing": "annotation direct from-to pair was not predicted",
                 "extra": "predicted direct from-to pair is not in annotation and not explainable as same gold component",
                 "indirect": "predicted direct pair is not direct in annotation but belongs to the same gold connected component",
+                "excluded_intermediate": "predicted pair is explained by a gold path through allowed intermediate symbols",
+            },
+            "junction_path_tolerance": {
+                "max_edges": junction_path_tolerance_max_edges,
+                "internal_classes": sorted(path_tolerance_internal_classes),
+                "covered_pair_count": len(coverage["junction_path_covered_pairs"]),
+                "tolerated_pred_pair_count": len(coverage["tolerated_pred_pairs"]),
+                "coverage_examples": coverage["coverage_rows"][:100],
             },
             "edges": edge_rows,
         },
@@ -1096,12 +1542,25 @@ def process_page(
                 "status": status,
                 "gold_connected_to": " ; ".join(member_label(item, member_info) for item in sorted(gold_connected.get(key, set()))),
                 "pred_connected_to": " ; ".join(member_label(item, all_info) for item in sorted(pred_connected.get(key, set()))),
+                "covered_connected_to": " ; ".join(
+                    member_label(item, member_info) for item in sorted(covered_connected.get(key, set()))
+                ),
             }
         )
     write_csv(
         page_out / "from_to_endpoint_status.csv",
         endpoint_rows,
-        ["page", "sheet_no", "member_key", "class_name", "label", "status", "gold_connected_to", "pred_connected_to"],
+        [
+            "page",
+            "sheet_no",
+            "member_key",
+            "class_name",
+            "label",
+            "status",
+            "gold_connected_to",
+            "pred_connected_to",
+            "covered_connected_to",
+        ],
     )
     write_json(
         page_out / "from_to_endpoint_status.json",
@@ -1135,8 +1594,13 @@ def process_page(
         "raw_extra": len(raw_extra_pairs),
         "hard_fp": len(hard_extra_pairs),
         "indirect": len(indirect_pairs),
+        "excluded_intermediate": len(excluded_intermediate_pairs),
+        "junction_path_covered": len(coverage["junction_path_covered_pairs"]),
+        "junction_path_tolerated_pred": len(coverage["tolerated_pred_pairs"]),
         "bridge_stats": dict(sorted(bridge_stats.items())),
         "eval_symbol_gold_mapping": payload.get("eval_symbol_gold_mapping", {}),
+        "endpoint_status_mode": endpoint_status_mode,
+        "nonconductive_anchor_policy": nonconductive_anchor_policy,
         "strict_metrics": strict_metric,
         **pair_metric,
     }
@@ -1164,8 +1628,51 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--wire-gap-bridge-terminal-anchor-threshold", type=float, default=0.0)
     parser.add_argument("--terminal-terminal-bridge-classes", nargs="*", default=[])
     parser.add_argument("--terminal-terminal-bridge-max", type=float, default=0.0)
+    parser.add_argument(
+        "--gap-bridge-text-overlap-max",
+        type=float,
+        default=1.0,
+        help="reject terminal/wire gap bridges whose bridge segment overlaps text-region boxes above this ratio",
+    )
+    parser.add_argument(
+        "--gap-bridge-symbol-overlap-max",
+        type=float,
+        default=1.0,
+        help="reject synthetic gap bridges whose bridge segment crosses non-endpoint symbol boxes above this ratio",
+    )
+    parser.add_argument(
+        "--junction-path-tolerance-max-edges",
+        type=int,
+        default=0,
+        help="treat a predicted pair across a short gold path as covering the direct annotation edges on that path",
+    )
+    parser.add_argument(
+        "--path-tolerance-internal-classes",
+        nargs="*",
+        default=[],
+        help="allow terminals of these endpoint-side symbol classes as path-tolerance intermediates",
+    )
+    parser.add_argument(
+        "--excluded-intermediate-classes",
+        nargs="*",
+        default=[],
+        help="do not count predicted pairs as extra when they are connected through these excluded annotation classes",
+    )
+    parser.add_argument("--excluded-intermediate-tolerance-max-edges", type=int, default=0)
+    parser.add_argument(
+        "--endpoint-status-mode",
+        choices=("exact", "covered"),
+        default="exact",
+        help="exact compares direct partners; covered marks endpoints OK when gold partners are covered and no hard extra is incident",
+    )
     parser.add_argument("--eval-symbol-match-iou", type=float, default=0.25)
     parser.add_argument("--eval-symbol-match-min-overlap", type=float, default=0.65)
+    parser.add_argument(
+        "--nonconductive-anchor-policy",
+        choices=("all", "preferred"),
+        default="all",
+        help="when a terminal is linked to a non-conductive geometric junction, attach to all incident wires or only a preferred/nearest wire",
+    )
     return parser.parse_args()
 
 
@@ -1178,6 +1685,8 @@ def main() -> None:
     node_anchor_classes = set(args.node_anchor_classes)
     terminal_gap_bridge_classes = set(args.terminal_gap_bridge_classes)
     terminal_terminal_bridge_classes = set(args.terminal_terminal_bridge_classes)
+    path_tolerance_internal_classes = set(args.path_tolerance_internal_classes)
+    excluded_intermediate_classes = set(args.excluded_intermediate_classes)
     bundle, _csv_rows, _netlist = load_zip_payload(args.annotation_zip)
     project_by_sheet = {str(project["sheet_no"]): project for project in bundle.get("projects", [])}
     pages = args.pages or sorted(int(page) for page in page_sheet_map)
@@ -1205,14 +1714,25 @@ def main() -> None:
             wire_gap_bridge_terminal_anchor_threshold=args.wire_gap_bridge_terminal_anchor_threshold,
             terminal_terminal_bridge_classes=terminal_terminal_bridge_classes,
             terminal_terminal_bridge_max=args.terminal_terminal_bridge_max,
+            gap_bridge_text_overlap_max=args.gap_bridge_text_overlap_max,
+            gap_bridge_symbol_overlap_max=args.gap_bridge_symbol_overlap_max,
+            junction_path_tolerance_max_edges=args.junction_path_tolerance_max_edges,
+            path_tolerance_internal_classes=path_tolerance_internal_classes,
+            excluded_intermediate_classes=excluded_intermediate_classes,
+            excluded_intermediate_tolerance_max_edges=args.excluded_intermediate_tolerance_max_edges,
+            endpoint_status_mode=args.endpoint_status_mode,
             eval_symbol_match_iou=args.eval_symbol_match_iou,
             eval_symbol_match_min_overlap=args.eval_symbol_match_min_overlap,
+            nonconductive_anchor_policy=args.nonconductive_anchor_policy,
             out_dir=args.out_dir,
         )
         page_summaries.append(summary)
         for key in ("tp", "fp", "fn"):
             totals[key] += int(summary[key])
         for key in ("raw_extra", "hard_fp", "indirect"):
+            totals[key] += int(summary[key])
+        totals["excluded_intermediate"] += int(summary["excluded_intermediate"])
+        for key in ("junction_path_covered", "junction_path_tolerated_pred"):
             totals[key] += int(summary[key])
         endpoint_totals.update(summary["endpoint_status_counts"])
 
@@ -1233,6 +1753,14 @@ def main() -> None:
         "wire_gap_bridge_terminal_anchor_threshold": args.wire_gap_bridge_terminal_anchor_threshold,
         "terminal_terminal_bridge_classes": sorted(terminal_terminal_bridge_classes),
         "terminal_terminal_bridge_max": args.terminal_terminal_bridge_max,
+        "gap_bridge_text_overlap_max": args.gap_bridge_text_overlap_max,
+        "gap_bridge_symbol_overlap_max": args.gap_bridge_symbol_overlap_max,
+        "junction_path_tolerance_max_edges": args.junction_path_tolerance_max_edges,
+        "path_tolerance_internal_classes": sorted(path_tolerance_internal_classes),
+        "excluded_intermediate_classes": sorted(excluded_intermediate_classes),
+        "excluded_intermediate_tolerance_max_edges": args.excluded_intermediate_tolerance_max_edges,
+        "endpoint_status_mode": args.endpoint_status_mode,
+        "nonconductive_anchor_policy": args.nonconductive_anchor_policy,
         "eval_symbol_gold_mapping": {
             "method": "evaluation-only same-class bbox matching; predicted bbox/terminals are not replaced",
             "iou_threshold": args.eval_symbol_match_iou,
@@ -1244,6 +1772,9 @@ def main() -> None:
             "raw_extra": totals["raw_extra"],
             "hard_fp": totals["hard_fp"],
             "indirect": totals["indirect"],
+            "excluded_intermediate": totals["excluded_intermediate"],
+            "junction_path_covered": totals["junction_path_covered"],
+            "junction_path_tolerated_pred": totals["junction_path_tolerated_pred"],
         },
         "aggregate_endpoint_status_counts": dict(sorted(endpoint_totals.items())),
         "pages": page_summaries,
@@ -1263,6 +1794,9 @@ def main() -> None:
                 "raw_extra": item["raw_extra"],
                 "hard_fp": item["hard_fp"],
                 "indirect": item["indirect"],
+                "excluded_intermediate": item["excluded_intermediate"],
+                "junction_path_covered": item["junction_path_covered"],
+                "junction_path_tolerated_pred": item["junction_path_tolerated_pred"],
                 "fn": item["fn"],
                 "precision": item["precision"],
                 "recall": item["recall"],
@@ -1290,6 +1824,9 @@ def main() -> None:
             "raw_extra",
             "hard_fp",
             "indirect",
+            "excluded_intermediate",
+            "junction_path_covered",
+            "junction_path_tolerated_pred",
             "fn",
             "precision",
             "recall",
