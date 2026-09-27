@@ -173,11 +173,11 @@ jobs:
       - name: Upload to Google Drive
         env:
           GOOGLE_DRIVE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_DRIVE_CREDENTIALS_JSON }}
-          GOOGLE_DRIVE_FOLDER_ID: ${{ secrets.GOOGLE_DRIVE_FOLDER_ID }}
+          GOOGLE_DRIVE_FOLDER_ID: 1RXQF7syvhMOmS86IB3bhJZOxgFnlKqZq
+          PYTHONIOENCODING: utf-8
         run: |
-          if (-not $env:GOOGLE_DRIVE_CREDENTIALS_JSON -or -not $env:GOOGLE_DRIVE_FOLDER_ID) {
-            Write-Host "::warning::GOOGLE_DRIVE_CREDENTIALS_JSON / GOOGLE_DRIVE_FOLDER_ID が未設定のため Google Drive へのアップロードをスキップします（README の「Google Drive への自動アップロード」参照）"
-            exit 0
+          if (-not $env:GOOGLE_DRIVE_CREDENTIALS_JSON) {
+            throw "GOOGLE_DRIVE_CREDENTIALS_JSON が未設定です。README の「Google Drive への自動アップロード」を参照してください。"
           }
           pip install google-api-python-client==2.200.0
           python scripts/upload_to_drive.py dist/Annotator.exe
