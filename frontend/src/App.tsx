@@ -21,6 +21,7 @@ import { isEditorPath } from './utils/workspace'
 
 const NAVIGATION = [
   { to: '/', label: '図面ワークスペース', caption: '登録・進捗・編集', icon: LayoutDashboard, end: true },
+  { to: '/ml', label: 'AI 改善サイクル', caption: '推論・学習・モデル', icon: Sparkles, end: false },
   { to: '/export', label: 'データ受け渡し', caption: '出力・取り込み', icon: Download, end: false },
   { to: '/guide', label: '操作ガイド', caption: '手順・ショートカット', icon: BookOpen, end: false },
 ]

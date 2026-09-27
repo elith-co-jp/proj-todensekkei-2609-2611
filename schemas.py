@@ -38,6 +38,8 @@ class SymbolPayload(BaseModel):
     w: float
     h: float
     note: str | None = None
+    origin: str = "manual"  # manual / inference（AI 推論由来）
+    confidence: float | None = None
     terminals: list[TerminalPayload] = []
 
 
@@ -76,3 +78,21 @@ class BulkIdsRequest(BaseModel):
 
 class YoloExportRequest(BaseModel):
     ids: list[int] = []
+
+
+# ---------- AI 改善サイクル（推論・学習） ----------
+class InferenceRunRequest(BaseModel):
+    """対象プロジェクトへ active モデルで推論を実行する。"""
+
+    project_ids: list[int] = []  # 空 = 全プロジェクト
+    conf: float = Field(default=0.25, ge=0.0, le=1.0)
+
+
+class TrainingRunRequest(BaseModel):
+    """蓄積したアノテーションで学習を実行する。"""
+
+    project_ids: list[int] = []  # 空 = only_done / 全件の判定に従う
+    only_done: bool = True  # True なら status=done の図面のみを学習データに使う
+    epochs: int = Field(default=100, ge=1, le=1000)
+    imgsz: int = Field(default=1280, ge=320, le=4096)
+    base_model: str | None = None  # None = active モデル（無ければ yolov8n.pt）

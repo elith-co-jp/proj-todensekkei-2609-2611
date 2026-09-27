@@ -16,6 +16,8 @@ export type Terminal = {
   ty: number
 }
 
+export type SymbolOrigin = 'manual' | 'inference'
+
 export type SymbolBox = {
   ref: string
   class_key: string
@@ -28,6 +30,10 @@ export type SymbolBox = {
   w: number
   h: number
   note: string | null
+  /** 登録の経緯。manual=手入力 / inference=AI 推論から生成 */
+  origin?: SymbolOrigin
+  /** 推論由来のときの信頼度 (0-1) */
+  confidence?: number | null
   terminals: Terminal[]
 }
 
@@ -75,6 +81,7 @@ export type ProjectRow = {
   symbol_count: number
   connection_count: number
   terminal_count: number
+  prediction_count: number
   updated_at: string | null
 }
 
@@ -84,6 +91,92 @@ export type Stats = {
   connection_count: number
   by_status: Record<string, number>
   by_class: Record<string, number>
+  by_origin: Record<string, number>
+  prediction_count: number
+}
+
+// ---------- AI 改善サイクル ----------
+export type MlModel = {
+  id: number
+  name: string
+  version: number
+  file_name: string
+  sha256: string
+  size_bytes: number
+  source: 'upload' | 'trained'
+  is_active: boolean
+  metrics: Record<string, string> | null
+  note: string | null
+  created_at: string | null
+}
+
+export type MlStatus = {
+  ultralytics: boolean
+  active_model: MlModel | null
+  model_count: number
+  training_running: TrainingRun | null
+}
+
+export type Detection = {
+  class_key: string
+  class_label: string
+  yolo_index: number
+  cx: number
+  cy: number
+  w: number
+  h: number
+  confidence: number | null
+}
+
+export type ProjectPredictions = {
+  project_id: number
+  name: string
+  model_label: string | null
+  model_id: number | null
+  count: number
+  detections: Detection[]
+}
+
+export type PredictionSummary = {
+  project_id: number
+  count: number
+  model_label: string | null
+}
+
+export type InferenceRunResult = {
+  project_id: number
+  name: string
+  detections: number
+  skipped_images?: number
+}
+
+export type InferenceRunResponse = {
+  model: MlModel
+  conf: number
+  results: InferenceRunResult[]
+  detection_count: number
+}
+
+export type InferenceImportResult = {
+  results: InferenceRunResult[]
+  unmatched_files: string[]
+  missing_project_ids: number[]
+  count: number
+}
+
+export type TrainingRun = {
+  id: number
+  status: 'running' | 'success' | 'failed'
+  project_ids: number[]
+  image_count: number
+  epochs: number
+  imgsz: number
+  base_model: string | null
+  result_model_id: number | null
+  metrics: Record<string, string> | null
+  log_tail: string | null
+  started_at: string | null
+  finished_at: string | null
 }
 
 export const STATUS_LABEL: Record<string, string> = {

@@ -31,6 +31,7 @@ function projectRow(id: number, name: string): ProjectRow {
     symbol_count: 0,
     connection_count: 0,
     terminal_count: 0,
+    prediction_count: 0,
     updated_at: null,
   }
 }

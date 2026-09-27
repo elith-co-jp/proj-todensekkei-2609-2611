@@ -6,10 +6,18 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, Response
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from database import get_db
-from models import AnnotationImage, AnnotationProject, AnnotationSymbol, Connection, SymbolClass
+from models import (
+    AnnotationImage,
+    AnnotationProject,
+    AnnotationSymbol,
+    Connection,
+    Prediction,
+    SymbolClass,
+)
 from schemas import (
     AnnotationUpdatePayload,
     BulkIdsRequest,
@@ -157,6 +165,11 @@ def list_projects(q: str | None = Query(default=None), db: Session = Depends(get
             query = query.filter(
                 AnnotationProject.name.ilike(like) | AnnotationProject.sheet_no.ilike(like)
             )
+    prediction_counts = dict(
+        db.query(Prediction.project_id, func.count(Prediction.id))
+        .group_by(Prediction.project_id)
+        .all()
+    )
     out = []
     for p in query.order_by(AnnotationProject.id.desc()).all():
         out.append(
@@ -173,6 +186,7 @@ def list_projects(q: str | None = Query(default=None), db: Session = Depends(get
                 "symbol_count": len(p.symbols),
                 "connection_count": len(p.connections),
                 "terminal_count": sum(len(s.terminals) for s in p.symbols),
+                "prediction_count": prediction_counts.get(p.id, 0),
                 "updated_at": p.updated_at.isoformat() if p.updated_at else None,
             }
         )
@@ -294,10 +308,20 @@ def stats(db: Session = Depends(get_db)):
         n = db.query(AnnotationSymbol).filter(AnnotationSymbol.class_id == c.id).count()
         if n:
             by_class[c.key] = n
+    by_origin: dict[str, int] = {}
+    for origin, n in (
+        db.query(AnnotationSymbol.origin, func.count(AnnotationSymbol.id))
+        .group_by(AnnotationSymbol.origin)
+        .all()
+    ):
+        by_origin[origin] = n
+    prediction_total = db.query(Prediction).count()
     return {
         "project_count": len(projects),
         "symbol_count": symbols,
         "connection_count": connections,
         "by_status": by_status,
         "by_class": by_class,
+        "by_origin": by_origin,
+        "prediction_count": prediction_total,
     }

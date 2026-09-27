@@ -371,6 +371,8 @@ def _restore_project_from_bundle(db: Session, proj: dict, images: dict[str, byte
             w=w,
             h=h,
             note=s.get("note"),
+            origin=s.get("origin") or "manual",
+            confidence=s.get("confidence"),
         )
         db.add(sym)
         db.flush()

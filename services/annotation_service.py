@@ -134,6 +134,8 @@ def replace_annotations(db: Session, project: AnnotationProject, payload) -> dic
             w=w,
             h=h,
             note=(item.note or None),
+            origin=(item.origin or "manual"),
+            confidence=item.confidence,
         )
         db.add(sym)
         db.flush()
@@ -209,6 +211,8 @@ def serialize_project(db: Session, project: AnnotationProject, with_image_meta: 
                 "w": s.w,
                 "h": s.h,
                 "note": s.note,
+                "origin": s.origin or "manual",
+                "confidence": s.confidence,
                 "terminals": [
                     {"ref": terminal_ref(s, t), "name": t.name, "tx": t.tx, "ty": t.ty}
                     for t in sorted(s.terminals, key=lambda t: t.id)

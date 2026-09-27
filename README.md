@@ -31,6 +31,7 @@ React/TypeScript + FastAPI 構成。
 | **初回ツアー** | 初回アクセス時に PDF 登録、入力モード、自動保存、図面ズームを順番に案内。サイドバーから再表示可能 |
 | **開閉式サイドバー** | アイコンボタンで展開／折りたたみ。折りたたみ時も各画面とツアーへアクセス可能 |
 | **図面専用ズーム** | 図面キャンバス上のホイール、または − / 全体 / ＋ で図面だけを拡大縮小。ブラウザ標準の表示倍率も利用可能 |
+| **AI 改善サイクル** | モデル登録 → 推論 → 結果を JSON で確認 → エディタで修正 → データ蓄積 → YOLO 学習 → 改善モデルが自動適用。ultralytics が無い環境では外部実行（predict 出力 ZIP の取込 / best.pt の登録）に誘導 |
 | **YOLO エクスポート** | `data.yaml` + 全画像を `dataset/images/train` に出力（val 分割はしない）。配線 CSV／netlist と完全復元用 bundle.json を 1 つの ZIP に同梱 |
 | **配線の出力** | YOLO 形式では表現できないため `connections/connections.csv` と `connections/netlist.json` に別出力 |
 | **完全復元インポート** | `bundle.json` を含む ZIP はシンボル・端子・配線・図面情報・クラス定義まで復元。素の YOLO ZIP は矩形のみ取り込み |
@@ -161,7 +162,36 @@ uvicorn main:app --port 8010               # http://localhost:8010 で UI と AP
 
 ---
 
-## 学習の実行
+## AI 改善サイクル（推論 → 修正 → 蓄積 → 学習 → 改善）
+
+`/ml` 画面（サイドバー「AI 改善サイクル」）で一連の流れを回します。
+
+1. **モデル登録** — YOLO の `.pt`（学習済み `best.pt` 等）をアップロード。「使用中」のモデルが推論と学習のベースになります
+2. **推論** — 対象図面と信頼度しきい値を選んで実行。検出結果は図面ごとに最新だけ保存され、画面で JSON 確認できます
+3. **修正** — エディタの「AI 推論」ボタンで検出を破線枠のシンボルとして取り込み、誤検出・漏れを人が修正
+4. **蓄積** — 修正済みシンボルは `origin=inference` と信頼度つきで保存され、次の学習データになります
+5. **学習** — 蓄積データで YOLO を再学習。完了すると `best.pt` が新モデルとして自動登録・適用され、次の推論で使われます
+
+### ultralytics が無い環境（exe 配布など）
+
+推論・学習の API は `ultralytics` 未導入でもサーバは起動し、実行時に外部実行への案内を返します。
+その場合の流れ:
+
+```bash
+# 1. このツールで ZIP をエクスポート（画像名は p<図面ID>_*.png）
+# 2. GPU 環境で推論し、labels を ZIP 化して「推論結果を取り込む」から読み込み
+yolo predict model=best.pt source=dataset_root/dataset/images/train save_txt=True save_conf=True
+# 3. 外部で学習した best.pt を「モデル登録」からアップロード
+yolo detect train data=dataset_root/data.yaml model=yolov8n.pt epochs=100 imgsz=1280
+```
+
+ツール内で直接実行するには追加依存が必要です（約 2 GB・GPU 推奨）:
+
+```bash
+pip install -r requirements-ml.txt   # ultralytics
+```
+
+## 学習の実行（外部環境）
 
 ```bash
 unzip seqanno_export_*.zip -d dataset_root

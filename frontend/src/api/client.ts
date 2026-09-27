@@ -1,4 +1,16 @@
-import type { ProjectDetail, ProjectRow, Stats, SymbolClass } from '../types'
+import type {
+  InferenceImportResult,
+  InferenceRunResponse,
+  MlModel,
+  MlStatus,
+  PredictionSummary,
+  ProjectDetail,
+  ProjectPredictions,
+  ProjectRow,
+  Stats,
+  SymbolClass,
+  TrainingRun,
+} from '../types'
 
 const BASE = import.meta.env.VITE_API_BASE ?? ''
 
@@ -125,4 +137,61 @@ export const api = {
       body: fd,
     })
   },
+
+  // ---------- AI 改善サイクル ----------
+  mlStatus: () => req<MlStatus>('/api/ml/status'),
+
+  listModels: () => req<MlModel[]>('/api/ml/models'),
+
+  uploadModel: (file: File) => {
+    const fd = new FormData()
+    fd.append('file', file)
+    return req<MlModel>('/api/ml/models', { method: 'POST', body: fd })
+  },
+
+  activateModel: (id: number) =>
+    req<MlModel>(`/api/ml/models/${id}/activate`, { method: 'POST' }),
+
+  deleteModel: (id: number) =>
+    req<{ deleted: number }>(`/api/ml/models/${id}`, { method: 'DELETE' }),
+
+  modelDownloadUrl: (id: number) => `${BASE}/api/ml/models/${id}/download`,
+
+  runInference: (projectIds: number[], conf?: number) =>
+    req<InferenceRunResponse>('/api/ml/inference/run', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ project_ids: projectIds, conf: conf ?? 0.25 }),
+    }),
+
+  importPredictionsZip: (file: File) => {
+    const fd = new FormData()
+    fd.append('archive', file)
+    return req<InferenceImportResult>('/api/ml/inference/import', {
+      method: 'POST',
+      body: fd,
+    })
+  },
+
+  listPredictions: () => req<PredictionSummary[]>('/api/ml/predictions'),
+
+  getPredictions: (projectId: number) =>
+    req<ProjectPredictions>(`/api/ml/projects/${projectId}/predictions`),
+
+  startTraining: (opts: {
+    project_ids?: number[]
+    only_done?: boolean
+    epochs?: number
+    imgsz?: number
+    base_model?: string | null
+  }) =>
+    req<TrainingRun>('/api/ml/training/run', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(opts),
+    }),
+
+  listTrainingRuns: () => req<TrainingRun[]>('/api/ml/training/runs'),
+
+  getTrainingRun: (id: number) => req<TrainingRun>(`/api/ml/training/runs/${id}`),
 }

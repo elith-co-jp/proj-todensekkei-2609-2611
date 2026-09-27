@@ -18,7 +18,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from database import init_db
-from routers import annotations
+from routers import annotations, ml
 from runtime import resource_base
 
 _DESKTOP_MODE = os.environ.get("SEQANNO_DESKTOP") == "1"
@@ -82,6 +82,7 @@ app.add_middleware(
 )
 
 app.include_router(annotations.router)
+app.include_router(ml.router)
 
 
 @app.get("/api/health")
