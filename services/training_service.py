@@ -186,7 +186,7 @@ def _baseline_label(db: Session, base: str) -> str:
     """比較対象モデルの表示名。登録済みモデルなら名称+バージョン、それ以外はファイル名。"""
     if not base:
         return "初期モデル"
-    known = db.query(MlModel).filter(MlModel.sha256 == Path(base).stem).one_or_none()
+    known = db.query(MlModel).filter(MlModel.sha256 == Path(base).stem).first()
     if known is not None:
         return f"{known.name} v{known.version}"
     return Path(base).name

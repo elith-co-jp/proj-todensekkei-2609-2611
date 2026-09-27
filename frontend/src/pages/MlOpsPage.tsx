@@ -246,7 +246,7 @@ export default function MlOpsPage() {
           : {
               kind: 'success',
               title: `${name} を見送りました`,
-              body: '現行モデルを継続して使います。見送ったモデルはモデル管理から削除できます。',
+              body: '使用中のモデルはそのまま継続します。見送ったモデルはモデル管理から削除できます。',
             },
       )
       await reload()
@@ -276,8 +276,8 @@ export default function MlOpsPage() {
 
   const summaryFor = (id: number) => summaries.find((s) => s.project_id === id)
 
-  // 採用待ちの学習ジョブ（最新の1件だけパネルを出す）
-  const pendingRun = runs.find((r) => r.status === 'success' && r.decision === 'pending' && r.result_model)
+  // 採用待ちの学習ジョブ（すべて判定パネルを出す）
+  const pendingRuns = runs.filter((r) => r.status === 'success' && r.decision === 'pending' && r.result_model)
   const pendingModelIds = new Set(
     runs.filter((r) => r.decision === 'pending').map((r) => r.result_model_id),
   )
@@ -358,8 +358,8 @@ export default function MlOpsPage() {
         </div>
       )}
 
-      {pendingRun && (
-        <section className="card mb-5 overflow-hidden border-violet-200">
+      {pendingRuns.map((pendingRun) => (
+        <section key={pendingRun.id} className="card mb-5 overflow-hidden border-violet-200">
           <div className="card-head bg-violet-50/60">
             <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-violet-100 text-violet-700">
               <Scale size={17} />
@@ -375,7 +375,7 @@ export default function MlOpsPage() {
               <b>
                 {pendingRun.result_model?.name} v{pendingRun.result_model?.version}
               </b>{' '}
-              を蓄積済みデータ（{pendingRun.image_count} 枚）で評価し、現行モデル
+              を蓄積済みデータ（{pendingRun.image_count} 枚）で評価し、学習の起点となったモデル
               （{pendingRun.baseline_label ?? '比較対象なし'}）と比較しました。
               採用すると次回以降の推論と学習のベースにこのモデルが使われます。
             </p>
@@ -388,7 +388,7 @@ export default function MlOpsPage() {
                       <th className="px-3 py-2">
                         新モデル（{pendingRun.result_model?.name} v{pendingRun.result_model?.version}）
                       </th>
-                      <th className="px-3 py-2">現行モデル（{pendingRun.baseline_label ?? '—'}）</th>
+                      <th className="px-3 py-2">比較対象（{pendingRun.baseline_label ?? '—'}）</th>
                       <th className="px-3 py-2">差分</th>
                     </tr>
                   </thead>
@@ -441,12 +441,12 @@ export default function MlOpsPage() {
                 onClick={() => void decideRun(pendingRun.id, 'reject')}
                 disabled={busy !== null}
               >
-                見送る（現行モデルを継続使用）
+                見送る（使用中のモデルはそのまま）
               </button>
             </div>
           </div>
         </section>
-      )}
+      ))}
 
       <div className="grid gap-5 xl:grid-cols-2">
         {/* ---------------- 左列：推論 ---------------- */}

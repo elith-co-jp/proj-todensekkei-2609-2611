@@ -186,7 +186,15 @@ def training_run(payload: TrainingRunRequest, db: Session = Depends(get_db)):
 @router.get("/training/runs")
 def list_training_runs(db: Session = Depends(get_db)):
     runs = db.query(TrainingRun).order_by(TrainingRun.id.desc()).limit(50).all()
-    return [serialize_run(r) for r in runs]
+    seen = {r.id for r in runs}
+    # 履歴上限を超えても採用待ちジョブは必ず返す（判定不能にしないため）
+    pending = (
+        db.query(TrainingRun)
+        .filter(TrainingRun.decision == "pending", ~TrainingRun.id.in_(seen))
+        .order_by(TrainingRun.id.desc())
+        .all()
+    )
+    return [serialize_run(r) for r in [*runs, *pending]]
 
 
 @router.get("/training/runs/{run_id}")
