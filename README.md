@@ -124,23 +124,22 @@ Windows 用 exe は必ず Windows 上でビルドしてください（spec: `seq
 `.github/workflows/build-windows-exe.yml` は **main へのマージ（push）時**と手動実行
 （Actions タブの「Build Windows EXE」→「Run workflow」）で Windows ランナー上に
 `Annotator.exe` をビルドします。成果物は GitHub Artifacts（7 日保存）と、
-設定済みであれば指定の Google Drive フォルダにもアップロードされます
-（同名ファイルがあれば上書き更新）。
+[指定の Google Drive フォルダ](https://drive.google.com/drive/folders/1RXQF7syvhMOmS86IB3bhJZOxgFnlKqZq)
+にアップロードされます（同名ファイルがあれば上書き更新）。Drive への
+アップロードに失敗した場合、ワークフローも失敗します。
 
 **初回セットアップ**（Google Drive へのアップロードを有効にするには）:
 
-1. Google Cloud Console でサービスアカウントを作成し、JSON 鍵を発行
-   （Google Drive API を有効化しておく）。
-2. アップロード先の Drive フォルダをサービスアカウントのメールアドレス
-   （`xxx@yyy.iam.gserviceaccount.com`）に「編集者」で共有する。
-   共有ドライブ内のフォルダにも対応しています。
-3. フォルダ URL の末尾（`.../folders/<この部分>`）をフォルダ ID として控える。
-4. リポジトリの **Settings → Secrets and variables → Actions** に登録:
-   - `GOOGLE_DRIVE_CREDENTIALS_JSON` … サービスアカウント JSON 鍵の中身全文
-   - `GOOGLE_DRIVE_FOLDER_ID` … 手順 3 のフォルダ ID
+1. Google Cloud Console でサービスアカウントを作成し、Google Drive API を
+   有効化して JSON 鍵を発行する。
+2. 上記の共有ドライブ内フォルダにサービスアカウントのメールアドレス
+   （`xxx@yyy.iam.gserviceaccount.com`）を追加し、ファイルを作成・更新できる権限を付与する。
+3. リポジトリの **Settings → Secrets and variables → Actions → New repository secret** に
+   `GOOGLE_DRIVE_CREDENTIALS_JSON` として JSON 鍵の中身全文を登録する。
 
-未設定の場合、アップロードはスキップされて警告が出ます（ビルド自体は成功し、
-Artifacts から取得できます）。同名ファイルの上書きはサービスアカウント自身が
+鍵はリポジトリやチャットに貼らないでください。Secret が未設定の場合はワークフローが
+失敗し、Drive への未アップロードを成功と誤認しないようにします。フォルダ ID は
+ワークフローに設定済みです。同名ファイルの上書きはサービスアカウント自身が
 作成したファイルに限るため、フォルダ内に手動で同名ファイルを置かないでください。
 
 開発時は次のコマンドで同じ挙動を確認できます。
