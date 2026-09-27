@@ -78,9 +78,10 @@ def _show_startup_error(exc: Exception) -> None:
 
 
 def _ensure_standard_streams() -> None:
-    """Windowed PyInstaller exe で None になる標準ストリームを安全な捨て先へ逃がす。"""
+    """Windowed exe の未接続・非 UTF-8 標準ストリームを安全な捨て先へ逃がす。"""
+    frozen_windows = getattr(sys, "frozen", False) and sys.platform.startswith("win")
     for name in ("stdout", "stderr"):
-        if getattr(sys, name, None) is None:
+        if frozen_windows or getattr(sys, name, None) is None:
             stream = open(os.devnull, "w", encoding="utf-8", buffering=1)
             setattr(sys, name, stream)
             _NULL_STREAMS.append(stream)

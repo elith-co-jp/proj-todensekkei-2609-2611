@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+import io
 from types import SimpleNamespace
 
 import desktop
@@ -14,6 +15,19 @@ def test_ensure_standard_streams_replaces_missing_streams(monkeypatch):
 
     assert sys.stdout is not None
     assert sys.stderr is not None
+
+
+def test_frozen_windows_uses_utf8_streams(monkeypatch):
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(sys, "stdout", io.TextIOWrapper(io.BytesIO(), encoding="cp1252"))
+    monkeypatch.setattr(sys, "stderr", io.TextIOWrapper(io.BytesIO(), encoding="cp1252"))
+
+    desktop._ensure_standard_streams()
+
+    assert sys.stdout.encoding == "utf-8"
+    assert sys.stderr.encoding == "utf-8"
+    print("ブラウザで開きます")
 
 
 def test_main_disables_uvicorn_default_log_config(monkeypatch):
