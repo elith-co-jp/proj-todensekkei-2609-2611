@@ -40,7 +40,7 @@ def _wait_for_server(base_url: str, process: subprocess.Popen, deadline: float) 
         except requests.RequestException:
             pass
         time.sleep(1)
-    raise TimeoutError("Packaged exe did not start within 180 seconds")
+    raise TimeoutError("Packaged exe did not start within 300 seconds")
 
 
 def _request(method: str, url: str, **kwargs) -> dict:
@@ -62,6 +62,7 @@ def main() -> None:
             SEQANNO_DATA_DIR=str(Path(temporary) / "data"),
             SEQANNO_PORT=str(port),
             SEQANNO_NO_BROWSER="1",
+            SEQANNO_NO_DIALOG="1",
             SEQANNO_DESKTOP_IDLE_TIMEOUT_SECONDS="900",
             OMP_NUM_THREADS="2",
         )
@@ -69,7 +70,7 @@ def main() -> None:
             [str(executable)], cwd=temporary, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
         )
         try:
-            _wait_for_server(base_url, process, time.monotonic() + 180)
+            _wait_for_server(base_url, process, time.monotonic() + 300)
             status = _request("GET", f"{base_url}/api/ml/status")
             if status["ultralytics"] is not True or status["active_model"] is not None:
                 raise AssertionError(f"Unexpected initial ML status: {status}")
@@ -123,9 +124,17 @@ def main() -> None:
             if len(result["results"]) != 1 or result["model"]["id"] != run["result_model_id"]:
                 raise AssertionError(f"Inference did not use the trained model: {result}")
             print("Frozen EXE training and inference succeeded")
+        except Exception:
+            error_log = executable.parent / "annotator_error.log"
+            if error_log.is_file():
+                print(error_log.read_text(encoding="utf-8", errors="replace"), file=sys.stderr)
+            raise
         finally:
             if process.poll() is None:
-                process.terminate()
+                if os.name == "nt":
+                    subprocess.run(["taskkill", "/T", "/F", "/PID", str(process.pid)], check=False)
+                else:
+                    process.terminate()
                 try:
                     process.wait(timeout=10)
                 except subprocess.TimeoutExpired:

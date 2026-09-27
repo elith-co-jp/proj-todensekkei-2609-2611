@@ -65,7 +65,7 @@ def _show_startup_error(exc: Exception) -> None:
     if log_path:
         message += f"\n\n詳細ログ: {log_path}"
 
-    if sys.platform.startswith("win"):
+    if sys.platform.startswith("win") and os.environ.get("SEQANNO_NO_DIALOG") != "1":
         try:
             import ctypes
 
