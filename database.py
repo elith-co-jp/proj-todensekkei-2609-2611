@@ -45,15 +45,28 @@ def get_db():
 def _migrate_columns() -> None:
     """既存 DB への列追加（Alembic なしの軽量マイグレーション）。"""
     inspector = inspect(engine)
-    existing = {c["name"] for c in inspector.get_columns("annotation_symbols")}
     statements = []
-    if "origin" not in existing:
+    symbols_cols = {c["name"] for c in inspector.get_columns("annotation_symbols")}
+    if "origin" not in symbols_cols:
         statements.append(
             "ALTER TABLE annotation_symbols ADD COLUMN origin VARCHAR(20) NOT NULL DEFAULT 'manual'"
         )
-    if "confidence" not in existing:
+    if "confidence" not in symbols_cols:
         statements.append(
             "ALTER TABLE annotation_symbols ADD COLUMN confidence FLOAT"
+        )
+    run_cols = {c["name"] for c in inspector.get_columns("training_runs")}
+    if "decision" not in run_cols:
+        statements.append(
+            "ALTER TABLE training_runs ADD COLUMN decision VARCHAR(20) NOT NULL DEFAULT ''"
+        )
+    if "baseline_metrics_json" not in run_cols:
+        statements.append(
+            "ALTER TABLE training_runs ADD COLUMN baseline_metrics_json TEXT"
+        )
+    if "baseline_label" not in run_cols:
+        statements.append(
+            "ALTER TABLE training_runs ADD COLUMN baseline_label VARCHAR(500)"
         )
     if not statements:
         return

@@ -102,3 +102,9 @@ class TrainingRunRequest(BaseModel):
     epochs: int = Field(default=100, ge=1, le=1000)
     imgsz: int = Field(default=1280, ge=320, le=4096)
     base_model: str | None = None  # None = active モデル（無ければ yolov8n.pt）
+
+
+class TrainingDecisionPayload(BaseModel):
+    """学習済みモデルの採用判定。蓄積データでの新旧比較を見て採用するか選ぶ。"""
+
+    decision: Literal["adopt", "reject"]

@@ -8,7 +8,7 @@ import {
   FlaskConical,
   Layers,
   Loader2,
-  RefreshCw,
+  Scale,
   Sparkles,
   Trash2,
   Upload,
@@ -38,7 +38,15 @@ const CYCLE_STEPS = [
   { icon: FileJson, label: '2. 結果表示', desc: '検出結果を JSON で確認' },
   { icon: Layers, label: '3. 修正', desc: 'エディタで誤検出・漏れを修正' },
   { icon: Brain, label: '4. 学習', desc: '修正済みデータで YOLO を再学習' },
-  { icon: RefreshCw, label: '5. 改善', desc: '学習済みモデルが次の推論に自動適用' },
+  { icon: Scale, label: '5. 比較・採用', desc: '新旧モデルの精度を比較して採用可否を選択' },
+]
+
+// 採用判定パネルで並べる評価指標
+const COMPARE_METRICS = [
+  { key: 'metrics/mAP50-95(B)', label: 'mAP50-95' },
+  { key: 'metrics/mAP50(B)', label: 'mAP50' },
+  { key: 'metrics/precision(B)', label: 'Precision' },
+  { key: 'metrics/recall(B)', label: 'Recall' },
 ]
 
 function fmtBytes(n: number) {
@@ -212,11 +220,38 @@ export default function MlOpsPage() {
       setNotice({
         kind: 'success',
         title: `学習を開始しました（ジョブ #${run.id}）`,
-        body: `${run.image_count} 枚の画像で学習しています。完了すると best.pt がモデルとして登録・適用されます。`,
+        body: `${run.image_count} 枚の画像で学習しています。完了すると新旧モデルの精度比較が表示され、採用するかどうかを選べます。`,
       })
       await reload()
     } catch (e) {
       setNotice({ kind: 'error', title: '学習を開始できません', body: e instanceof Error ? e.message : String(e) })
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const decideRun = async (runId: number, decision: 'adopt' | 'reject') => {
+    setBusy(`decide-${runId}`)
+    setNotice(null)
+    try {
+      const run = await api.decideTrainingRun(runId, decision)
+      const name = run.result_model ? `${run.result_model.name} v${run.result_model.version}` : '新しいモデル'
+      setNotice(
+        decision === 'adopt'
+          ? {
+              kind: 'success',
+              title: `${name} を採用しました`,
+              body: '使用中のモデルに切り替えました。次回以降の推論と学習のベースに使われます。',
+            }
+          : {
+              kind: 'success',
+              title: `${name} を見送りました`,
+              body: '現行モデルを継続して使います。見送ったモデルはモデル管理から削除できます。',
+            },
+      )
+      await reload()
+    } catch (e) {
+      setNotice({ kind: 'error', title: '判定の登録に失敗しました', body: e instanceof Error ? e.message : String(e) })
     } finally {
       setBusy(null)
     }
@@ -241,6 +276,19 @@ export default function MlOpsPage() {
 
   const summaryFor = (id: number) => summaries.find((s) => s.project_id === id)
 
+  // 採用待ちの学習ジョブ（最新の1件だけパネルを出す）
+  const pendingRun = runs.find((r) => r.status === 'success' && r.decision === 'pending' && r.result_model)
+  const pendingModelIds = new Set(
+    runs.filter((r) => r.decision === 'pending').map((r) => r.result_model_id),
+  )
+
+  const metricDelta = (run: TrainingRun, key: string) => {
+    const current = Number(run.metrics?.[key])
+    const baseline = Number(run.baseline_metrics?.[key])
+    if (!Number.isFinite(current) || !Number.isFinite(baseline)) return null
+    return current - baseline
+  }
+
   return (
     <div className="page-shell enter-up">
       <header className="page-header">
@@ -248,7 +296,7 @@ export default function MlOpsPage() {
           <div className="eyebrow">AI improvement cycle</div>
           <h1 className="page-title">AI 改善サイクル</h1>
           <p className="page-description">
-            推論 → 結果確認 → エディタで修正 → データ蓄積 → YOLO 学習 → 精度改善 のサイクルをまわします
+            推論 → 結果確認 → エディタで修正 → データ蓄積 → YOLO 学習 → 精度比較・採用判定 のサイクルをまわします
           </p>
         </div>
       </header>
@@ -308,6 +356,96 @@ export default function MlOpsPage() {
             閉じる
           </button>
         </div>
+      )}
+
+      {pendingRun && (
+        <section className="card mb-5 overflow-hidden border-violet-200">
+          <div className="card-head bg-violet-50/60">
+            <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-violet-100 text-violet-700">
+              <Scale size={17} />
+            </span>
+            <div>
+              <div className="text-[9px] font-bold uppercase tracking-wider text-violet-400">Adoption review</div>
+              <h2 className="text-sm font-black">学習済みモデルの採用判定（ジョブ #{pendingRun.id}）</h2>
+            </div>
+          </div>
+          <div className="space-y-4 p-4 sm:p-5">
+            <p className="text-[12px] leading-6 text-slate-600">
+              新しいモデル{' '}
+              <b>
+                {pendingRun.result_model?.name} v{pendingRun.result_model?.version}
+              </b>{' '}
+              を蓄積済みデータ（{pendingRun.image_count} 枚）で評価し、現行モデル
+              （{pendingRun.baseline_label ?? '比較対象なし'}）と比較しました。
+              採用すると次回以降の推論と学習のベースにこのモデルが使われます。
+            </p>
+            {pendingRun.metrics || pendingRun.baseline_metrics ? (
+              <div className="overflow-x-auto rounded-2xl border border-slate-200">
+                <table className="w-full min-w-[520px] text-xs">
+                  <thead>
+                    <tr className="bg-slate-50 text-left text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                      <th className="px-3 py-2">指標</th>
+                      <th className="px-3 py-2">
+                        新モデル（{pendingRun.result_model?.name} v{pendingRun.result_model?.version}）
+                      </th>
+                      <th className="px-3 py-2">現行モデル（{pendingRun.baseline_label ?? '—'}）</th>
+                      <th className="px-3 py-2">差分</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {COMPARE_METRICS.map(({ key, label }) => {
+                      const delta = metricDelta(pendingRun, key)
+                      return (
+                        <tr key={key} className="border-t border-slate-100">
+                          <td className="px-3 py-2 font-bold text-slate-700">{label}</td>
+                          <td className="px-3 py-2 font-mono text-slate-800">{pendingRun.metrics?.[key] ?? '—'}</td>
+                          <td className="px-3 py-2 font-mono text-slate-500">{pendingRun.baseline_metrics?.[key] ?? '—'}</td>
+                          <td className="px-3 py-2 font-mono">
+                            {delta === null ? (
+                              <span className="text-slate-300">—</span>
+                            ) : (
+                              <span
+                                className={
+                                  delta > 0 ? 'font-bold text-emerald-600' : delta < 0 ? 'font-bold text-rose-600' : 'text-slate-400'
+                                }
+                              >
+                                {delta > 0 ? '+' : ''}
+                                {delta.toFixed(4)}
+                              </span>
+                            )}
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <p className="rounded-2xl border border-dashed border-slate-300 px-4 py-3 text-[11px] text-slate-500">
+                評価指標を取得できませんでした。エディタで推論結果を確認して採用可否を判断してください。
+              </p>
+            )}
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                className="btn btn-accent"
+                onClick={() => void decideRun(pendingRun.id, 'adopt')}
+                disabled={busy !== null}
+              >
+                {busy === `decide-${pendingRun.id}` ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={14} />}
+                このモデルを採用する
+              </button>
+              <button
+                type="button"
+                className="btn"
+                onClick={() => void decideRun(pendingRun.id, 'reject')}
+                disabled={busy !== null}
+              >
+                見送る（現行モデルを継続使用）
+              </button>
+            </div>
+          </div>
+        </section>
       )}
 
       <div className="grid gap-5 xl:grid-cols-2">
@@ -508,6 +646,7 @@ export default function MlOpsPage() {
                         <span className="font-mono text-slate-400">v{m.version}</span>
                         {m.is_active && <span className="rounded-full bg-emerald-600 px-2 py-0.5 text-[10px] font-black text-white">使用中</span>}
                         {m.source === 'trained' && <span className="rounded-full bg-violet-100 px-2 py-0.5 text-[10px] font-bold text-violet-700">学習済み</span>}
+                        {pendingModelIds.has(m.id) && <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-700">採用待ち</span>}
                       </div>
                       <div className="mt-0.5 font-mono text-[10px] text-slate-400">
                         {m.file_name} ・ {fmtBytes(m.size_bytes)} ・ {fmtTime(m.created_at)}
@@ -610,6 +749,15 @@ export default function MlOpsPage() {
                         <span className="font-bold text-slate-700">
                           {r.status === 'running' ? '実行中' : r.status === 'success' ? '完了' : '失敗'}
                         </span>
+                        {r.decision === 'pending' && (
+                          <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-700">採用待ち</span>
+                        )}
+                        {r.decision === 'adopted' && (
+                          <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-700">採用</span>
+                        )}
+                        {r.decision === 'rejected' && (
+                          <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-500">見送り</span>
+                        )}
                         <span className="font-mono text-[10px] text-slate-400">
                           {r.image_count}枚 / {r.epochs}ep / {r.imgsz}px
                         </span>

@@ -98,11 +98,11 @@ ZIP を選択してインポートすると、`bundle.json` の有無で復元�
 
 「推論 → 結果表示（JSON）→ 修正 → 蓄積 → 学習 → 改善」のサイクルを回す画面。
 
-- **モデル管理**: YOLO の `.pt` をアップロードして登録。`is_active` のモデルが推論・学習のベース。学習で生成された `best.pt` は自動登録・適用される
+- **モデル管理**: YOLO の `.pt` をアップロードして登録。`is_active` のモデルが推論・学習のベース。学習で生成された `best.pt` は自動登録されるが、適用は採用判定で選ぶ
 - **推論**: 対象図面と信頼度しきい値を指定して実行。検出は `predictions` テーブルに図面単位で「最新だけ」保持し、同画面で JSON 表示できる
 - **外部推論の取込**: `ultralytics` 未導入環境では、外部で `yolo predict --save-txt --save-conf` した labels ZIP を取り込む。エクスポート画像名（`p<図面ID>_*.png`）と同名の `p<図面ID>_*.txt` を自動で図面へ対応づける
 - **修正**: エディタの「AI 推論」ボタンで検出を破線枠のシンボルとして取り込み、通常のシンボルと同じ操作で修正。保存時に `origin=inference` と信頼度が付く
-- **学習**: 蓄積アノテーションから `data/training/run_<id>/dataset` を生成し、`ultralytics` で学習（バックグラウンドスレッド）。履歴にメトリクス（mAP 等）とログ末尾を保持
+- **学習**: 蓄積アノテーションから `data/training/run_<id>/dataset` を生成し、`ultralytics` で学習（バックグラウンドスレッド）。履歴にメトリクス（mAP 等）とログ末尾を保持。完了時に新旧モデルを同じ蓄積データで評価し、比較指標とベースライン名を記録して採用待ち（`decision=pending`）にする
 - **Windows 配布版**: CPU 版 PyTorch・Ultralytics・学習開始用の検証済み YOLOv8n 重みを単一 EXE に同梱。初回学習は内蔵重みから開始でき、学習済み `best.pt` が推論モデルになる。シーケンス図向け未学習の初期重みを推論モデルとして自動登録しない
 - **外部実行への誘導**: `ultralytics` が無い場合、推論・学習 API は日本語メッセージで外部フロー（エクスポート → 外部 predict/学習 → 取込）を案内する
 
@@ -155,7 +155,8 @@ ZIP を選択してインポートすると、`bundle.json` の有無で復元�
 | `GET` | `/api/ml/projects/{id}/predictions` | 図面の最新推論結果（JSON。クラス名・信頼度つき） |
 | `POST` | `/api/ml/training/run` | `{project_ids[], only_done, epochs, imgsz, base_model}`。バックグラウンドで学習 |
 | `GET` | `/api/ml/training/runs` | 学習履歴（最新 50 件。メトリクス・ログ末尾つき） |
-| `GET` | `/api/ml/training/runs/{id}` | 学習ジョブの状態・メトリクス・ログ |
+| `GET` | `/api/ml/training/runs/{id}` | 学習ジョブの状態・メトリクス・新旧比較・ログ |
+| `POST` | `/api/ml/training/runs/{id}/decision` | `{decision: adopt\|reject}`。採用で成果物モデルを使用中に切替え |
 
 ### `PUT /api/projects/{id}/annotations` のリクエスト
 

@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 from database import get_db
 from models import AnnotationProject, MlModel, TrainingRun
 from routers.common import get_project_or_404, safe_upload_name
-from schemas import InferenceRunRequest, TrainingRunRequest
+from schemas import InferenceRunRequest, TrainingDecisionPayload, TrainingRunRequest
 from services.inference_service import (
     import_predictions_zip,
     predictions_payload,
@@ -194,4 +194,31 @@ def get_training_run(run_id: int, db: Session = Depends(get_db)):
     run = db.query(TrainingRun).filter(TrainingRun.id == run_id).one_or_none()
     if run is None:
         raise HTTPException(404, "学習ジョブが見つかりません")
+    return serialize_run(run)
+
+
+@router.post("/training/runs/{run_id}/decision")
+def decide_training_run(
+    run_id: int, payload: TrainingDecisionPayload, db: Session = Depends(get_db)
+):
+    """学習済みモデルの採用判定。蓄積データでの新旧比較を見て採用/見送りを選ぶ。"""
+    run = db.query(TrainingRun).filter(TrainingRun.id == run_id).one_or_none()
+    if run is None:
+        raise HTTPException(404, "学習ジョブが見つかりません")
+    if run.status != "success" or run.result_model_id is None:
+        raise HTTPException(400, "採用判定できるのは完了した学習ジョブのみです")
+    if run.decision != "pending":
+        raise HTTPException(400, "この学習ジョブはすでに判定済みです")
+    model = (
+        db.query(MlModel).filter(MlModel.id == run.result_model_id).one_or_none()
+    )
+    if model is None:
+        raise HTTPException(400, "成果物のモデルが削除されているため判定できません")
+    if payload.decision == "adopt":
+        activate(db, model)
+        run.decision = "adopted"
+    else:
+        run.decision = "rejected"
+    db.commit()
+    db.refresh(run)
     return serialize_run(run)

@@ -39,6 +39,8 @@ export default function ProjectListPage() {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
   const [msg, setMsg] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  // 直近の登録で作られた図面（登録直後に AI 推論へ進める導線用）
+  const [justRegistered, setJustRegistered] = useState<number[] | null>(null)
   const fileRef = useRef<HTMLInputElement | null>(null)
   const anchorRef = useRef<number | null>(null)
   const deleteDialogRef = useRef<HTMLElement | null>(null)
@@ -89,6 +91,15 @@ export default function ProjectListPage() {
     try {
       const response = await api.createProjects(Array.from(files))
       setMsg(`${response.count} 件の図面を登録しました`)
+      // 推論できる状態なら「登録した図面に AI 推論」ボタンを出す
+      let inferable = false
+      try {
+        const s = await api.mlStatus()
+        inferable = Boolean(s.ultralytics && s.active_model)
+      } catch {
+        inferable = false
+      }
+      setJustRegistered(inferable ? response.project_ids : null)
       await load()
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught))
@@ -126,6 +137,7 @@ export default function ProjectListPage() {
     try {
       await api.bulkDelete(Array.from(checked))
       setChecked(new Set())
+      setJustRegistered(null)
       setMsg('選択した図面を削除しました')
       await load()
       setDeleteDialogOpen(false)
@@ -156,6 +168,26 @@ export default function ProjectListPage() {
       setMsg(
         `AI 推論が完了しました（${r.detection_count} 件検出）。図面を開くと「AI 推論」ボタンで結果を取り込めます`,
       )
+      setJustRegistered(null)
+      await load()
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  /** 登録直後の図面にそのまま推論をかける */
+  const inferRegistered = async () => {
+    if (!justRegistered || justRegistered.length === 0) return
+    setBusy(true)
+    setError(null)
+    try {
+      const r = await api.runInference(justRegistered)
+      setMsg(
+        `AI 推論が完了しました（${r.detection_count} 件検出）。図面を開くと検出結果を確認・修正できます`,
+      )
+      setJustRegistered(null)
       await load()
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught))
@@ -273,7 +305,17 @@ export default function ProjectListPage() {
           role={error ? 'alert' : 'status'}
         >
           {error ? <X size={18} className="mt-0.5 flex-none" /> : <CheckCircle2 size={18} className="mt-0.5 flex-none" />}
-          <span>{error ?? msg}</span>
+          <span className="flex-1">{error ?? msg}</span>
+          {!error && justRegistered && justRegistered.length > 0 && (
+            <button
+              type="button"
+              className="btn btn-sm flex-none border-emerald-300 bg-white text-emerald-700 hover:bg-emerald-100"
+              onClick={() => void inferRegistered()}
+              disabled={busy}
+            >
+              <Sparkles size={13} /> 登録した {justRegistered.length} 件に AI 推論を実行
+            </button>
+          )}
         </div>
       )}
 

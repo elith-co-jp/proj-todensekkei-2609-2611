@@ -194,4 +194,11 @@ export const api = {
   listTrainingRuns: () => req<TrainingRun[]>('/api/ml/training/runs'),
 
   getTrainingRun: (id: number) => req<TrainingRun>(`/api/ml/training/runs/${id}`),
+
+  decideTrainingRun: (id: number, decision: 'adopt' | 'reject') =>
+    req<TrainingRun>(`/api/ml/training/runs/${id}/decision`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ decision }),
+    }),
 }

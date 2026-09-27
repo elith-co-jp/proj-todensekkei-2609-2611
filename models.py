@@ -233,7 +233,11 @@ class Prediction(Base):
 
 
 class TrainingRun(Base):
-    """学習ジョブの履歴。完了すると成果物の .pt が MlModel として登録される。"""
+    """学習ジョブの履歴。完了すると成果物の .pt が MlModel として登録される。
+
+    学習済みモデルは蓄積データで旧モデルと精度比較したうえで、利用者が採用するか
+    選べるように `decision` を pending で保持する（採用時のみ active 化）。
+    """
 
     __tablename__ = "training_runs"
 
@@ -248,6 +252,10 @@ class TrainingRun(Base):
         Integer, ForeignKey("ml_models.id", ondelete="SET NULL"), nullable=True
     )
     metrics_json = Column(Text, nullable=True)
+    # 採用判定: ''=対象外（実行中/失敗） / pending=採用待ち / adopted=採用 / rejected=見送り
+    decision = Column(String(20), nullable=False, default="")
+    baseline_metrics_json = Column(Text, nullable=True)  # 旧モデルの評価指標
+    baseline_label = Column(String(500), nullable=True)  # 旧モデルの表示名
     log_tail = Column(Text, nullable=True)
     started_at = Column(DateTime, default=utc_now_naive)
     finished_at = Column(DateTime, nullable=True)
