@@ -2,6 +2,8 @@ name: Build Windows EXE
 
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
 
 permissions:
   contents: read
@@ -167,3 +169,15 @@ jobs:
           path: dist/Annotator.exe
           if-no-files-found: error
           retention-days: 7
+
+      - name: Upload to Google Drive
+        env:
+          GOOGLE_DRIVE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_DRIVE_CREDENTIALS_JSON }}
+          GOOGLE_DRIVE_FOLDER_ID: ${{ secrets.GOOGLE_DRIVE_FOLDER_ID }}
+        run: |
+          if (-not $env:GOOGLE_DRIVE_CREDENTIALS_JSON -or -not $env:GOOGLE_DRIVE_FOLDER_ID) {
+            Write-Host "::warning::GOOGLE_DRIVE_CREDENTIALS_JSON / GOOGLE_DRIVE_FOLDER_ID が未設定のため Google Drive へのアップロードをスキップします（README の「Google Drive への自動アップロード」参照）"
+            exit 0
+          }
+          pip install google-api-python-client==2.200.0
+          python scripts/upload_to_drive.py dist/Annotator.exe
