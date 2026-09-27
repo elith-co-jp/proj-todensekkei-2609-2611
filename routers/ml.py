@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from database import get_db
 from models import AnnotationProject, MlModel, TrainingRun
+from routers.common import get_project_or_404, safe_upload_name
 from schemas import InferenceRunRequest, TrainingRunRequest
 from services.inference_service import (
     import_predictions_zip,
@@ -32,13 +33,6 @@ from services.model_service import (
 from services.training_service import running_training, serialize_run, start_training
 
 router = APIRouter(prefix="/api/ml", tags=["ml"])
-
-
-def _get_project_or_404(db: Session, project_id: int) -> AnnotationProject:
-    p = db.query(AnnotationProject).filter(AnnotationProject.id == project_id).one_or_none()
-    if p is None:
-        raise HTTPException(404, "アノテーションプロジェクトが見つかりません")
-    return p
 
 
 def _get_model_or_404(db: Session, model_id: int) -> MlModel:
@@ -71,7 +65,7 @@ def list_models(db: Session = Depends(get_db)):
 @router.post("/models")
 async def upload_model(file: UploadFile = File(...), db: Session = Depends(get_db)):
     raw = await file.read()
-    name = (file.filename or "model.pt").rsplit("/", 1)[-1]
+    name = safe_upload_name(file, "model.pt")
     try:
         digest, size = store_model_bytes(raw, name)
     except ValueError as exc:
@@ -148,14 +142,14 @@ def inference_run(payload: InferenceRunRequest, db: Session = Depends(get_db)):
 @router.post("/inference/import")
 async def inference_import(archive: UploadFile = File(...), db: Session = Depends(get_db)):
     """外部の `yolo predict --save-txt --save-conf` 出力 ZIP を推論結果として取り込む。"""
-    name = (archive.filename or "").lower()
-    if not name.endswith(".zip"):
+    name = safe_upload_name(archive, "predictions.zip")
+    if not name.lower().endswith(".zip"):
         raise HTTPException(400, "ZIP ファイルを指定してください")
     blob = await archive.read()
     if not blob:
         raise HTTPException(400, "ファイルが空です")
     try:
-        return import_predictions_zip(db, blob, source_label=archive.filename or "外部推論")
+        return import_predictions_zip(db, blob, source_label=name)
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
 
@@ -168,7 +162,7 @@ def list_predictions(db: Session = Depends(get_db)):
 @router.get("/projects/{project_id}/predictions")
 def project_predictions(project_id: int, db: Session = Depends(get_db)):
     """結果表示（JSON 出力）：この図面の最新推論結果。"""
-    project = _get_project_or_404(db, project_id)
+    project = get_project_or_404(db, project_id)
     return predictions_payload(db, project)
 
 

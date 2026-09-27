@@ -2,7 +2,13 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
+
+SymbolOrigin = Literal["manual", "inference"]
+ProjectStatus = Literal["draft", "review", "done"]
+ConnectionKind = Literal["wire", "sheet_ref"]
 
 
 # ---------- クラスマスタ ----------
@@ -38,8 +44,8 @@ class SymbolPayload(BaseModel):
     w: float
     h: float
     note: str | None = None
-    origin: str = "manual"  # manual / inference（AI 推論由来）
-    confidence: float | None = None
+    origin: SymbolOrigin = "manual"  # manual / inference（AI 推論由来）
+    confidence: float | None = Field(default=None, ge=0.0, le=1.0)
     terminals: list[TerminalPayload] = []
 
 
@@ -50,7 +56,7 @@ class ConnectionPayload(BaseModel):
     to_terminal_ref: str | None = None
     wire_no: str | None = None
     net_id: str | None = None
-    kind: str = "wire"
+    kind: ConnectionKind = "wire"
     external_ref: str | None = None
     note: str | None = None
 
@@ -67,7 +73,7 @@ class ProjectMetaPayload(BaseModel):
     sheet_no: str | None = None
     page_no: str | None = None
     revision: str | None = None
-    status: str | None = None
+    status: ProjectStatus | None = None
     assignee: str | None = None
     note: str | None = None
 

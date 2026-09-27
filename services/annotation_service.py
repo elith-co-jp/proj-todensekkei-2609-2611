@@ -7,7 +7,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import io
 from pathlib import Path
 
@@ -22,6 +21,7 @@ from models import (
     SymbolClass,
     SymbolTerminal,
 )
+from services.blob_store import store_blob
 from services.geometry import sanitize_box
 
 MAX_IMAGE_BYTES = 64 * 1024 * 1024
@@ -39,17 +39,13 @@ def store_image_bytes(raw: bytes) -> tuple[str, int, int]:
     try:
         img = Image.open(io.BytesIO(raw))
         img.load()
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         raise ValueError("画像を読み込めませんでした") from exc
     if img.mode not in ("RGB", "L"):
         img = img.convert("RGB")
     buf = io.BytesIO()
     img.save(buf, format="PNG", optimize=True)
-    data = buf.getvalue()
-    digest = hashlib.sha256(data).hexdigest()
-    path = IMAGE_DIR / f"{digest}.png"
-    if not path.exists():
-        path.write_bytes(data)
+    digest, _ = store_blob(IMAGE_DIR, buf.getvalue(), ".png")
     return digest, img.width, img.height
 
 

@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session
 
 from models import AnnotationProject, MlModel, Prediction, SymbolClass
 from services.annotation_service import classes_ordered, image_path
-from services.export_service import _safe_members
+from services.export_service import safe_members
 from services.geometry import sanitize_box
 from services.model_service import model_path
 
@@ -111,7 +111,7 @@ def run_inference(
                 xywhn = boxes.xywhn.tolist()
                 confs = boxes.conf.tolist() if boxes.conf is not None else [None] * len(xywhn)
                 classes = boxes.cls.tolist() if boxes.cls is not None else [None] * len(xywhn)
-                for (cx, cy, w, h), score, cls_index in zip(xywhn, confs, classes):
+                for (cx, cy, w, h), score, cls_index in zip(xywhn, confs, classes, strict=False):
                     cls = class_by_index.get(int(cls_index)) if cls_index is not None else None
                     if cls is None:
                         continue
@@ -197,7 +197,7 @@ def import_predictions_zip(db: Session, blob: bytes, source_label: str) -> dict:
         raise ValueError("ZIP ファイルとして読み込めませんでした") from exc
 
     with zf:
-        infos = _safe_members(zf)
+        infos = safe_members(zf)
         files: dict[str, bytes] = {}
         for info in infos:
             files[info.filename.replace("\\", "/")] = zf.read(info)
@@ -268,8 +268,9 @@ def predictions_payload(db: Session, project: AnnotationProject) -> dict:
     return {
         "project_id": project.id,
         "name": project.name,
-        "model_label": min(model_labels) if len(model_labels) == 1 else None,
-        "model_id": min(model_ids) if len(model_ids) == 1 else None,
+        # 複数ソースが混ざる場合は「出どころが一意でない」として None を返す
+        "model_label": next(iter(model_labels)) if len(model_labels) == 1 else None,
+        "model_id": next(iter(model_ids)) if len(model_ids) == 1 else None,
         "count": len(rows),
         "detections": [
             {
@@ -299,7 +300,7 @@ def predictions_summary(db: Session) -> list[dict]:
         .all()
     )
     by_project: dict[int, dict] = {}
-    for project_id, model_label, pid in rows:
+    for project_id, model_label, _ in rows:
         entry = by_project.setdefault(
             project_id, {"project_id": project_id, "count": 0, "model_label": model_label}
         )

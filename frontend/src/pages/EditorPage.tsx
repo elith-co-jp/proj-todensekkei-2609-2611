@@ -186,6 +186,10 @@ type Drag =
 
 const MIN_BOX = 0.002
 
+// AI 推論の取り込み時に「既存シンボルと同一」とみなす許容誤差（正規化座標）
+const INFERENCE_CENTER_TOLERANCE = 0.01
+const INFERENCE_SIZE_TOLERANCE = 0.02
+
 function clamp01(v: number) {
   return v < 0 ? 0 : v > 1 ? 1 : v
 }
@@ -674,10 +678,10 @@ export default function EditorPage() {
         const dup = next.some(
           (s) =>
             s.class_key === d.class_key &&
-            Math.abs(s.cx - d.cx) < 0.01 &&
-            Math.abs(s.cy - d.cy) < 0.01 &&
-            Math.abs(s.w - d.w) < 0.02 &&
-            Math.abs(s.h - d.h) < 0.02,
+            Math.abs(s.cx - d.cx) < INFERENCE_CENTER_TOLERANCE &&
+            Math.abs(s.cy - d.cy) < INFERENCE_CENTER_TOLERANCE &&
+            Math.abs(s.w - d.w) < INFERENCE_SIZE_TOLERANCE &&
+            Math.abs(s.h - d.h) < INFERENCE_SIZE_TOLERANCE,
         )
         if (dup) {
           skipped += 1

@@ -6,7 +6,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 from pathlib import Path
 
@@ -14,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from database import MODEL_DIR
 from models import MlModel
+from services.blob_store import store_blob
 
 MAX_MODEL_BYTES = 1024 * 1024 * 1024  # 1 GiB
 
@@ -31,11 +31,7 @@ def store_model_bytes(raw: bytes, file_name: str) -> tuple[str, int]:
     # .pt / .torchscript 等の拡張子チェックは緩め、内容は PyTorch 系のバイナリであることだけ要求
     if not (file_name.lower().endswith((".pt", ".pth", ".torchscript")) or raw[:2] == b"PK"):
         raise ValueError("YOLO モデル（.pt）を指定してください")
-    digest = hashlib.sha256(raw).hexdigest()
-    path = model_path(digest)
-    if not path.exists():
-        path.write_bytes(raw)
-    return digest, len(raw)
+    return store_blob(MODEL_DIR, raw, ".pt")
 
 
 def next_version(db: Session) -> int:

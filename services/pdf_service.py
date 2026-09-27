@@ -45,7 +45,7 @@ def _render_with_pymupdf(fitz, raw: bytes, dpi: int) -> list[bytes]:
     pages: list[bytes] = []
     try:
         doc = fitz.open(stream=raw, filetype="pdf")
-    except Exception as exc:  # noqa: BLE001  破損 PDF 等
+    except Exception as exc:
         raise ValueError("PDF を読み込めませんでした") from exc
     with doc:
         count = doc.page_count

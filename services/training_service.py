@@ -23,7 +23,7 @@ from sqlalchemy.orm import Session
 from database import TRAINING_DIR, SessionLocal
 from models import AnnotationProject, MlModel, TrainingRun, utc_now_naive
 from services.annotation_service import classes_ordered, image_path
-from services.export_service import _base_name, build_label_content
+from services.export_service import build_label_content, project_image_stem
 from services.inference_service import ultralytics_available
 from services.model_service import activate, model_path, next_version, store_model_bytes
 
@@ -105,7 +105,7 @@ def _write_dataset(db: Session, run_dir, projects: list[AnnotationProject]) -> s
             src = image_path(image.sha256)
             if not src.exists():
                 continue
-            base = _base_name(project, image)
+            base = project_image_stem(project, image)
             (images_dir / f"{base}.png").write_bytes(src.read_bytes())
             (labels_dir / f"{base}.txt").write_text(label_content, encoding="utf-8")
             written += 1
