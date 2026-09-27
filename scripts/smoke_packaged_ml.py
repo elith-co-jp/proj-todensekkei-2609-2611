@@ -45,7 +45,10 @@ def _wait_for_server(base_url: str, process: subprocess.Popen, deadline: float) 
 
 def _request(method: str, url: str, **kwargs) -> dict:
     response = requests.request(method, url, timeout=60, **kwargs)
-    response.raise_for_status()
+    try:
+        response.raise_for_status()
+    except requests.HTTPError as exc:
+        raise RuntimeError(f"{method} {url} failed: {response.status_code} {response.text[:2000]}") from exc
     return response.json()
 
 
@@ -103,7 +106,7 @@ def main() -> None:
             run = _request(
                 "POST",
                 f"{base_url}/api/ml/training/run",
-                json={"project_ids": [project_id], "only_done": False, "epochs": 1, "imgsz": 64},
+                json={"project_ids": [project_id], "only_done": False, "epochs": 1, "imgsz": 320},
             )
             deadline = time.monotonic() + 600
             while time.monotonic() < deadline:

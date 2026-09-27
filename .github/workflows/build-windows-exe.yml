@@ -189,6 +189,7 @@ jobs:
         env:
           GOOGLE_DRIVE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_DRIVE_CREDENTIALS_JSON }}
           GOOGLE_DRIVE_FOLDER_ID: 1RXQF7syvhMOmS86IB3bhJZOxgFnlKqZq
+          SOURCE_URL: https://github.com/${{ github.repository }}/tree/${{ github.sha }}
           PYTHONIOENCODING: utf-8
         run: |
           if (-not $env:GOOGLE_DRIVE_CREDENTIALS_JSON) {

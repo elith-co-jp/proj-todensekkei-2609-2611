@@ -8,7 +8,7 @@ setlocal
 
 cd /d "%~dp0"
 
-echo [1/4] Python 仮想環境を用意します...
+echo [1/5] Python 仮想環境を用意します...
 if not exist ".venv" (
     python -m venv .venv || goto :error
 )
@@ -17,17 +17,20 @@ python -m pip install --upgrade pip || goto :error
 pip install torch==2.5.1 torchvision==0.20.1 --index-url https://download.pytorch.org/whl/cpu || goto :error
 pip install -r requirements.txt -r requirements-ml.txt "pyinstaller>=6.17,<7" || goto :error
 
-echo [2/4] フロントエンドをビルドします...
+echo [2/5] フロントエンドをビルドします...
 pushd frontend
 call npm ci || goto :error
 call npm run build || goto :error
 popd
 
-echo [3/4] exe をビルドします...
+echo [3/5] exe をビルドします...
 python scripts\fetch_base_model.py || goto :error
 pyinstaller seq-annotator.spec --noconfirm || goto :error
 
-echo [4/4] 完了しました。
+echo [4/5] exe で短い学習と推論を確認します...
+python scripts\smoke_packaged_ml.py dist\Annotator.exe || goto :error
+
+echo [5/5] 完了しました。
 echo    生成物: dist\Annotator.exe
 echo    ダブルクリックで起動し、既定ブラウザに UI が開きます。
 goto :eof

@@ -102,7 +102,8 @@ PDF 取り込みも exe 内蔵の PyMuPDF で処理するため、Poppler の別
 推論にはシーケンス図向けに学習したモデルが必要です。画面から `best.pt` を登録するか、
 アノテーションを蓄積して内蔵重みから学習すると、生成したモデルが自動で使用中になります。
 CPU での学習は GPU より時間がかかります。
-配布版は [AGPL-3.0](LICENSE) の条件に従い、対応するソースコードとともに提供します。
+配布版は [AGPL-3.0](LICENSE) の条件に従い、[公開ソースコード](https://github.com/elith-co-jp/proj-todensekkei-2609-2611)
+とともに提供します。Drive 上の EXE の説明欄には、ビルドに使用したコミットへのリンクを記載します。
 
 **ビルド**（Python 3.11+ と Node.js 18+ を入れた Windows で 1 回だけ実行）:
 
@@ -110,7 +111,7 @@ CPU での学習は GPU より時間がかかります。
 build_windows.bat
 ```
 
-`dist\Annotator.exe` が生成されます。PyInstaller はクロスビルドできないため、
+短い学習・推論の検証が通ると `dist\Annotator.exe` が生成されます。PyInstaller はクロスビルドできないため、
 Windows 用 exe は必ず Windows 上でビルドしてください（spec: `seq-annotator.spec`）。
 ビルド時のみ、公式 Ultralytics リリースから `yolov8n.pt` を取得して SHA-256 を照合します。
 配布先で初期モデルをダウンロードする必要はありません。
