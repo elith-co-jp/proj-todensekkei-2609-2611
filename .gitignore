@@ -10,4 +10,5 @@ frontend/node_modules/
 *.tsbuildinfo
 build/
 dist/
+.build-assets/
 *.exe

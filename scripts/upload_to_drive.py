@@ -5,6 +5,7 @@ GitHub Actions の ``build-windows-exe.yml`` から呼ぶ想定。必要な環�
 - ``GOOGLE_DRIVE_CREDENTIALS_JSON``: サービスアカウント鍵 JSON の中身
 - ``GOOGLE_DRIVE_FOLDER_ID``: 保存先フォルダ ID（共有ドライブ内のフォルダも可）
 - ``DRIVE_FILE_NAME``（任意）: Drive 上のファイル名。既定はローカルファイル名
+- ``SOURCE_URL``（任意）: 配布 EXE に対応するソースのコミット URL
 
 同名ファイルがフォルダ内に既にあれば上書き更新する（drive.file スコープのため、
 更新できるのはこのサービスアカウント自身が作成したファイルのみ）。
@@ -44,6 +45,8 @@ def main() -> int:
         return 1
 
     name = os.environ.get("DRIVE_FILE_NAME") or file_path.name
+    source_url = os.environ.get("SOURCE_URL", "").strip()
+    metadata = {"description": f"AGPL-3.0 対応ソース: {source_url}"} if source_url else {}
     creds = Credentials.from_service_account_info(
         json.loads(creds_json), scopes=SCOPES
     )
@@ -69,7 +72,7 @@ def main() -> int:
     if existing:
         target = existing[0]
         drive.files().update(
-            fileId=target["id"], media_body=media, supportsAllDrives=True
+            fileId=target["id"], body=metadata, media_body=media, supportsAllDrives=True
         ).execute()
         print(
             f"Google Drive の既存ファイルを更新しました: {name} (id={target['id']})"
@@ -78,7 +81,7 @@ def main() -> int:
         created = (
             drive.files()
             .create(
-                body={"name": name, "parents": [folder_id]},
+                body={"name": name, "parents": [folder_id], **metadata},
                 media_body=media,
                 fields="id,name",
                 supportsAllDrives=True,

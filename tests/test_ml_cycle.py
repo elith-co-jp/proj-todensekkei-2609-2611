@@ -9,6 +9,8 @@ from __future__ import annotations
 import io
 import zipfile
 
+import pytest
+
 from tests.conftest import SAMPLE_ANNOTATION, create_project
 
 
@@ -221,6 +223,21 @@ def test_training_runs_list(client):
     res = client.get("/api/ml/training/runs")
     assert res.status_code == 200
     assert res.json() == []
+
+
+def test_frozen_training_uses_bundled_base_model(tmp_path, monkeypatch):
+    from services import training_service
+
+    bundled = tmp_path / "models" / "yolov8n.pt"
+    bundled.parent.mkdir()
+    bundled.write_bytes(b"test weight")
+    monkeypatch.setattr(training_service, "resource_base", lambda: tmp_path)
+    monkeypatch.setattr(training_service, "is_frozen", lambda: True)
+
+    assert training_service.default_base_model() == str(bundled)
+    bundled.unlink()
+    with pytest.raises(FileNotFoundError, match="同梱した学習用モデル"):
+        training_service.default_base_model()
 
 
 def test_project_predictions_404(client):

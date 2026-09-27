@@ -1,5 +1,6 @@
-# AI 改善サイクル（ツール内推論・学習）を有効にするための追加依存。
-# GPU/容量が必要なため本体の requirements.txt には含めない。
+# AI 改善サイクル（ツール内推論・学習）の依存。
+# Windows 配布 exe には CPU 版 PyTorch とともに必ず同梱する。
+# 開発環境では任意で追加できる。
 #   pip install -r requirements-ml.txt
 # が済んでいる環境では /api/ml/inference/run と /api/ml/training/run が有効になる。
 # 無い環境ではエクスポート → 外部 `yolo predict` / 学習 → 結果・best.pt 取込の

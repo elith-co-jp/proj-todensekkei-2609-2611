@@ -26,9 +26,20 @@ from services.annotation_service import classes_ordered, image_path
 from services.export_service import build_label_content, project_image_stem
 from services.inference_service import ultralytics_available
 from services.model_service import activate, model_path, next_version, store_model_bytes
+from runtime import is_frozen, resource_base
 
 DEFAULT_BASE_MODEL = "yolov8n.pt"
 _LOG_TAIL_LIMIT = 4000
+
+
+def default_base_model() -> str:
+    """Use the verified packaged weight without a runtime download in the exe."""
+    bundled = resource_base() / "models" / DEFAULT_BASE_MODEL
+    if bundled.is_file():
+        return str(bundled)
+    if is_frozen():
+        raise FileNotFoundError("同梱した学習用モデルが見つかりません。exe を再取得してください")
+    return DEFAULT_BASE_MODEL
 
 
 def running_training(db: Session) -> TrainingRun | None:
@@ -159,7 +170,7 @@ def _run_training(run_id: int) -> None:
         base = run.base_model
         if not base:
             active = db.query(MlModel).filter(MlModel.is_active.is_(True)).one_or_none()
-            base = str(model_path(active.sha256)) if active else DEFAULT_BASE_MODEL
+            base = str(model_path(active.sha256)) if active else default_base_model()
         run.base_model = base
         db.commit()
 
@@ -168,14 +179,19 @@ def _run_training(run_id: int) -> None:
         print(f"[training-run-{run.id}] dataset={data_yaml} base={base}", file=log_buf)
         with contextlib.redirect_stdout(log_buf), contextlib.redirect_stderr(log_buf):
             yolo = YOLO(base)
-            yolo.train(
-                data=data_yaml,
-                epochs=run.epochs,
-                imgsz=run.imgsz,
-                project=str(run_dir),
-                name="train",
-                exist_ok=True,
-            )
+            train_args = {
+                "data": data_yaml,
+                "epochs": run.epochs,
+                "imgsz": run.imgsz,
+                "project": str(run_dir),
+                "name": "train",
+                "exist_ok": True,
+            }
+            if is_frozen():
+                # Windows の凍結 exe から DataLoader の子プロセスを起動しない。
+                train_args["workers"] = 0
+                train_args["plots"] = False
+            yolo.train(**train_args)
 
         best = run_dir / "train" / "weights" / "best.pt"
         if not best.exists():
