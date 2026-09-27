@@ -64,7 +64,7 @@ def _migrate_columns() -> None:
 
 def init_db() -> None:
     """テーブル作成と初期クラスマスタの投入。"""
-    from models import SymbolClass  # noqa: PLC0415  循環 import 回避
+    from models import SymbolClass
 
     Base.metadata.create_all(bind=engine)
     _migrate_columns()

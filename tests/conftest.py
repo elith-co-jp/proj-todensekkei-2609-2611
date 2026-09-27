@@ -16,11 +16,11 @@ _TMP = tempfile.mkdtemp(prefix="seqanno_test_")
 os.environ["SEQANNO_DATA_DIR"] = _TMP
 os.environ["SEQANNO_DATABASE_URL"] = f"sqlite:///{Path(_TMP) / 'test.db'}"
 
-from fastapi.testclient import TestClient  # noqa: E402
-from PIL import Image  # noqa: E402
+from fastapi.testclient import TestClient
+from PIL import Image
 
-import database  # noqa: E402
-from main import app  # noqa: E402
+import database
+from main import app
 
 
 @pytest.fixture(autouse=True)

@@ -30,6 +30,9 @@ import type {
 
 type Notice = { kind: 'success' | 'error'; title: string; body: string }
 
+// 学習実行中のステータスポーリング間隔
+const TRAINING_POLL_MS = 3000
+
 const CYCLE_STEPS = [
   { icon: Zap, label: '1. 推論', desc: '登録モデルで図面からシンボルを検出' },
   { icon: FileJson, label: '2. 結果表示', desc: '検出結果を JSON で確認' },
@@ -99,11 +102,11 @@ export default function MlOpsPage() {
     void reload()
   }, [reload])
 
-  // 学習中は 3 秒ごとに状況をポーリング
+  // 学習中は定期ポーリングで状況を追う
   const trainingRunning = status?.training_running != null || runs.some((r) => r.status === 'running')
   useEffect(() => {
     if (!trainingRunning) return
-    const timer = window.setInterval(() => void reload(), 3000)
+    const timer = window.setInterval(() => void reload(), TRAINING_POLL_MS)
     return () => window.clearInterval(timer)
   }, [trainingRunning, reload])
 

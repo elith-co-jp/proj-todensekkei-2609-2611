@@ -10,7 +10,7 @@ MIN_SIZE = 1e-4
 
 
 def clamp01(v: float) -> float:
-    return 0.0 if v < 0.0 else (1.0 if v > 1.0 else v)
+    return 0.0 if v < 0.0 else (min(v, 1.0))
 
 
 def normalize_box(x1: float, y1: float, x2: float, y2: float, w: int, h: int) -> tuple[float, float, float, float]:

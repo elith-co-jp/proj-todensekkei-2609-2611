@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, Response
@@ -17,7 +17,9 @@ from models import (
     Connection,
     Prediction,
     SymbolClass,
+    SymbolTerminal,
 )
+from routers.common import get_project_or_404, safe_upload_name
 from schemas import (
     AnnotationUpdatePayload,
     BulkIdsRequest,
@@ -40,14 +42,7 @@ router = APIRouter(prefix="/api", tags=["annotation"])
 
 
 def _stamp() -> str:
-    return datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-
-
-def _get_project(db: Session, project_id: int) -> AnnotationProject:
-    p = db.query(AnnotationProject).filter(AnnotationProject.id == project_id).one_or_none()
-    if p is None:
-        raise HTTPException(404, "アノテーションプロジェクトが見つかりません")
-    return p
+    return datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
 
 
 def _collect(db: Session, ids: list[int]) -> list[AnnotationProject]:
@@ -114,7 +109,7 @@ async def create_project(
     created = []
     for f in files:
         raw = await f.read()
-        name = (f.filename or "図面").rsplit("/", 1)[-1]
+        name = safe_upload_name(f, "図面")
         is_pdf = (
             name.lower().endswith(".pdf")
             or (f.content_type or "").lower() == "application/pdf"
@@ -165,9 +160,19 @@ def list_projects(q: str | None = Query(default=None), db: Session = Depends(get
             query = query.filter(
                 AnnotationProject.name.ilike(like) | AnnotationProject.sheet_no.ilike(like)
             )
-    prediction_counts = dict(
-        db.query(Prediction.project_id, func.count(Prediction.id))
-        .group_by(Prediction.project_id)
+    # 件数は行ごとの relationship 読み込みではなく集計クエリで取る（N+1 回避）
+    def _counts(model, key_col):
+        return dict(
+            db.query(key_col, func.count(model.id)).group_by(key_col).all()
+        )
+
+    symbol_counts = _counts(AnnotationSymbol, AnnotationSymbol.project_id)
+    connection_counts = _counts(Connection, Connection.project_id)
+    prediction_counts = _counts(Prediction, Prediction.project_id)
+    terminal_counts = dict(
+        db.query(AnnotationSymbol.project_id, func.count(SymbolTerminal.id))
+        .join(SymbolTerminal, SymbolTerminal.symbol_id == AnnotationSymbol.id)
+        .group_by(AnnotationSymbol.project_id)
         .all()
     )
     out = []
@@ -183,9 +188,9 @@ def list_projects(q: str | None = Query(default=None), db: Session = Depends(get
                 "assignee": p.assignee,
                 "image_width": p.image_width,
                 "image_height": p.image_height,
-                "symbol_count": len(p.symbols),
-                "connection_count": len(p.connections),
-                "terminal_count": sum(len(s.terminals) for s in p.symbols),
+                "symbol_count": symbol_counts.get(p.id, 0),
+                "connection_count": connection_counts.get(p.id, 0),
+                "terminal_count": terminal_counts.get(p.id, 0),
                 "prediction_count": prediction_counts.get(p.id, 0),
                 "updated_at": p.updated_at.isoformat() if p.updated_at else None,
             }
@@ -195,12 +200,12 @@ def list_projects(q: str | None = Query(default=None), db: Session = Depends(get
 
 @router.get("/projects/{project_id}")
 def get_project(project_id: int, db: Session = Depends(get_db)):
-    return serialize_project(db, _get_project(db, project_id))
+    return serialize_project(db, get_project_or_404(db, project_id))
 
 
 @router.put("/projects/{project_id}/meta")
 def update_meta(project_id: int, payload: ProjectMetaPayload, db: Session = Depends(get_db)):
-    p = _get_project(db, project_id)
+    p = get_project_or_404(db, project_id)
     for field in ("name", "sheet_no", "page_no", "revision", "status", "assignee", "note"):
         value = getattr(payload, field)
         if value is not None:
@@ -213,7 +218,7 @@ def update_meta(project_id: int, payload: ProjectMetaPayload, db: Session = Depe
 def put_annotations(
     project_id: int, payload: AnnotationUpdatePayload, db: Session = Depends(get_db)
 ):
-    p = _get_project(db, project_id)
+    p = get_project_or_404(db, project_id)
     result = replace_annotations(db, p, payload)
     return {
         "id": p.id,
@@ -225,7 +230,7 @@ def put_annotations(
 
 @router.delete("/projects/{project_id}")
 def delete_project(project_id: int, db: Session = Depends(get_db)):
-    p = _get_project(db, project_id)
+    p = get_project_or_404(db, project_id)
     db.delete(p)
     db.commit()
     return {"deleted": project_id}
@@ -244,7 +249,7 @@ def bulk_delete(payload: BulkIdsRequest, db: Session = Depends(get_db)):
 
 @router.get("/projects/{project_id}/image")
 def get_image(project_id: int, db: Session = Depends(get_db)):
-    p = _get_project(db, project_id)
+    p = get_project_or_404(db, project_id)
     if not p.images:
         raise HTTPException(404, "画像が登録されていません")
     path = image_path(p.images[0].sha256)
@@ -259,7 +264,7 @@ def export_one(
     project_id: int,
     db: Session = Depends(get_db),
 ):
-    p = _get_project(db, project_id)
+    p = get_project_or_404(db, project_id)
     blob = write_export_zip(db, [p])
     return Response(
         content=blob,
@@ -303,18 +308,21 @@ def stats(db: Session = Depends(get_db)):
     by_status: dict[str, int] = {}
     for p in projects:
         by_status[p.status] = by_status.get(p.status, 0) + 1
+    class_key_by_id = {c.id: c.key for c in classes_ordered(db)}
     by_class: dict[str, int] = {}
-    for c in classes_ordered(db):
-        n = db.query(AnnotationSymbol).filter(AnnotationSymbol.class_id == c.id).count()
-        if n:
-            by_class[c.key] = n
-    by_origin: dict[str, int] = {}
-    for origin, n in (
+    for class_id, n in (
+        db.query(AnnotationSymbol.class_id, func.count(AnnotationSymbol.id))
+        .group_by(AnnotationSymbol.class_id)
+        .all()
+    ):
+        key = class_key_by_id.get(class_id)
+        if key and n:
+            by_class[key] = n
+    by_origin: dict[str, int] = dict(
         db.query(AnnotationSymbol.origin, func.count(AnnotationSymbol.id))
         .group_by(AnnotationSymbol.origin)
         .all()
-    ):
-        by_origin[origin] = n
+    )
     prediction_total = db.query(Prediction).count()
     return {
         "project_count": len(projects),

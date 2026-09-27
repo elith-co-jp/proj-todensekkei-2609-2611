@@ -23,7 +23,7 @@ import io
 import json
 import re
 import zipfile
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 
 import yaml
@@ -67,7 +67,11 @@ _UNSAFE_NAMES = {".DS_Store", "Thumbs.db"}
 # --------------------------------------------------------------------------
 # 共通
 # --------------------------------------------------------------------------
-def _base_name(project: AnnotationProject, image: AnnotationImage) -> str:
+def project_image_stem(project: AnnotationProject, image: AnnotationImage) -> str:
+    """エクスポート画像名のステム ``p<project_id>_<stem>`` を返す。
+
+    外部の yolo predict 出力を取り込むときは、このステム規則で図面へ対応付ける。
+    """
     stem = Path(image.filename).stem or f"image_{image.id}"
     stem = re.sub(r"[^\w.\-]+", "_", stem)
     return f"p{project.id}_{stem}"
@@ -149,7 +153,26 @@ def build_connections_csv(db: Session, projects: list[AnnotationProject]) -> str
                     (c["note"] or "").replace("\n", " "),
                 ]
             )
-    return "﻿" + buf.getvalue()
+    return "\ufeff" + buf.getvalue()  # BOM: Excel 開封時の文字化け防止
+
+
+# Union-Find（ネット分割用）
+def _find(parent: dict[str, str], a: str) -> str:
+    parent.setdefault(a, a)
+    while parent[a] != a:
+        parent[a] = parent[parent[a]]
+        a = parent[a]
+    return a
+
+
+def _union(parent: dict[str, str], a: str, b: str) -> None:
+    ra, rb = _find(parent, a), _find(parent, b)
+    if ra != rb:
+        parent[rb] = ra
+
+
+def _node_key(sym: str, term: str | None) -> str:
+    return f"{sym}:{term}" if term else sym
 
 
 def build_netlist(db: Session, projects: list[AnnotationProject]) -> dict:
@@ -158,33 +181,23 @@ def build_netlist(db: Session, projects: list[AnnotationProject]) -> dict:
     for p in projects:
         data = serialize_project(db, p, with_image_meta=False)
         parent: dict[str, str] = {}
-
-        def find(a: str) -> str:
-            parent.setdefault(a, a)
-            while parent[a] != a:
-                parent[a] = parent[parent[a]]
-                a = parent[a]
-            return a
-
-        def union(a: str, b: str) -> None:
-            ra, rb = find(a), find(b)
-            if ra != rb:
-                parent[rb] = ra
-
-        node = lambda sym, term: f"{sym}:{term}" if term else sym  # noqa: E731
         for c in data["connections"]:
-            union(
-                node(c["from_symbol_ref"], c["from_terminal_ref"]),
-                node(c["to_symbol_ref"], c["to_terminal_ref"]),
+            _union(
+                parent,
+                _node_key(c["from_symbol_ref"], c["from_terminal_ref"]),
+                _node_key(c["to_symbol_ref"], c["to_terminal_ref"]),
             )
         groups: dict[str, list[str]] = {}
         for n in parent:
-            groups.setdefault(find(n), []).append(n)
+            groups.setdefault(_find(parent, n), []).append(n)
 
         wire_by_root: dict[str, str] = {}
         for c in data["connections"]:
             if c["wire_no"]:
-                wire_by_root.setdefault(find(node(c["from_symbol_ref"], c["from_terminal_ref"])), c["wire_no"])
+                wire_by_root.setdefault(
+                    _find(parent, _node_key(c["from_symbol_ref"], c["from_terminal_ref"])),
+                    c["wire_no"],
+                )
 
         nets = []
         for i, (root, members) in enumerate(sorted(groups.items()), start=1):
@@ -210,7 +223,7 @@ def build_bundle(db: Session, projects: list[AnnotationProject]) -> dict:
     return {
         "schema_version": SCHEMA_VERSION,
         "tool": TOOL_NAME,
-        "exported_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+        "exported_at": datetime.now(UTC).replace(microsecond=0).isoformat(),
         "classes": [
             {
                 "key": c.key,
@@ -276,7 +289,7 @@ def write_export_zip(
                 if not src.exists():
                     continue
                 data = src.read_bytes()
-                base = _base_name(p, im)
+                base = project_image_stem(p, im)
                 zf.writestr(f"{DATASET_DIRNAME}/{IMAGES_DIRNAME}/{split}/{base}.png", data)
                 zf.writestr(f"{DATASET_DIRNAME}/{LABELS_DIRNAME}/{split}/{base}.txt", label_content)
     return buf.getvalue()
@@ -285,7 +298,8 @@ def write_export_zip(
 # --------------------------------------------------------------------------
 # インポート
 # --------------------------------------------------------------------------
-def _safe_members(zf: zipfile.ZipFile) -> list[zipfile.ZipInfo]:
+def safe_members(zf: zipfile.ZipFile) -> list[zipfile.ZipInfo]:
+    """展開してよいエントリだけを返す（パストラバーサル・ZIP 爆弾・OS ゴミを除外）。"""
     infos: list[zipfile.ZipInfo] = []
     total, compressed = 0, 0
     for info in zf.infolist():
@@ -420,7 +434,7 @@ def import_zip(db: Session, blob: bytes) -> dict:
         raise ValueError("ZIP ファイルとして読み込めませんでした") from exc
 
     with zf:
-        infos = _safe_members(zf)
+        infos = safe_members(zf)
         files: dict[str, bytes] = {}
         for info in infos:
             files[info.filename.replace("\\", "/")] = zf.read(info)
@@ -436,7 +450,7 @@ def import_zip(db: Session, blob: bytes) -> dict:
 
     try:
         bundle = json.loads(bundle_raw.decode("utf-8"))
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         raise ValueError("bundle.json を解析できませんでした") from exc
 
     _restore_classes(db, bundle.get("classes", []))

@@ -127,7 +127,7 @@ def test_bundle_roundtrip_restores_everything(client):
     assert body["count"] == 2
 
     after = [client.get(f"/api/projects/{i}").json() for i in body["project_ids"]]
-    for b, a in zip(before, after):
+    for b, a in zip(before, after, strict=True):
         assert a["name"] == b["name"]
         assert a["sheet_no"] == b["sheet_no"]
         assert a["page_no"] == b["page_no"]

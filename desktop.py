@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import os
 import socket
 import sys
@@ -40,10 +41,8 @@ def _pick_port() -> int:
 
 def _open_browser_later(url: str) -> None:
     time.sleep(1.2)
-    try:
+    with contextlib.suppress(Exception):  # ブラウザが開けなくても本体は動かす
         webbrowser.open(url)
-    except Exception:  # noqa: BLE001  ブラウザが開けなくても本体は動かす
-        pass
 
 
 def _app_dir() -> Path:
@@ -65,7 +64,7 @@ def _show_startup_error(exc: Exception) -> None:
 
     if sys.platform.startswith("win"):
         try:
-            import ctypes  # noqa: PLC0415
+            import ctypes
 
             ctypes.windll.user32.MessageBoxW(None, message, "Annotator", 0x10)
             return
@@ -103,7 +102,7 @@ def main() -> None:
 
     threading.Thread(target=_open_browser_later, args=(url,), daemon=True).start()
 
-    try:
+    with contextlib.suppress(KeyboardInterrupt):
         uvicorn.run(
             app,
             host=HOST,
@@ -112,8 +111,6 @@ def main() -> None:
             log_config=None,
             access_log=False,
         )
-    except KeyboardInterrupt:
-        pass
 
 
 if __name__ == "__main__":
