@@ -9,7 +9,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 from runtime import data_base
@@ -18,6 +18,10 @@ DATA_DIR = Path(os.environ.get("SEQANNO_DATA_DIR", data_base() / "data"))
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 IMAGE_DIR = DATA_DIR / "images"
 IMAGE_DIR.mkdir(parents=True, exist_ok=True)
+MODEL_DIR = DATA_DIR / "models"
+MODEL_DIR.mkdir(parents=True, exist_ok=True)
+TRAINING_DIR = DATA_DIR / "training"
+TRAINING_DIR.mkdir(parents=True, exist_ok=True)
 
 DATABASE_URL = os.environ.get("SEQANNO_DATABASE_URL", f"sqlite:///{DATA_DIR / 'seqanno.db'}")
 
@@ -38,11 +42,32 @@ def get_db():
         db.close()
 
 
+def _migrate_columns() -> None:
+    """既存 DB への列追加（Alembic なしの軽量マイグレーション）。"""
+    inspector = inspect(engine)
+    existing = {c["name"] for c in inspector.get_columns("annotation_symbols")}
+    statements = []
+    if "origin" not in existing:
+        statements.append(
+            "ALTER TABLE annotation_symbols ADD COLUMN origin VARCHAR(20) NOT NULL DEFAULT 'manual'"
+        )
+    if "confidence" not in existing:
+        statements.append(
+            "ALTER TABLE annotation_symbols ADD COLUMN confidence FLOAT"
+        )
+    if not statements:
+        return
+    with engine.begin() as conn:
+        for stmt in statements:
+            conn.execute(text(stmt))
+
+
 def init_db() -> None:
     """テーブル作成と初期クラスマスタの投入。"""
     from models import SymbolClass  # noqa: PLC0415  循環 import 回避
 
     Base.metadata.create_all(bind=engine)
+    _migrate_columns()
     db = SessionLocal()
     try:
         if db.query(SymbolClass).count() == 0:

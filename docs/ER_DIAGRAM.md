@@ -9,6 +9,10 @@ erDiagram
     annotation_symbols ||--o{ symbol_terminals : "symbol_id"
     annotation_symbols ||--o{ connections : "from_symbol_id / to_symbol_id"
     symbol_terminals ||--o{ connections : "from_terminal_id / to_terminal_id"
+    annotation_projects ||--o{ predictions : "project_id"
+    symbol_classes ||--o{ predictions : "class_id"
+    ml_models ||--o{ predictions : "model_id"
+    ml_models ||--o{ training_runs : "result_model_id"
 
     symbol_classes {
         int id PK
@@ -51,6 +55,8 @@ erDiagram
         float w
         float h
         text note
+        string origin "manual / inference"
+        float confidence "推論由来の信頼度（NULL 可）"
     }
     symbol_terminals {
         int id PK
@@ -71,6 +77,46 @@ erDiagram
         string kind "wire / sheet_ref"
         string external_ref
         text note
+    }
+    ml_models {
+        int id PK
+        string name
+        int version
+        string file_name
+        string sha256 "実体は data/models/<sha256>.pt"
+        int size_bytes
+        string source "upload / trained"
+        bool is_active "推論・学習のベース"
+        text metrics_json
+        text note
+        datetime created_at
+    }
+    predictions {
+        int id PK
+        int project_id FK
+        int model_id FK "NULL 可（外部取込）"
+        string model_label
+        int class_id FK
+        float cx
+        float cy
+        float w
+        float h
+        float confidence
+        datetime created_at
+    }
+    training_runs {
+        int id PK
+        string status "running / success / failed"
+        text project_ids_json
+        int image_count
+        int epochs
+        int imgsz
+        string base_model
+        int result_model_id FK "NULL 可"
+        text metrics_json
+        text log_tail
+        datetime started_at
+        datetime finished_at
     }
 ```
 
@@ -102,9 +148,20 @@ erDiagram
 
 ### 削除の伝播
 
-`annotation_projects` を削除すると、`images` / `symbols` / `connections` が
-`cascade="all, delete-orphan"` で連鎖削除されます。
+`annotation_projects` を削除すると、`images` / `symbols` / `connections` /
+`predictions` が `cascade="all, delete-orphan"` で連鎖削除されます。
 シンボルを削除すると、その端子と、そのシンボルを含む配線も削除されます。
+`ml_models` を削除しても `predictions` / `training_runs` は残り（`model_id` /
+`result_model_id` は NULL に）、実体ファイルは他モデルと sha256 を共有しない
+場合のみ削除されます。
+
+### AI 改善サイクルのデータ
+
+- `predictions` は図面ごとに**最新の推論だけ**を保持する作業領域で、
+  人が確認・修正して `annotation_symbols`（`origin=inference`）へ昇格させたものが
+  学習データとして蓄積される、という分担です。
+- `training_runs` は学習ジョブの実行履歴。成功時は結果の `best.pt` が
+  `ml_models` に `source=trained` かつ `is_active` で登録されます。
 
 ### DB 変更時の運用ルール
 

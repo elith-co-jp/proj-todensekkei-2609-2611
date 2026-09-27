@@ -18,6 +18,7 @@ import {
   PanelRightOpen,
   Redo2,
   Save,
+  Sparkles,
   Square,
   Trash2,
   Undo2,
@@ -57,6 +58,8 @@ function buildAnnotationPayload(symbols: SymbolBox[], connections: Connection[])
       w: symbol.w,
       h: symbol.h,
       note: symbol.note,
+      origin: symbol.origin ?? 'manual',
+      confidence: symbol.confidence ?? null,
       terminals: symbol.terminals.map((terminal) => ({
         ref: terminal.ref,
         name: terminal.name,
@@ -96,6 +99,8 @@ function isAnnotationPayload(value: unknown): value is AnnotationPayload {
       isFiniteNumber(symbol.w) &&
       isFiniteNumber(symbol.h) &&
       isNullableString(symbol.note) &&
+      (symbol.origin === undefined || symbol.origin === 'manual' || symbol.origin === 'inference') &&
+      (symbol.confidence === undefined || symbol.confidence === null || isFiniteNumber(symbol.confidence)) &&
       symbol.terminals.every(
         (terminal) =>
           isRecord(terminal) &&
@@ -230,6 +235,7 @@ export default function EditorPage() {
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('saved')
   const [metaSaveStatus, setMetaSaveStatus] = useState<SaveStatus>('saved')
   const [exporting, setExporting] = useState(false)
+  const [aiApplying, setAiApplying] = useState(false)
   const [inspectorOpen, setInspectorOpen] = useState(() =>
     typeof window === 'undefined' ? true : window.matchMedia('(min-width: 1024px)').matches,
   )
@@ -647,6 +653,66 @@ export default function EditorPage() {
     setSymbols((prev) => prev.filter((s) => s.ref !== ref))
     setConnections((prev) => prev.filter((c) => c.from_symbol_ref !== ref && c.to_symbol_ref !== ref))
     setSelectedRef((cur) => (cur === ref ? null : cur))
+  }
+
+  /* AI 推論結果を編集対象のシンボルとして取り込む（破線表示・人が修正して蓄積）*/
+  const applyPredictions = async () => {
+    if (aiApplying) return
+    setAiApplying(true)
+    try {
+      const data = await api.getPredictions(projectId)
+      if (data.count === 0) {
+        setNotice('この図面の推論結果がありません。「AI 改善サイクル」で推論を実行してください')
+        return
+      }
+      const classKeys = new Set(classes.map((c) => c.key))
+      const next = [...symbols]
+      let added = 0
+      let skipped = 0
+      for (const d of data.detections) {
+        if (!classKeys.has(d.class_key)) continue
+        const dup = next.some(
+          (s) =>
+            s.class_key === d.class_key &&
+            Math.abs(s.cx - d.cx) < 0.01 &&
+            Math.abs(s.cy - d.cy) < 0.01 &&
+            Math.abs(s.w - d.w) < 0.02 &&
+            Math.abs(s.h - d.h) < 0.02,
+        )
+        if (dup) {
+          skipped += 1
+          continue
+        }
+        next.push({
+          ref: nextSymbolRef(next),
+          class_key: d.class_key,
+          label: null,
+          cx: d.cx,
+          cy: d.cy,
+          w: d.w,
+          h: d.h,
+          note: null,
+          origin: 'inference',
+          confidence: d.confidence,
+          terminals: [],
+        })
+        added += 1
+      }
+      if (added === 0) {
+        setNotice(skipped > 0 ? '推論結果はすべて取り込み済みです' : '取り込める検出がありませんでした')
+        return
+      }
+      pushHistory()
+      setSymbols(next)
+      setNotice(
+        `AI 検出を ${added} 件取り込みました（破線枠）。内容を確認・修正して保存してください` +
+          (skipped > 0 ? `／${skipped} 件は既存と重複したためスキップ` : ''),
+      )
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setAiApplying(false)
+    }
   }
 
   const addTerminal = (ref: string, nx: number, ny: number) => {
@@ -1240,6 +1306,17 @@ export default function EditorPage() {
 
         <button
           type="button"
+          className="flex min-h-10 items-center gap-1.5 rounded-xl border border-cyan-400/30 bg-cyan-400/10 px-3 text-xs font-bold text-cyan-100 transition hover:bg-cyan-400/20 disabled:opacity-40"
+          onClick={() => void applyPredictions()}
+          disabled={aiApplying}
+          aria-busy={aiApplying}
+          title="保存済みの AI 推論結果を編集用シンボルとして取り込みます"
+        >
+          <Sparkles className={aiApplying ? 'animate-pulse' : undefined} size={15} />
+          AI 推論
+        </button>
+        <button
+          type="button"
           className="icon-button border border-white/10 bg-white/[0.06] text-slate-300 hover:bg-white/10 hover:text-white"
           onClick={() => void exportCurrentProject()}
           disabled={exporting}
@@ -1523,6 +1600,7 @@ export default function EditorPage() {
                       fillOpacity={active ? 0.18 : 0.08}
                       stroke={color}
                       strokeWidth={(active ? 2.5 : 1.5) / zoom}
+                      strokeDasharray={s.origin === 'inference' ? `${6 / zoom} ${3 / zoom}` : undefined}
                     />
                     <text
                       x={x}
@@ -1534,8 +1612,10 @@ export default function EditorPage() {
                       stroke="#fff"
                       strokeWidth={2.5 / zoom}
                     >
+                      {s.origin === 'inference' ? 'AI ' : ''}
                       {s.ref}
                       {s.label ? ` ${s.label}` : ''}
+                      {s.confidence != null ? ` ${Math.round(s.confidence * 100)}%` : ''}
                     </text>
                     {active &&
                       ([
@@ -1757,6 +1837,11 @@ export default function EditorPage() {
                     >
                       <span className="h-3 w-3 flex-none rounded-sm" style={{ background: colorOf(s.class_key) }} />
                       <span className="font-mono text-xs font-bold">{s.ref}</span>
+                      {s.origin === 'inference' && (
+                        <span className="flex-none rounded-full bg-cyan-100 px-1.5 py-0.5 text-[9px] font-black text-cyan-700">
+                          AI{s.confidence != null ? ` ${Math.round(s.confidence * 100)}%` : ''}
+                        </span>
+                      )}
                       <span className="truncate text-[11px] text-slate-500">{labelOf(s.class_key)}</span>
                     </button>
                     <button

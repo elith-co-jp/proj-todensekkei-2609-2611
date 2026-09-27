@@ -191,6 +191,18 @@ YOLO 形式で受け付けるレイアウト:
 インポートは常に**新しい図面として追加**され、既存データを上書きしません。
 同じ ZIP を 2 回取り込むと重複します。
 
+### 推論結果 ZIP（`/api/ml/inference/import`）
+
+エクスポートとは別経路。外部環境で `yolo predict --save-txt --save-conf` を実行した
+出力を、既存図面への**推論結果**として取り込む（新規図面は作らない）。
+
+- `p<図面ID>_*.txt` — `cls cx cy w h [conf]` の YOLO ラベル形式。`conf` は任意の 6 列目。
+- `classes.txt` — 任意。ある場合は行番号 → クラス key の対応に使う（無い場合は
+  `symbol_classes.yolo_index` で直接解決）。
+- 図面 ID はエクスポート画像名（`p<図面ID>_*.png`）と同じ規則でステムから取り出す。
+- 取り込みは図面ごとに**置き換え**（predictions は最新のみ保持）。存在しない図面 ID と
+  `p<ID>_` 形式でないファイルは結果の `missing_project_ids` / `unmatched_files` に返す。
+
 ### セーフガード
 
 | 対策 | 上限 |

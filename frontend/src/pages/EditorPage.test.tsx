@@ -78,6 +78,7 @@ function row(id: number): ProjectRow {
     name: `匿名ページ${id}`,
     sheet_no: String(id),
     page_no: String(id),
+    prediction_count: 0,
     revision: null,
     status: 'draft',
     assignee: null,

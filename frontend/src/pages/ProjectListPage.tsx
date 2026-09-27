@@ -148,6 +148,22 @@ export default function ProjectListPage() {
     }
   }
 
+  const inferChecked = async () => {
+    setBusy(true)
+    setError(null)
+    try {
+      const r = await api.runInference(Array.from(checked))
+      setMsg(
+        `AI 推論が完了しました（${r.detection_count} 件検出）。図面を開くと「AI 推論」ボタンで結果を取り込めます`,
+      )
+      await load()
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught))
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const statsCards = stats
     ? [
         { label: '登録図面', value: stats.project_count, unit: '枚', icon: FileStack, color: 'text-cyan-700 bg-cyan-50' },
@@ -278,6 +294,9 @@ export default function ProjectListPage() {
               onChange={(event) => setQ(event.target.value)}
             />
           </label>
+          <button type="button" className="btn btn-sm" onClick={() => void inferChecked()} disabled={busy}>
+            <Sparkles size={14} /> {checked.size ? `選択 ${checked.size} 件` : '全件'}に AI 推論
+          </button>
           <button type="button" className="btn btn-sm" onClick={() => void exportChecked()} disabled={busy}>
             <Download size={14} /> {checked.size ? `選択 ${checked.size} 件` : '全件'}を出力
           </button>
@@ -343,7 +362,14 @@ export default function ProjectListPage() {
                       {STATUS_LABEL[row.status] ?? row.status}
                     </span>
                   </td>
-                  <td className="td text-right font-mono text-xs">{row.symbol_count}</td>
+                  <td className="td text-right font-mono text-xs">
+                    {row.symbol_count}
+                    {row.prediction_count > 0 && (
+                      <span className="ml-1 rounded-full bg-cyan-50 px-1.5 py-0.5 text-[9px] font-black text-cyan-700" title="AI 推論の検出件数">
+                        +{row.prediction_count}
+                      </span>
+                    )}
+                  </td>
                   <td className="td text-right font-mono text-xs text-slate-500">{row.terminal_count}</td>
                   <td className="td text-right font-mono text-xs">{row.connection_count}</td>
                   <td className="td text-right">

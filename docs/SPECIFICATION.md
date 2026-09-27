@@ -94,6 +94,17 @@ ZIP を選択してインポートすると、`bundle.json` の有無で復元�
 5 ステップの手順書とキーボード操作一覧、複数人で分担する場合のデータ受け渡し手順。
 実際の図面は掲載せず、匿名の操作画面モックで PDF 登録、描画モード、自動保存、図面ズームを説明する。
 
+### 3.5 AI 改善サイクル（`/ml`）
+
+「推論 → 結果表示（JSON）→ 修正 → 蓄積 → 学習 → 改善」のサイクルを回す画面。
+
+- **モデル管理**: YOLO の `.pt` をアップロードして登録。`is_active` のモデルが推論・学習のベース。学習で生成された `best.pt` は自動登録・適用される
+- **推論**: 対象図面と信頼度しきい値を指定して実行。検出は `predictions` テーブルに図面単位で「最新だけ」保持し、同画面で JSON 表示できる
+- **外部推論の取込**: `ultralytics` 未導入環境では、外部で `yolo predict --save-txt --save-conf` した labels ZIP を取り込む。エクスポート画像名（`p<図面ID>_*.png`）と同名の `p<図面ID>_*.txt` を自動で図面へ対応づける
+- **修正**: エディタの「AI 推論」ボタンで検出を破線枠のシンボルとして取り込み、通常のシンボルと同じ操作で修正。保存時に `origin=inference` と信頼度が付く
+- **学習**: 蓄積アノテーションから `data/training/run_<id>/dataset` を生成し、`ultralytics` で学習（バックグラウンドスレッド）。履歴にメトリクス（mAP 等）とログ末尾を保持
+- **外部実行への誘導**: `ultralytics` が無い場合、推論・学習 API は日本語メッセージで外部フロー（エクスポート → 外部 predict/学習 → 取込）を案内する
+
 ## 4. API 仕様
 
 ベースパス `/api`。エラーは `HTTPException` で日本語メッセージを返す。
@@ -107,7 +118,6 @@ ZIP を選択してインポートすると、`bundle.json` の有無で復元�
 | `PUT` | `/api/classes/{id}` | 更新（`key` の重複は 400） |
 
 ### プロジェクト
-
 | メソッド | パス | 内容 |
 |---|---|---|
 | `POST` | `/api/projects` | multipart `files`。画像は1ファイル、PDFは1ページ = 1プロジェクト。`{project_ids, count}` |
@@ -126,7 +136,25 @@ ZIP を選択してインポートすると、`bundle.json` の有無で復元�
 | `GET` | `/api/projects/{id}/export` | 単一図面の ZIP |
 | `POST` | `/api/export` | `{ids}` で ZIP（全画像を train に出力） |
 | `POST` | `/api/import` | multipart `archive`（`.zip`）。`{mode, project_ids, count}` |
-| `GET` | `/api/stats` | 件数集計 |
+| `GET` | `/api/stats` | 件数集計（`by_origin` に manual / inference の内訳を含む） |
+
+### AI 改善サイクル
+
+| メソッド | パス | 内容 |
+|---|---|---|
+| `GET` | `/api/ml/status` | ultralytics 導入可否・使用中モデル・実行中の学習 |
+| `GET` | `/api/ml/models` | モデル一覧 |
+| `POST` | `/api/ml/models` | multipart `file`（`.pt`）。初回は自動で使用中に |
+| `POST` | `/api/ml/models/{id}/activate` | そのモデルを使用中に切替 |
+| `DELETE` | `/api/ml/models/{id}` | 削除（実ファイルは他の参照がなければ削除） |
+| `GET` | `/api/ml/models/{id}/download` | モデルファイルを返す |
+| `POST` | `/api/ml/inference/run` | `{project_ids[], conf}`。使用中モデルで推論し `predictions` へ保存 |
+| `POST` | `/api/ml/inference/import` | multipart `archive`（外部 `yolo predict` の labels ZIP）。`{results, unmatched_files, missing_project_ids, count}` |
+| `GET` | `/api/ml/predictions` | 図面ごとの検出件数サマリ |
+| `GET` | `/api/ml/projects/{id}/predictions` | 図面の最新推論結果（JSON。クラス名・信頼度つき） |
+| `POST` | `/api/ml/training/run` | `{project_ids[], only_done, epochs, imgsz, base_model}`。バックグラウンドで学習 |
+| `GET` | `/api/ml/training/runs` | 学習履歴（最新 50 件。メトリクス・ログ末尾つき） |
+| `GET` | `/api/ml/training/runs/{id}` | 学習ジョブの状態・メトリクス・ログ |
 
 ### `PUT /api/projects/{id}/annotations` のリクエスト
 
@@ -139,6 +167,7 @@ ZIP を選択してインポートすると、`bundle.json` の有無で復元�
       "label": "33HB",
       "cx": 0.38, "cy": 0.50, "w": 0.06, "h": 0.08,
       "note": null,
+      "origin": "manual", "confidence": null,
       "terminals": [{ "ref": "SYM-0001-T1", "name": "13", "tx": 0.38, "ty": 0.54 }]
     }
   ],
@@ -156,6 +185,8 @@ ZIP を選択してインポートすると、`bundle.json` の有無で復元�
 - 存在しないシンボルを参照する配線はスキップし、レスポンスの `skipped` に理由を返す。
 - 未知の `class_key` はクラスマスタへ自動登録する（`yolo_index` は末尾）。
 - 座標は `services/geometry.py` の `sanitize_box` で 0.0〜1.0 に丸める。
+- `origin` は `manual`（省略時）または `inference`（AI 推論から取り込んだシンボル）。
+  `inference` の場合は検出時の `confidence`（0〜1）を保持でき、学習データの出自追跡に使う。
 
 ## 5. 非機能
 
@@ -166,6 +197,7 @@ ZIP を選択してインポートすると、`bundle.json` の有無で復元�
 | アップロード上限 | PDF 256 MiB・500ページ／画像 1 枚 64 MiB／ZIP 展開後 2 GiB・20,000 ファイル・圧縮率 25 倍 |
 | PDF 画像化 | Poppler を利用し 150 DPI の PNG に変換。元ファイル名と1始まりのページ番号を保持 |
 | 同時編集 | 排他制御なし（後勝ち）。分担する場合は図面単位で分け、ZIP で統合する |
+| 機械学習 | `requirements-ml.txt`（ultralytics）は任意導入。無い環境でもモデル登録・推論結果の取込・JSON 表示は動作し、推論・学習は外部実行フローへ誘導 |
 
 ## 6. テスト
 
@@ -175,3 +207,4 @@ ZIP を選択してインポートすると、`bundle.json` の有無で復元�
 |---|---|
 | `tests/test_annotation_api.py` | クラスマスタ、PDFページ分割、CRUD、一括置換、参照解決、座標の丸め、日本語エラー |
 | `tests/test_export_import.py` | ZIP 構成、YOLO ラベル形式、data.yaml、全画像 train 出力（val 分割なし）、CSV／netlist、往復復元、素の YOLO 取り込み、セキュリティ（パストラバーサル・`__MACOSX`・非 ZIP） |
+| `tests/test_ml_cycle.py` | モデル登録・切替・削除、推論の前提エラー（モデル未登録 / ultralytics 未導入）、推論結果 ZIP 取込（対応付け・置換・無効 ZIP）、推論由来シンボルの保存と統計、学習の前提エラー |
