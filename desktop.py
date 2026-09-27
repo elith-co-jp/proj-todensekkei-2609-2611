@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import contextlib
+import multiprocessing
 import os
 import socket
 import sys
@@ -40,6 +41,8 @@ def _pick_port() -> int:
 
 
 def _open_browser_later(url: str) -> None:
+    if os.environ.get("SEQANNO_NO_BROWSER") == "1":
+        return
     time.sleep(1.2)
     with contextlib.suppress(Exception):  # ブラウザが開けなくても本体は動かす
         webbrowser.open(url)
@@ -91,7 +94,7 @@ def main() -> None:
 
     from main import app  # 遅延 import（uvicorn 準備後にアプリを構築）
 
-    port = _pick_port()
+    port = int(os.environ["SEQANNO_PORT"]) if "SEQANNO_PORT" in os.environ else _pick_port()
     url = f"http://{HOST}:{port}"
 
     print("=" * 60)
@@ -115,6 +118,7 @@ def main() -> None:
 
 if __name__ == "__main__":
     try:
+        multiprocessing.freeze_support()
         main()
     except Exception as exc:  # noqa: BLE001  凍結時はメッセージボックスとログで原因を見せる
         _show_startup_error(exc)

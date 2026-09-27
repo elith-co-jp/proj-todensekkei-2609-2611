@@ -491,7 +491,7 @@ export default function MlOpsPage() {
               </p>
               {models.length === 0 && (
                 <div className="rounded-2xl border border-dashed border-slate-300 px-4 py-6 text-center text-xs text-slate-400">
-                  モデルがまだありません。best.pt をアップロードするか、学習を実行してください。
+                  推論用モデルがまだありません。best.pt をアップロードするか、学習を実行してください。配布版では内蔵の初期モデルから学習を開始できます。
                 </div>
               )}
               <div className="space-y-2">

@@ -2,7 +2,8 @@
 """PyInstaller 仕様ファイル（1 ファイル exe）。
 
 ビルド:
-    pip install -r requirements.txt pyinstaller
+    pip install torch==2.5.1 torchvision==0.20.1 --index-url https://download.pytorch.org/whl/cpu
+    pip install -r requirements.txt -r requirements-ml.txt "pyinstaller>=6.17,<7"
     cd frontend && npm ci && npm run build && cd ..
     pyinstaller seq-annotator.spec --noconfirm
 
@@ -20,6 +21,10 @@ spec_dir = Path(SPECPATH)
 
 # --- 同梱データ（ビルド済みフロントエンド） -----------------------------------
 datas = [(str(spec_dir / "frontend" / "dist"), "frontend/dist")]
+base_model = spec_dir / ".build-assets" / "yolov8n.pt"
+if not base_model.is_file():
+    raise FileNotFoundError("Run python scripts/fetch_base_model.py before packaging")
+datas.append((str(base_model), "models"))
 binaries = []
 hiddenimports = []
 
@@ -37,6 +42,12 @@ try:
 except Exception:  # noqa: BLE001  未導入時は通常の import 解析に任せる
     pass
 
+# 推論・学習は遅延 import。設定 YAML や動的に読むモジュールも同梱する。
+d, b, h = collect_all("ultralytics")
+datas += d
+binaries += b
+hiddenimports += h
+
 a = Analysis(
     ["desktop.py"],
     pathex=[str(spec_dir)],
@@ -45,7 +56,7 @@ a = Analysis(
     hiddenimports=hiddenimports,
     hookspath=[],
     runtime_hooks=[],
-    excludes=["tkinter", "matplotlib", "pytest"],
+    excludes=["tkinter", "pytest"],
     noarchive=False,
 )
 

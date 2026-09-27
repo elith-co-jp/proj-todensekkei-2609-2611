@@ -98,6 +98,11 @@ PDF は最大 256 MiB / 500ページ、150 DPI で画像化します。画像単
 
 配布先の Windows PC に **Python も Node も入っていなくても**、exe だけで動きます。
 PDF 取り込みも exe 内蔵の PyMuPDF で処理するため、Poppler の別途インストールは不要です。
+推論・学習用の Ultralytics、CPU 版 PyTorch、学習開始用 YOLOv8n 重みも同梱します。
+推論にはシーケンス図向けに学習したモデルが必要です。画面から `best.pt` を登録するか、
+アノテーションを蓄積して内蔵重みから学習すると、生成したモデルが自動で使用中になります。
+CPU での学習は GPU より時間がかかります。
+配布版は [AGPL-3.0](LICENSE) の条件に従い、対応するソースコードとともに提供します。
 
 **ビルド**（Python 3.11+ と Node.js 18+ を入れた Windows で 1 回だけ実行）:
 
@@ -107,6 +112,8 @@ build_windows.bat
 
 `dist\Annotator.exe` が生成されます。PyInstaller はクロスビルドできないため、
 Windows 用 exe は必ず Windows 上でビルドしてください（spec: `seq-annotator.spec`）。
+ビルド時のみ、公式 Ultralytics リリースから `yolov8n.pt` を取得して SHA-256 を照合します。
+配布先で初期モデルをダウンロードする必要はありません。
 
 **配布・起動**:
 
@@ -117,7 +124,7 @@ Windows 用 exe は必ず Windows 上でビルドしてください（spec: `seq
 4. データ（`data/` … DB と画像）は exe と同じフォルダに作られます。フォルダごと
    コピーすれば別 PC へ移行でき、削除すれば初期化されます。
 
-外部通信はせず `127.0.0.1` のみで待ち受けます。空きポート（8010 など）を自動選択します。
+アプリのサーバは `127.0.0.1` のみで待ち受けます。空きポート（8010 など）を自動選択します。
 
 #### GitHub Actions による自動ビルドと Google Drive への自動アップロード
 
@@ -127,6 +134,8 @@ Windows 用 exe は必ず Windows 上でビルドしてください（spec: `seq
 [指定の Google Drive フォルダ](https://drive.google.com/drive/folders/1RXQF7syvhMOmS86IB3bhJZOxgFnlKqZq)
 にアップロードされます（同名ファイルがあれば上書き更新）。Drive への
 アップロードに失敗した場合、ワークフローも失敗します。
+アップロード前に凍結 EXE を起動し、内蔵モデルからの短い学習と学習済みモデルによる
+推論を検証します。手動実行で `publish=false` を選ぶと、配布せずにビルド検証できます。
 
 **初回セットアップ**（Google Drive へのアップロードを有効にするには）:
 
@@ -195,7 +204,7 @@ uvicorn main:app --port 8010               # http://localhost:8010 で UI と AP
 4. **蓄積** — 修正済みシンボルは `origin=inference` と信頼度つきで保存され、次の学習データになります
 5. **学習** — 蓄積データで YOLO を再学習。完了すると `best.pt` が新モデルとして自動登録・適用され、次の推論で使われます
 
-### ultralytics が無い環境（exe 配布など）
+### ultralytics が無い開発環境
 
 推論・学習の API は `ultralytics` 未導入でもサーバは起動し、実行時に外部実行への案内を返します。
 その場合の流れ:
@@ -208,7 +217,8 @@ yolo predict model=best.pt source=dataset_root/dataset/images/train save_txt=Tru
 yolo detect train data=dataset_root/data.yaml model=yolov8n.pt epochs=100 imgsz=1280
 ```
 
-ツール内で直接実行するには追加依存が必要です（約 2 GB・GPU 推奨）:
+開発環境でツール内実行するには追加依存が必要です（GPU 推奨）。Windows 配布 EXE には
+CPU 版の依存と初期モデルが同梱されています。
 
 ```bash
 pip install -r requirements-ml.txt   # ultralytics
