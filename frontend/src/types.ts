@@ -173,7 +173,13 @@ export type TrainingRun = {
   imgsz: number
   base_model: string | null
   result_model_id: number | null
+  result_model: MlModel | null
   metrics: Record<string, string> | null
+  /** 比較対象（旧モデル）を蓄積データで評価した指標 */
+  baseline_metrics: Record<string, string> | null
+  baseline_label: string | null
+  /** 採用判定: pending=採用待ち / adopted=採用 / rejected=見送り */
+  decision: 'pending' | 'adopted' | 'rejected' | null
   log_tail: string | null
   started_at: string | null
   finished_at: string | null

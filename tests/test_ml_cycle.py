@@ -7,15 +7,49 @@ ultralytics 非搭載の環境でも外部実行ルート（ZIP 取込 / best.pt
 from __future__ import annotations
 
 import io
+import json
 import zipfile
 
 import pytest
 
+import database
+from models import TrainingRun
 from tests.conftest import SAMPLE_ANNOTATION, create_project
 
 
 def _upload_model(client, name: str = "best.pt", raw: bytes = b"PK\x03\x04-fake-model"):
     return client.post("/api/ml/models", files={"file": (name, raw, "application/octet-stream")})
+
+
+def _insert_training_run(
+    *,
+    status: str = "success",
+    decision: str = "pending",
+    result_model_id: int | None = None,
+    baseline_metrics: dict | None = None,
+) -> int:
+    """完了済み学習ジョブを直接作る（実学習は重いので再現しない）。"""
+    db = database.SessionLocal()
+    try:
+        run = TrainingRun(
+            status=status,
+            project_ids_json="[]",
+            image_count=2,
+            epochs=5,
+            imgsz=640,
+            base_model="yolov8n.pt",
+            result_model_id=result_model_id,
+            metrics_json=json.dumps({"metrics/mAP50-95(B)": "0.8123"}),
+            baseline_metrics_json=json.dumps(baseline_metrics) if baseline_metrics else None,
+            baseline_label="best v1",
+            decision=decision,
+        )
+        db.add(run)
+        db.commit()
+        db.refresh(run)
+        return run.id
+    finally:
+        db.close()
 
 
 def _predictions_zip(project_id: int, lines: list[str]) -> bytes:
@@ -242,3 +276,75 @@ def test_frozen_training_uses_bundled_base_model(tmp_path, monkeypatch):
 
 def test_project_predictions_404(client):
     assert client.get("/api/ml/projects/9999/predictions").status_code == 404
+
+
+def test_training_decision_adopt_switches_active_model(client):
+    """採用を選ぶと学習済みモデルが使用中に切り替わる。"""
+    _upload_model(client)  # v1 が使用中
+    new_model = _upload_model(client, name="run1_best.pt", raw=b"PK\x03\x04-trained").json()
+    run_id = _insert_training_run(
+        result_model_id=new_model["id"],
+        baseline_metrics={"metrics/mAP50-95(B)": "0.7000"},
+    )
+
+    body = client.get(f"/api/ml/training/runs/{run_id}").json()
+    assert body["decision"] == "pending"
+    assert body["baseline_metrics"]["metrics/mAP50-95(B)"] == "0.7000"
+    assert body["baseline_label"] == "best v1"
+    assert body["result_model"]["id"] == new_model["id"]
+
+    res = client.post(f"/api/ml/training/runs/{run_id}/decision", json={"decision": "adopt"})
+    assert res.status_code == 200, res.text
+    assert res.json()["decision"] == "adopted"
+
+    models = {m["id"]: m for m in client.get("/api/ml/models").json()}
+    assert models[new_model["id"]]["is_active"] is True
+    assert models[1]["is_active"] is False
+
+
+def test_training_decision_reject_keeps_current_model(client):
+    """見送りを選ぶと現行モデルがそのまま使われ続ける。"""
+    _upload_model(client)
+    new_model = _upload_model(client, name="run1_best.pt", raw=b"PK\x03\x04-trained").json()
+    run_id = _insert_training_run(result_model_id=new_model["id"])
+
+    res = client.post(f"/api/ml/training/runs/{run_id}/decision", json={"decision": "reject"})
+    assert res.status_code == 200, res.text
+    assert res.json()["decision"] == "rejected"
+
+    models = {m["id"]: m for m in client.get("/api/ml/models").json()}
+    assert models[1]["is_active"] is True
+    assert models[new_model["id"]]["is_active"] is False
+
+
+def test_training_decision_only_for_pending_successful_runs(client):
+    new_model = _upload_model(client, name="x.pt", raw=b"PK\x03\x04-t2").json()
+    done_run = _insert_training_run(result_model_id=new_model["id"], decision="adopted")
+    res = client.post(f"/api/ml/training/runs/{done_run}/decision", json={"decision": "adopt"})
+    assert res.status_code == 400  # 判定済み
+
+    running_run = _insert_training_run(status="running", decision="", result_model_id=None)
+    res = client.post(f"/api/ml/training/runs/{running_run}/decision", json={"decision": "adopt"})
+    assert res.status_code == 400  # 未完了
+
+    assert client.post("/api/ml/training/runs/9999/decision", json={"decision": "adopt"}).status_code == 404
+
+
+def test_pick_metrics_extracts_main_keys():
+    from services import training_service
+
+    results_dict = {
+        "metrics/precision(B)": 0.91,
+        "metrics/recall(B)": 0.88,
+        "metrics/mAP50(B)": 0.95,
+        "metrics/mAP50-95(B)": 0.81234,
+        "fitness": 0.5,
+    }
+    assert training_service._pick_metrics(results_dict) == {
+        "metrics/precision(B)": "0.9100",
+        "metrics/recall(B)": "0.8800",
+        "metrics/mAP50(B)": "0.9500",
+        "metrics/mAP50-95(B)": "0.8123",
+    }
+    assert training_service._pick_metrics({}) is None
+    assert training_service._pick_metrics({"fitness": 1.0}) is None
