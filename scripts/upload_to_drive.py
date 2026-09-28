@@ -1,4 +1,4 @@
-"""Annotator.exe を Google Drive の指定フォルダへアップロードする。
+"""TodenYOLO.exe を Google Drive の指定フォルダへアップロードする。
 
 GitHub Actions の ``build-windows-exe.yml`` から呼ぶ想定。必要な環境変数:
 
@@ -30,7 +30,7 @@ def _escape_query_value(value: str) -> str:
 
 
 def main() -> int:
-    file_path = Path(sys.argv[1]) if len(sys.argv) > 1 else Path("dist/Annotator.exe")
+    file_path = Path(sys.argv[1]) if len(sys.argv) > 1 else Path("dist/TodenYOLO.exe")
     creds_json = os.environ.get("GOOGLE_DRIVE_CREDENTIALS_JSON", "").strip()
     folder_id = os.environ.get("GOOGLE_DRIVE_FOLDER_ID", "").strip()
 

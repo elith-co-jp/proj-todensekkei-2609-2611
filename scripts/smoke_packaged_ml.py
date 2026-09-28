@@ -53,7 +53,7 @@ def _request(method: str, url: str, **kwargs) -> dict:
 
 
 def main() -> None:
-    executable = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else Path("dist/Annotator.exe").resolve()
+    executable = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else Path("dist/TodenYOLO.exe").resolve()
     if not executable.is_file():
         raise FileNotFoundError(executable)
 

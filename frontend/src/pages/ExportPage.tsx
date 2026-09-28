@@ -15,6 +15,7 @@ export default function ExportPage() {
   const [rows, setRows] = useState<ProjectRow[]>([])
   const [ids, setIds] = useState<Set<number>>(new Set())
   const [busy, setBusy] = useState(false)
+  const [busyLabel, setBusyLabel] = useState<{ message: string; hint: string } | null>(null)
   const [loading, setLoading] = useState(true)
   const [dropActive, setDropActive] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -42,6 +43,10 @@ export default function ExportPage() {
 
   const doExport = async () => {
     setBusy(true)
+    setBusyLabel({
+      message: 'ZIP を作成しています',
+      hint: '図面とアノテーションデータをまとめています。',
+    })
     try {
       const r = await api.exportBulk({ ids: Array.from(ids) })
       push(`✓ ${r.name} を出力（${(r.size / 1024).toFixed(1)} KB／${ids.size || rows.length} 枚）`)
@@ -49,6 +54,7 @@ export default function ExportPage() {
       push(`× ${e instanceof Error ? e.message : String(e)}`)
     } finally {
       setBusy(false)
+      setBusyLabel(null)
     }
   }
 
@@ -74,6 +80,10 @@ export default function ExportPage() {
     }
     setImportNotice(null)
     setBusy(true)
+    setBusyLabel({
+      message: 'ZIP を読み込んで復元しています',
+      hint: '図面とアノテーションデータを復元しています。',
+    })
     try {
       const r = await api.importZip(f)
       push(`✓ ${f.name} を復元（${r.count} 枚：シンボル・端子・配線をすべて復元）`)
@@ -93,6 +103,7 @@ export default function ExportPage() {
       })
     } finally {
       setBusy(false)
+      setBusyLabel(null)
     }
   }
 
@@ -126,8 +137,11 @@ export default function ExportPage() {
 
   return (
     <div className="page-shell enter-up">
-      {loading && <LoadingOverlay message="データを読み込んでいます" hint="図面一覧を取得しています。" />}
-      <div aria-hidden={loading} inert={loading ? true : undefined}>
+      {loading && !busyLabel && (
+        <LoadingOverlay message="データを読み込んでいます" hint="図面一覧を取得しています。" />
+      )}
+      {busyLabel && <LoadingOverlay message={busyLabel.message} hint={busyLabel.hint} />}
+      <div aria-hidden={loading || busyLabel !== null} inert={loading || busyLabel !== null ? true : undefined}>
       <header className="page-header">
         <div>
           <div className="eyebrow">Data handoff</div>

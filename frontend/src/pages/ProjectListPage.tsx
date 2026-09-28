@@ -36,6 +36,7 @@ export default function ProjectListPage() {
   const [busy, setBusy] = useState(false)
   const [loading, setLoading] = useState(true)
   const [uploading, setUploading] = useState(false)
+  const [busyLabel, setBusyLabel] = useState<{ message: string; hint: string } | null>(null)
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
   const [msg, setMsg] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -134,6 +135,10 @@ export default function ProjectListPage() {
   const removeChecked = async () => {
     if (checked.size === 0) return
     setBusy(true)
+    setBusyLabel({
+      message: '選択した図面を削除しています',
+      hint: '図面とアノテーションデータを削除しています。',
+    })
     try {
       await api.bulkDelete(Array.from(checked))
       setChecked(new Set())
@@ -145,11 +150,16 @@ export default function ProjectListPage() {
       setError(caught instanceof Error ? caught.message : String(caught))
     } finally {
       setBusy(false)
+      setBusyLabel(null)
     }
   }
 
   const exportChecked = async () => {
     setBusy(true)
+    setBusyLabel({
+      message: 'ZIP を作成しています',
+      hint: '図面とアノテーションデータをまとめています。',
+    })
     try {
       const response = await api.exportBulk({ ids: Array.from(checked) })
       setMsg(`${response.name} を出力しました（${(response.size / 1024).toFixed(1)} KB）`)
@@ -157,12 +167,17 @@ export default function ProjectListPage() {
       setError(caught instanceof Error ? caught.message : String(caught))
     } finally {
       setBusy(false)
+      setBusyLabel(null)
     }
   }
 
   const inferChecked = async () => {
     setBusy(true)
     setError(null)
+    setBusyLabel({
+      message: 'AI 推論を実行しています',
+      hint: '1枚あたり数秒かかります。対象が多い場合はしばらくお待ちください。',
+    })
     try {
       const r = await api.runInference(Array.from(checked))
       setMsg(
@@ -174,6 +189,7 @@ export default function ProjectListPage() {
       setError(caught instanceof Error ? caught.message : String(caught))
     } finally {
       setBusy(false)
+      setBusyLabel(null)
     }
   }
 
@@ -182,6 +198,10 @@ export default function ProjectListPage() {
     if (!justRegistered || justRegistered.length === 0) return
     setBusy(true)
     setError(null)
+    setBusyLabel({
+      message: 'AI 推論を実行しています',
+      hint: '1枚あたり数秒かかります。対象が多い場合はしばらくお待ちください。',
+    })
     try {
       const r = await api.runInference(justRegistered)
       setMsg(
@@ -193,6 +213,7 @@ export default function ProjectListPage() {
       setError(caught instanceof Error ? caught.message : String(caught))
     } finally {
       setBusy(false)
+      setBusyLabel(null)
     }
   }
 
@@ -213,13 +234,14 @@ export default function ProjectListPage() {
           hint="PDFをページ単位へ変換しています。画面を閉じずにお待ちください。"
         />
       )}
-      {loading && !uploading && (
+      {loading && !uploading && !busyLabel && (
         <LoadingOverlay message="図面を読み込んでいます" hint="作業状況と登録済み図面を取得しています。" />
       )}
+      {busyLabel && <LoadingOverlay message={busyLabel.message} hint={busyLabel.hint} />}
 
       <div
-        aria-hidden={deleteDialogOpen || loading || uploading}
-        inert={deleteDialogOpen || loading || uploading ? true : undefined}
+        aria-hidden={deleteDialogOpen || loading || uploading || busyLabel !== null}
+        inert={deleteDialogOpen || loading || uploading || busyLabel !== null ? true : undefined}
       >
 
       <header className="page-header">

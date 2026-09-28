@@ -8,7 +8,7 @@
     pyinstaller seq-annotator.spec --noconfirm
 
 生成物:
-    dist/Annotator.exe  （Windows。Python 非同梱の PC でもそのまま動く）
+    dist/TodenYOLO.exe  （Windows。Python 非同梱の PC でもそのまま動く）
 
 Windows 用 exe は Windows 上でビルドすること（PyInstaller はクロスビルド不可）。
 """
@@ -68,7 +68,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name="Annotator",
+    name="TodenYOLO",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

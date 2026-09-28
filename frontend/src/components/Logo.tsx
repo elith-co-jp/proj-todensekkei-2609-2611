@@ -1,19 +1,18 @@
-/**
- * Elith ロゴ。
- * マーク実体は public/elith-mark.svg（差し替え可能）。文字色は親の text-* を継承する。
- */
+import { Scan } from 'lucide-react'
 
+/**
+ * TodenYOLO ロゴ。グラデーションの角丸に検出枠（YOLO のバウンディングボックス）を重ねたマーク。
+ * 文字色は親の text-* を継承する。
+ */
 export function LogoMark({ size = 28, className = '' }: { size?: number; className?: string }) {
   return (
-    <img
-      src="/elith-mark.svg"
-      alt="Elith"
-      width={size}
-      height={size}
-      className={`flex-none select-none ${className}`}
-      style={{ height: size, width: 'auto' }}
-      draggable={false}
-    />
+    <span
+      aria-hidden="true"
+      className={`brand-gradient flex flex-none select-none items-center justify-center rounded-xl text-white ${className}`}
+      style={{ height: size, width: size }}
+    >
+      <Scan size={Math.round(size * 0.6)} strokeWidth={2.4} />
+    </span>
   )
 }
 
@@ -32,9 +31,9 @@ export function Logo({
       {showWordmark && (
         <span
           className="font-extrabold leading-none tracking-tight"
-          style={{ fontSize: Math.round(size * 0.82) }}
+          style={{ fontSize: Math.round(size * 0.68) }}
         >
-          Elith
+          TodenYOLO
         </span>
       )}
     </span>
