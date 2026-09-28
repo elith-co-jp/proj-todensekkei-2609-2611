@@ -4,7 +4,7 @@ import { LogoMark } from './Logo'
 export function LoadingOverlay({ message, hint }: { message: string; hint?: string }) {
   return (
     <div
-      className="fixed inset-0 z-[70] flex flex-col items-center justify-center gap-5 bg-white/85 px-6 text-center backdrop-blur-sm"
+      className="fixed inset-0 z-[90] flex flex-col items-center justify-center gap-5 bg-white/85 px-6 text-center backdrop-blur-sm"
       role="status"
       aria-live="polite"
       aria-busy="true"

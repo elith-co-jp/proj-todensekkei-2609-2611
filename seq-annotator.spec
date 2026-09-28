@@ -43,10 +43,11 @@ except Exception:  # noqa: BLE001  未導入時は通常の import 解析に任�
     pass
 
 # 推論・学習は遅延 import。設定 YAML や動的に読むモジュールも同梱する。
-d, b, h = collect_all("ultralytics")
-datas += d
-binaries += b
-hiddenimports += h
+for pkg in ("ultralytics", "torchvision"):
+    d, b, h = collect_all(pkg)
+    datas += d
+    binaries += b
+    hiddenimports += h
 
 a = Analysis(
     ["desktop.py"],
