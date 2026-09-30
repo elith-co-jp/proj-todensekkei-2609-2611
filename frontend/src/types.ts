@@ -103,7 +103,7 @@ export type MlModel = {
   file_name: string
   sha256: string
   size_bytes: number
-  source: 'upload' | 'trained'
+  source: 'upload' | 'trained' | 'bundled'
   is_active: boolean
   metrics: Record<string, string> | null
   note: string | null
