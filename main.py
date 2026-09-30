@@ -1,4 +1,4 @@
-"""Annotator（FastAPI エントリポイント）。
+"""TodenYOLO（FastAPI エントリポイント）。
 
 起動:
     uvicorn main:app --reload --port 8000
@@ -70,7 +70,7 @@ async def lifespan(_app: FastAPI):
     yield
 
 
-app = FastAPI(title="Annotator", version="1.0.0", lifespan=lifespan)
+app = FastAPI(title="TodenYOLO", version="1.0.0", lifespan=lifespan)
 
 _origins = os.environ.get("SEQANNO_CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173")
 app.add_middleware(

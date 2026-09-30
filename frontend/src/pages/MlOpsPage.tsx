@@ -17,6 +17,7 @@ import {
 } from 'lucide-react'
 
 import { api } from '../api/client'
+import { LoadingOverlay } from '../components/LoadingOverlay'
 import type {
   InferenceImportResult,
   InferenceRunResponse,
@@ -40,6 +41,22 @@ const CYCLE_STEPS = [
   { icon: Brain, label: '4. 学習', desc: '修正済みデータで YOLO を再学習' },
   { icon: Scale, label: '5. 比較・採用', desc: '新旧モデルの精度を比較して採用可否を選択' },
 ]
+
+// 時間のかかる操作で画面全体に出すローディング表示（busy キー → メッセージ）
+const BUSY_OVERLAY: Record<string, { message: string; hint: string }> = {
+  inference: {
+    message: 'AI 推論を実行しています',
+    hint: '登録図面を順に処理しています。対象が多いほど時間がかかります。',
+  },
+  import: {
+    message: '推論結果を取り込んでいます',
+    hint: 'ZIP の中身を確認して登録しています。',
+  },
+  model: {
+    message: 'モデルを登録しています',
+    hint: '重みファイルをアップロードしています。',
+  },
+}
 
 // 採用判定パネルで並べる評価指標
 const COMPARE_METRICS = [
@@ -289,8 +306,12 @@ export default function MlOpsPage() {
     return current - baseline
   }
 
+  const busyOverlay = busy ? BUSY_OVERLAY[busy] : undefined
+
   return (
     <div className="page-shell enter-up">
+      {busyOverlay && <LoadingOverlay message={busyOverlay.message} hint={busyOverlay.hint} />}
+      <div aria-hidden={Boolean(busyOverlay)} inert={busyOverlay ? true : undefined}>
       <header className="page-header">
         <div>
           <div className="eyebrow">AI improvement cycle</div>
@@ -786,6 +807,7 @@ export default function MlOpsPage() {
             )}
           </div>
         </div>
+      </div>
       </div>
     </div>
   )

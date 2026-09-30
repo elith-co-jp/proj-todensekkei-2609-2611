@@ -27,6 +27,7 @@ import {
 } from 'lucide-react'
 
 import { api } from '../api/client'
+import { LoadingOverlay } from '../components/LoadingOverlay'
 import { useModalFocus } from '../hooks/useModalFocus'
 import type { Connection, ProjectDetail, ProjectRow, SymbolBox, SymbolClass } from '../types'
 import {
@@ -1247,6 +1248,12 @@ export default function EditorPage() {
 
   return (
     <div className="flex h-dvh min-w-[320px] flex-col overflow-hidden bg-slate-950 text-slate-100">
+      {exporting && (
+        <LoadingOverlay
+          message="この図面を出力しています"
+          hint="ZIP を作成してダウンロードしています。"
+        />
+      )}
       {/* ---------------- ワークスペースヘッダー ---------------- */}
       <header className="flex flex-none flex-wrap items-center gap-2 border-b border-white/10 bg-[#07111f] px-3 py-2.5 shadow-xl shadow-slate-950/20 sm:gap-3 sm:px-4">
         <Link

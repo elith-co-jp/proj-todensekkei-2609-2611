@@ -4,7 +4,7 @@
 外部通信はせず 127.0.0.1 のみで待ち受ける。
 
     開発:   python desktop.py
-    配布物: Annotator.exe をダブルクリック
+    配布物: TodenYOLO.exe をダブルクリック
 """
 
 from __future__ import annotations
@@ -61,7 +61,7 @@ def _show_startup_error(exc: Exception) -> None:
     except Exception:  # noqa: BLE001
         log_path = None
 
-    message = f"Annotator の起動に失敗しました。\n\n{exc}"
+    message = f"TodenYOLO の起動に失敗しました。\n\n{exc}"
     if log_path:
         message += f"\n\n詳細ログ: {log_path}"
 
@@ -69,7 +69,7 @@ def _show_startup_error(exc: Exception) -> None:
         try:
             import ctypes
 
-            ctypes.windll.user32.MessageBoxW(None, message, "Annotator", 0x10)
+            ctypes.windll.user32.MessageBoxW(None, message, "TodenYOLO", 0x10)
             return
         except Exception:  # noqa: BLE001
             pass
@@ -99,7 +99,7 @@ def main() -> None:
     url = f"http://{HOST}:{port}"
 
     print("=" * 60)
-    print(" Annotator")
+    print(" TodenYOLO")
     print(f"  ブラウザで {url} を開きます。")
     print("  終了するには画面の「アプリを終了」を押してください。")
     print("=" * 60)

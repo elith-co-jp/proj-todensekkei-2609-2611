@@ -120,16 +120,16 @@ jobs:
       - name: Verify packaged output
         run: |
           $ErrorActionPreference = "Stop"
-          $exePath = "dist\Annotator.exe"
+          $exePath = "dist\TodenYOLO.exe"
           if (-not (Test-Path $exePath -PathType Leaf)) {
             throw "Expected artifact was not created: $exePath"
           }
 
           $unexpectedEntries = Get-ChildItem -Path dist -Force |
-            Where-Object { $_.Name -ne "Annotator.exe" }
+            Where-Object { $_.Name -ne "TodenYOLO.exe" }
           if ($unexpectedEntries) {
             $unexpectedEntries | ForEach-Object { Write-Error "Unexpected dist entry: $($_.FullName)" }
-            throw "dist must contain only Annotator.exe. Refusing to upload a folder-style build or data files."
+            throw "dist must contain only TodenYOLO.exe. Refusing to upload a folder-style build or data files."
           }
 
           $forbiddenPatterns = @(
@@ -164,7 +164,7 @@ jobs:
                 }
               }
 
-              $isForbidden -and $fileName -ne "Annotator.exe"
+              $isForbidden -and $fileName -ne "TodenYOLO.exe"
             }
           if ($forbiddenDistFiles) {
             $forbiddenDistFiles | ForEach-Object { Write-Error "Forbidden dist file: $($_.FullName)" }
@@ -173,14 +173,14 @@ jobs:
 
       - name: Smoke test frozen training and inference
         timeout-minutes: 15
-        run: python scripts/smoke_packaged_ml.py dist/Annotator.exe
+        run: python scripts/smoke_packaged_ml.py dist/TodenYOLO.exe
 
       - name: Upload executable
         if: github.event_name == 'push' || inputs.publish
         uses: actions/upload-artifact@v7.0.1
         with:
-          name: Annotator-windows-exe
-          path: dist/Annotator.exe
+          name: TodenYOLO-windows-exe
+          path: dist/TodenYOLO.exe
           if-no-files-found: error
           retention-days: 7
 
@@ -196,4 +196,4 @@ jobs:
             throw "GOOGLE_DRIVE_CREDENTIALS_JSON が未設定です。README の「Google Drive への自動アップロード」を参照してください。"
           }
           pip install google-api-python-client==2.200.0
-          python scripts/upload_to_drive.py dist/Annotator.exe
+          python scripts/upload_to_drive.py dist/TodenYOLO.exe

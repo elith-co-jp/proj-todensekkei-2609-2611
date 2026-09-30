@@ -53,7 +53,7 @@ def _request(method: str, url: str, **kwargs) -> dict:
 
 
 def main() -> None:
-    executable = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else Path("dist/Annotator.exe").resolve()
+    executable = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else Path("dist/TodenYOLO.exe").resolve()
     if not executable.is_file():
         raise FileNotFoundError(executable)
 
@@ -118,15 +118,15 @@ def main() -> None:
                 raise AssertionError(f"Frozen training failed: {run['status']}\n{run.get('log_tail')}")
             if not run["base_model"].endswith("models\\yolov8n.pt"):
                 raise AssertionError(f"Training did not use the bundled model: {run['base_model']}")
-            if run["decision"] == "pending":
-                # 学習済みモデルは採用待ちで止まる。採用すると使用中モデルになる。
-                run = _request(
-                    "POST",
-                    f"{base_url}/api/ml/training/runs/{run['id']}/decision",
-                    json={"decision": "adopt"},
-                )
-            if run["decision"] != "adopted":
-                raise AssertionError(f"Trained model was not adopted: {run['decision']}")
+            if run.get("decision") != "pending":
+                raise AssertionError(f"Trained model should await adoption: {run.get('decision')}")
+            decided = _request(
+                "POST",
+                f"{base_url}/api/ml/training/runs/{run['id']}/decision",
+                json={"decision": "adopt"},
+            )
+            if decided["decision"] != "adopted":
+                raise AssertionError(f"Adoption failed: {decided}")
 
             result = _request(
                 "POST",

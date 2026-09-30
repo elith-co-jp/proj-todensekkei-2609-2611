@@ -1,4 +1,4 @@
-# Annotator
+# TodenYOLO
 
 シーケンス図（プラント制御回路図）に対して、**シンボルを bbox で**、**シンボル間の配線を from-to で**
 アノテーションし、**YOLO 学習可能な形式**で出力するツールです。
@@ -112,14 +112,14 @@ CPU での学習は GPU より時間がかかります。
 build_windows.bat
 ```
 
-短い学習・推論の検証が通ると `dist\Annotator.exe` が生成されます。PyInstaller はクロスビルドできないため、
+短い学習・推論の検証が通ると `dist\TodenYOLO.exe` が生成されます。PyInstaller はクロスビルドできないため、
 Windows 用 exe は必ず Windows 上でビルドしてください（spec: `seq-annotator.spec`）。
 ビルド時のみ、公式 Ultralytics リリースから `yolov8n.pt` を取得して SHA-256 を照合します。
 配布先で初期モデルをダウンロードする必要はありません。
 
 **配布・起動**:
 
-1. `Annotator.exe` を配布先 PC の任意のフォルダに置く。
+1. `TodenYOLO.exe` を配布先 PC の任意のフォルダに置く。
 2. ダブルクリックすると自動でローカルサーバが立ち上がり、既定ブラウザに UI が開く。
 3. 終了するときは画面の「アプリを終了」を押す。ブラウザを閉じたままにした場合も、
    一定時間後にローカルサーバは自動終了します。
@@ -132,7 +132,7 @@ Windows 用 exe は必ず Windows 上でビルドしてください（spec: `seq
 
 `.github/workflows/build-windows-exe.yml` は **main へのマージ（push）時**と手動実行
 （Actions タブの「Build Windows EXE」→「Run workflow」）で Windows ランナー上に
-`Annotator.exe` をビルドします。成果物は GitHub Artifacts（7 日保存）と、
+`TodenYOLO.exe` をビルドします。成果物は GitHub Artifacts（7 日保存）と、
 [指定の Google Drive フォルダ](https://drive.google.com/drive/folders/1RXQF7syvhMOmS86IB3bhJZOxgFnlKqZq)
 にアップロードされます（同名ファイルがあれば上書き更新）。Drive への
 アップロードに失敗した場合、ワークフローも失敗します。

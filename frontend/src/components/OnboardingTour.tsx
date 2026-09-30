@@ -91,7 +91,7 @@ export function OnboardingTour({ open, onClose }: { open: boolean; onClose: () =
             <div>
               <div className="text-[10px] font-bold tracking-[0.18em] text-koa-500">QUICK TOUR</div>
               <h2 id="tour-title" className="mt-0.5 text-base font-bold text-slate-900">
-                Annotatorへようこそ
+                TodenYOLOへようこそ
               </h2>
             </div>
           </div>

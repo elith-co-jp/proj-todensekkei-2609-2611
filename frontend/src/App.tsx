@@ -49,7 +49,7 @@ export default function App() {
   const closeMobileNavigation = useCallback(() => setMobileNavOpen(false), [])
   const shutdownDesktop = useCallback(async () => {
     if (shutdownPending) return
-    const confirmed = window.confirm('Annotator を終了します。保存済みであることを確認してください。')
+    const confirmed = window.confirm('TodenYOLO を終了します。保存済みであることを確認してください。')
     if (!confirmed) return
     setShutdownPending(true)
     try {
@@ -169,7 +169,7 @@ export default function App() {
             <div className="mt-3 text-[11px] font-semibold tracking-[0.16em] text-cyan-200/80">
               ANNOTATION OPERATIONS
             </div>
-            <div className="mt-1 text-sm font-bold leading-snug text-white">Annotator</div>
+            <div className="mt-1 text-sm font-bold leading-snug text-white">TodenYOLO</div>
           </div>
           {sidebarCollapsed && <LogoMark size={34} className="hidden lg:block" />}
           <button
@@ -291,7 +291,7 @@ export default function App() {
           </button>
           <LogoMark size={25} />
           <div className="min-w-0">
-            <div className="truncate text-sm font-bold text-slate-900">Annotator</div>
+            <div className="truncate text-sm font-bold text-slate-900">TodenYOLO</div>
             <div className="text-[10px] font-semibold tracking-[0.12em] text-slate-400">ANNOTATION OPERATIONS</div>
           </div>
         </header>
