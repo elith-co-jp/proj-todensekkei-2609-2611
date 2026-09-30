@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>シーケンス図解析</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <main class="app">
+      <header class="hero">
+        <div>
+          <div class="eyebrow">Sequence Diagram Analysis</div>
+          <h1>シーケンス図解析</h1>
+          <p>PDFを投入すると、シンボル・配線・ラベル・接続関係を解析し、構造データとして出力します。</p>
+        </div>
+        <button id="seed-demo-job" type="button" class="button secondary">サンプル結果を見る</button>
+      </header>
+
+      <section class="panel run-panel">
+        <form id="job-form">
+          <div class="run-grid">
+            <label id="pdf-dropzone" class="dropzone">
+              <input id="pdf-file" name="pdf_file" type="file" accept=".pdf" />
+              <span class="drop-icon">PDF</span>
+              <span>
+                <span class="drop-title">PDFを選択、またはここにドラッグ</span>
+                <span id="pdf-file-name" class="drop-sub">入力はPDFのみです。解析条件はシステム側の既定値を使用します。</span>
+              </span>
+            </label>
+
+            <div class="run-actions">
+              <label class="check-row">
+                <input id="include-external-reference" type="checkbox" checked />
+                <span>別ページ参照を含める</span>
+              </label>
+              <label class="path-entry" for="pdf-path">
+                <span>ファイルパスで指定</span>
+                <input id="pdf-path" name="pdf_path" type="text" placeholder="/path/to/input.pdf" />
+              </label>
+              <button id="submit-job" type="submit" class="button primary">解析を開始</button>
+            </div>
+          </div>
+
+          <input id="annotation-zip-path" name="annotation_zip_path" type="hidden" />
+          <input id="model-path" name="model_path" type="hidden" />
+          <input id="pages" name="pages" type="hidden" value="1-30" />
+          <input id="device" name="device" type="hidden" value="0" />
+          <input id="python-executable" name="python_executable" type="hidden" />
+          <input id="cuda-visible-devices" name="cuda_visible_devices" type="hidden" value="0" />
+          <input id="terminal-source" name="terminal_source" type="hidden" value="annotation-or-inferred" />
+          <input id="text-suppression" name="text_suppression" type="hidden" value="none" />
+          <input id="symbol-label-ocr-engine" name="symbol_label_ocr_engine" type="hidden" value="rapidocr" />
+          <input id="external-reference-source" name="external_reference_source" type="hidden" value="annotation-other-label" />
+          <input id="gold-unmatched-yolo" name="gold_unmatched_yolo" type="hidden" value="keep" />
+          <input id="run-ocr" name="run_ocr" type="hidden" value="true" />
+          <input id="page-sheet-map" name="page_sheet_map" type="hidden" />
+          <input id="gold-symbol-classes" name="gold_symbol_classes" type="hidden" />
+        </form>
+      </section>
+
+      <section id="status" class="status-bar hidden">
+        <div>
+          <strong id="status-title">待機中</strong>
+          <span id="status-detail"></span>
+        </div>
+        <button id="stop-job" type="button" class="button danger hidden">停止</button>
+      </section>
+
+      <section id="results" class="panel results-panel">
+        <div class="panel-head">
+          <div>
+            <div class="eyebrow">Results</div>
+            <h2>解析結果</h2>
+          </div>
+          <a id="download-archive" class="button secondary hidden" href="#">出力データをダウンロード</a>
+        </div>
+
+        <div id="result-summary" class="summary empty">PDFを投入すると、ここに解析結果が表示されます。</div>
+        <div id="page-results" class="page-results"></div>
+
+        <details class="log-box">
+          <summary>実行ログ</summary>
+          <pre id="job-log"></pre>
+        </details>
+      </section>
+
+      <section class="panel history-panel">
+        <div class="panel-head">
+          <div>
+            <div class="eyebrow">History</div>
+            <h2>最近の実行</h2>
+          </div>
+          <button id="refresh-defaults" type="button" class="button secondary">更新</button>
+        </div>
+        <div id="jobs-list" class="jobs-list"></div>
+      </section>
+    </main>
+    <script src="/static/app.js" type="module"></script>
+  </body>
+</html>
