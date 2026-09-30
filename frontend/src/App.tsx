@@ -33,10 +33,27 @@ export default function App() {
   const [tourOpen, setTourOpen] = useState(false)
   const [desktopMode, setDesktopMode] = useState(false)
   const [shutdownPending, setShutdownPending] = useState(false)
+  const [desktopTerminated, setDesktopTerminated] = useState(false)
   const [desktopNavigation, setDesktopNavigation] = useState(() =>
     typeof window === 'undefined' ? true : window.matchMedia('(min-width: 1024px)').matches,
   )
   const mobileNavigationRef = useRef<HTMLElement | null>(null)
+  const heartbeatTimerRef = useRef<number | null>(null)
+
+  const stopHeartbeat = useCallback(() => {
+    if (heartbeatTimerRef.current !== null) {
+      window.clearInterval(heartbeatTimerRef.current)
+      heartbeatTimerRef.current = null
+    }
+  }, [])
+
+  const sendHeartbeat = useCallback(() => {
+    void api.desktopHeartbeat().catch(() => {
+      // サーバ停止後も打ち続けるとコンソールが接続拒否エラーで埋まるため打ち切る
+      stopHeartbeat()
+      setDesktopTerminated(true)
+    })
+  }, [stopHeartbeat])
 
   const closeTour = useCallback(() => {
     setTourOpen(false)
@@ -54,12 +71,14 @@ export default function App() {
     setShutdownPending(true)
     try {
       await api.shutdownDesktop()
+      stopHeartbeat()
+      setDesktopTerminated(true)
       window.setTimeout(() => window.close(), 300)
     } catch (caught) {
       setShutdownPending(false)
       window.alert(caught instanceof Error ? caught.message : String(caught))
     }
-  }, [shutdownPending])
+  }, [shutdownPending, stopHeartbeat])
   const mobileNavigationModalOpen = mobileNavOpen && !desktopNavigation
 
   useModalFocus({
@@ -78,13 +97,6 @@ export default function App() {
 
   useEffect(() => {
     let active = true
-    let timer: number | null = null
-
-    const sendHeartbeat = () => {
-      void api.desktopHeartbeat().catch(() => {
-        // 終了直前やネットワーク切断時は通知に失敗しても画面操作を妨げない。
-      })
-    }
 
     const start = async () => {
       try {
@@ -92,7 +104,7 @@ export default function App() {
         if (!active || !status.desktop) return
         setDesktopMode(true)
         sendHeartbeat()
-        timer = window.setInterval(sendHeartbeat, 15000)
+        heartbeatTimerRef.current = window.setInterval(sendHeartbeat, 15000)
       } catch {
         // API 起動前の一時的な失敗では、通常画面の表示を優先する。
       }
@@ -102,9 +114,9 @@ export default function App() {
 
     return () => {
       active = false
-      if (timer !== null) window.clearInterval(timer)
+      stopHeartbeat()
     }
-  }, [])
+  }, [sendHeartbeat, stopHeartbeat])
 
   useEffect(() => {
     setMobileNavOpen(false)
@@ -117,6 +129,27 @@ export default function App() {
     media.addEventListener('change', update)
     return () => media.removeEventListener('change', update)
   }, [])
+
+  if (desktopTerminated) {
+    return (
+      <main className="flex min-h-dvh items-center justify-center bg-[#07111f] px-6 text-slate-100">
+        <div className="max-w-sm text-center">
+          <LogoMark size={44} className="mx-auto text-cyan-300" />
+          <h1 className="mt-5 text-lg font-bold">TodenYOLO を終了しました</h1>
+          <p className="mt-2 text-sm leading-6 text-slate-400">
+            このタブは閉じて構いません。アプリを再起動した場合は再接続してください。
+          </p>
+          <button
+            type="button"
+            className="mt-6 rounded-xl bg-cyan-300 px-5 py-2.5 text-sm font-bold text-slate-950 transition hover:bg-cyan-200"
+            onClick={() => window.location.reload()}
+          >
+            再接続
+          </button>
+        </div>
+      </main>
+    )
+  }
 
   if (isEditorPath(location.pathname)) {
     return (
