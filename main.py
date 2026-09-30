@@ -87,6 +87,8 @@ app.include_router(ml.router)
 
 
 _LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1"}
+# 運用者が SEQANNO_CORS_ORIGINS で明示したオリジンも信頼する
+_CONFIGURED_ORIGINS = {o.strip().rstrip("/").lower() for o in _origins.split(",") if o.strip()}
 
 
 @app.middleware("http")
@@ -96,15 +98,18 @@ async def _reject_foreign_origins(request: Request, call_next):
     この API は認証を持たないため、multipart などプリフライト不要の POST は
     任意サイトから送信できてしまう（アプリ終了・モデル登録など）。
     Origin 未送信（curl・ファイル配信でない同一オリジン環境）は通し、
-    送信される場合はループバック系ホストのみ許可する。
+    送信される場合はループバック系ホストか許可オリジンのみ通す。
     """
     origin = request.headers.get("origin")
     if origin:
-        try:
-            host = (urlsplit(origin).hostname or "").lower()
-        except ValueError:
-            host = ""
-        if host not in _LOOPBACK_HOSTS and not host.endswith(".localhost"):
+        allowed = origin.rstrip("/").lower() in _CONFIGURED_ORIGINS
+        if not allowed:
+            try:
+                host = (urlsplit(origin).hostname or "").lower()
+            except ValueError:
+                host = ""
+            allowed = host in _LOOPBACK_HOSTS
+        if not allowed:
             return JSONResponse({"detail": "許可されていないオリジンです"}, status_code=403)
     return await call_next(request)
 

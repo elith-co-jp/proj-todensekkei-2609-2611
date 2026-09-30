@@ -23,14 +23,26 @@ def test_rejects_null_origin(client):
     assert res.status_code == 403
 
 
+def test_rejects_localhost_subdomain(client):
+    # *.localhost は別ローカルサービスになり得るため信頼しない
+    res = client.get("/api/health", headers={"Origin": "http://evil.localhost:9999"})
+    assert res.status_code == 403
+
+
 def test_allows_loopback_origin(client):
-    for origin in ("http://127.0.0.1:8095", "http://localhost:5173", "http://foo.localhost"):
+    for origin in ("http://127.0.0.1:8095", "http://localhost:5173"):
         res = client.post(
             "/api/projects",
             files={"files": ("a.png", make_png(), "image/png")},
             headers={"Origin": origin},
         )
         assert res.status_code == 200, origin
+
+
+def test_allows_configured_cors_origin(client):
+    # SEQANNO_CORS_ORIGINS の既定値にも含まれる開発サーバ
+    res = client.get("/api/health", headers={"Origin": "http://localhost:5173"})
+    assert res.status_code == 200
 
 
 def test_allows_requests_without_origin(client):

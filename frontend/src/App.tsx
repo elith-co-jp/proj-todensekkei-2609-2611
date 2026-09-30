@@ -48,8 +48,15 @@ export default function App() {
   }, [])
 
   const sendHeartbeat = useCallback(() => {
-    void api.desktopHeartbeat().catch(() => {
-      // サーバ停止後も打ち続けるとコンソールが接続拒否エラーで埋まるため打ち切る
+    void api.desktopHeartbeat().catch(async () => {
+      // 一時的な失敗なら継続。health も通らなければサーバ停止とみなし、
+      // 打ち続けてコンソールが接続拒否エラーで埋まるのを防ぐため打ち切る
+      try {
+        await api.health()
+        return
+      } catch {
+        /* サーバ応答なし → 終了扱い */
+      }
       stopHeartbeat()
       setDesktopTerminated(true)
     })
