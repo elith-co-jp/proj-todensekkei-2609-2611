@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -68,11 +69,12 @@ def parse_pages(values: list[str]) -> list[int]:
 
 
 def _analysis_cache_key(pdf: Path, dpi: int, run_ocr: bool, wire_text_mask: str) -> dict[str, Any]:
-    stat = pdf.stat()
+    digest = hashlib.sha256()
+    with pdf.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(4 * 1024 * 1024), b""):
+            digest.update(chunk)
     return {
-        "pdf_name": pdf.name,
-        "pdf_size": stat.st_size,
-        "pdf_mtime_ns": stat.st_mtime_ns,
+        "pdf_sha256": digest.hexdigest(),
         "dpi": dpi,
         "run_ocr": run_ocr,
         "wire_text_mask": wire_text_mask,

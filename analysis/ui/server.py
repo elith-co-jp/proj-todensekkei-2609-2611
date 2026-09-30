@@ -30,7 +30,6 @@ ALLOWED_PDF_EXTENSIONS = {".pdf"}
 ALLOWED_ZIP_EXTENSIONS = {".zip"}
 ALLOWED_MODEL_EXTENSIONS = {".pt", ".pth"}
 LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1"}
-ALLOWED_INTERPRETER_NAME = re.compile(r"(pythonw?|py)[\d.]*(\.exe)?", re.IGNORECASE)
 
 _processes: dict[str, subprocess.Popen[str]] = {}
 _process_lock = threading.Lock()
@@ -599,6 +598,18 @@ def expand_page_numbers(specs: list[str]) -> list[int]:
     return sorted(pages)
 
 
+_PAGE_COUNT_SNIPPET = (
+    "import sys\n"
+    "try:\n"
+    "    import pymupdf\n"
+    "except ImportError:\n"
+    "    import fitz as pymupdf\n"
+    "document = pymupdf.open(sys.argv[1])\n"
+    "print(document.page_count)\n"
+    "document.close()"
+)
+
+
 def pdf_page_count(pdf: Path) -> int | None:
     try:
         import pymupdf
@@ -612,6 +623,40 @@ def pdf_page_count(pdf: Path) -> int | None:
             return document.page_count
     except Exception:
         return None
+
+
+def pdf_page_count_via(pdf: Path, python_path: Path) -> int | None:
+    try:
+        completed = subprocess.run(
+            [str(python_path), "-c", _PAGE_COUNT_SNIPPET, str(pdf)],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            cwd=str(ROOT_DIR),
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if completed.returncode != 0:
+        return None
+    try:
+        return int(completed.stdout.strip().splitlines()[-1])
+    except (ValueError, IndexError):
+        return None
+
+
+def allowed_interpreters() -> set[Path]:
+    allowed: set[Path] = set()
+    candidates = [Path(sys.executable), DEFAULT_GPU_PYTHON]
+    for name in ("python", "python3", "py"):
+        found = shutil.which(name)
+        if found:
+            candidates.append(Path(found))
+    for candidate in candidates:
+        try:
+            allowed.add(candidate.resolve())
+        except OSError:
+            continue
+    return allowed
 
 
 def create_job(form: dict[str, list[FormField]]) -> dict[str, Any]:
@@ -672,14 +717,23 @@ def create_job(form: dict[str, list[FormField]]) -> dict[str, Any]:
         python_path = ROOT_DIR / python_path
     if not python_path.exists() or not python_path.is_file():
         raise RequestError(HTTPStatus.BAD_REQUEST, f"Python executable not found: {python_path}")
-    if not ALLOWED_INTERPRETER_NAME.fullmatch(python_path.name):
-        raise RequestError(HTTPStatus.BAD_REQUEST, "python_executable must be a Python interpreter")
+    try:
+        resolved_python = python_path.resolve()
+    except OSError as caught:
+        raise RequestError(HTTPStatus.BAD_REQUEST, f"Python executable not found: {python_path}") from caught
+    if resolved_python not in allowed_interpreters():
+        raise RequestError(
+            HTTPStatus.BAD_REQUEST,
+            "python_executable must be the UI interpreter, the configured GPU env, or a Python on PATH",
+        )
 
     page_args = split_values(form_value(form, "pages", "1-5"))
     if not page_args:
         raise RequestError(HTTPStatus.BAD_REQUEST, "pages are required")
     page_numbers = expand_page_numbers(page_args)
     total_pages = pdf_page_count(pdf)
+    if total_pages is None:
+        total_pages = pdf_page_count_via(pdf, resolved_python)
     if total_pages is not None:
         page_numbers = [page for page in page_numbers if 1 <= page <= total_pages]
         if not page_numbers:
