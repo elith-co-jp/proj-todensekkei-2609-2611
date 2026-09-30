@@ -119,8 +119,8 @@ def main() -> None:
                 time.sleep(3)
             if run["status"] != "success":
                 raise AssertionError(f"Frozen training failed: {run['status']}\n{run.get('log_tail')}")
-            if not run["base_model"].endswith("models\\yolov8n.pt"):
-                raise AssertionError(f"Training did not use the bundled model: {run['base_model']}")
+            if not run["base_model"].endswith(f"{active['sha256']}.pt"):
+                raise AssertionError(f"Training did not start from the bundled model: {run['base_model']}")
             if run.get("decision") != "pending":
                 raise AssertionError(f"Trained model should await adoption: {run.get('decision')}")
             decided = _request(

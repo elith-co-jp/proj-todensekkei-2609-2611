@@ -117,11 +117,12 @@ def run_inference(
                     cls = None
                     if cls_index is not None:
                         # 学習時のクラス順はアプリの順序と一致しないことがあるため、
-                        # まずモデルのクラス名 -> SymbolClass.key で対応付ける
+                        # モデルのクラス名 -> SymbolClass.key で対応付ける。
+                        # 名前が一致しない検出を番号で拾うと誤分類になるため捨てる
                         det_name = detector_names.get(int(cls_index))
                         if det_name is not None:
                             cls = class_by_key.get(det_name)
-                        if cls is None:
+                        else:
                             cls = class_by_index.get(int(cls_index))
                     if cls is None:
                         continue
