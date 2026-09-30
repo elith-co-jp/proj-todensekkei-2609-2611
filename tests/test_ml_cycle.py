@@ -274,6 +274,32 @@ def test_frozen_training_uses_bundled_base_model(tmp_path, monkeypatch):
         training_service.default_base_model()
 
 
+def test_frozen_bundled_model_auto_registered(client, tmp_path, monkeypatch):
+    """凍結 exe の初回起動時、モデル未登録なら同梱モデルが使用中として登録される。"""
+    from services import model_service
+
+    bundled = tmp_path / "models" / model_service.BUNDLED_MODEL_NAME
+    bundled.parent.mkdir()
+    bundled.write_bytes(b"PK\x03\x04-bundled-model")
+    monkeypatch.setattr(model_service, "resource_base", lambda: tmp_path)
+    monkeypatch.setattr(model_service, "is_frozen", lambda: True)
+
+    db = database.SessionLocal()
+    try:
+        model = model_service.ensure_bundled_model(db)
+        assert model is not None
+        assert model.is_active and model.source == "bundled"
+        assert model_service.ensure_bundled_model(db) is None  # 二重登録しない
+    finally:
+        db.close()
+
+    models = client.get("/api/ml/models").json()
+    assert len(models) == 1
+    assert models[0]["file_name"] == "yolo11n_all_symbols_best.pt"
+    status = client.get("/api/ml/status").json()
+    assert status["active_model"]["name"] == "yolo11n_all_symbols_best"
+
+
 def test_project_predictions_404(client):
     assert client.get("/api/ml/projects/9999/predictions").status_code == 404
 

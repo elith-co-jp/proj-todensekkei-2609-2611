@@ -197,7 +197,7 @@ class MlModel(Base):
     file_name = Column(String(500), nullable=False)  # アップロード時のファイル名
     sha256 = Column(String(64), nullable=False, index=True)  # 実体は data/models/<sha256>.pt
     size_bytes = Column(Integer, nullable=False, default=0)
-    source = Column(String(20), nullable=False, default="upload")  # upload / trained
+    source = Column(String(20), nullable=False, default="upload")  # upload / trained / bundled
     is_active = Column(Boolean, nullable=False, default=False)
     metrics_json = Column(Text, nullable=True)  # 学習時の metrics（results.csv 最終行）
     note = Column(Text, nullable=True)

@@ -75,8 +75,11 @@ def main() -> None:
         try:
             _wait_for_server(base_url, process, time.monotonic() + 300)
             status = _request("GET", f"{base_url}/api/ml/status")
-            if status["ultralytics"] is not True or status["active_model"] is not None:
-                raise AssertionError(f"Unexpected initial ML status: {status}")
+            if status["ultralytics"] is not True:
+                raise AssertionError(f"ultralytics is unavailable in frozen exe: {status}")
+            active = status["active_model"]
+            if not (active and active["is_active"] and active["file_name"] == "yolo11n_all_symbols_best.pt"):
+                raise AssertionError(f"Bundled initial model was not registered: {status}")
 
             project = _request(
                 "POST",

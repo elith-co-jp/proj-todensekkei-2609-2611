@@ -94,6 +94,8 @@ def run_inference(
 
     detector = YOLO(str(path))
     class_by_index = _class_by_yolo_index(db)
+    class_by_key = {c.key: c for c in class_by_index.values()}
+    detector_names = getattr(detector, "names", None) or {}
     summary = []
     for project in projects:
         detections: list[dict] = []
@@ -112,7 +114,15 @@ def run_inference(
                 confs = boxes.conf.tolist() if boxes.conf is not None else [None] * len(xywhn)
                 classes = boxes.cls.tolist() if boxes.cls is not None else [None] * len(xywhn)
                 for (cx, cy, w, h), score, cls_index in zip(xywhn, confs, classes, strict=False):
-                    cls = class_by_index.get(int(cls_index)) if cls_index is not None else None
+                    cls = None
+                    if cls_index is not None:
+                        # 学習時のクラス順はアプリの順序と一致しないことがあるため、
+                        # まずモデルのクラス名 -> SymbolClass.key で対応付ける
+                        det_name = detector_names.get(int(cls_index))
+                        if det_name is not None:
+                            cls = class_by_key.get(det_name)
+                        if cls is None:
+                            cls = class_by_index.get(int(cls_index))
                     if cls is None:
                         continue
                     detections.append(
