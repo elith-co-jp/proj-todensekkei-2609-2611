@@ -667,6 +667,7 @@ export default function MlOpsPage() {
                         <span className="font-mono text-slate-400">v{m.version}</span>
                         {m.is_active && <span className="rounded-full bg-emerald-600 px-2 py-0.5 text-[10px] font-black text-white">使用中</span>}
                         {m.source === 'trained' && <span className="rounded-full bg-violet-100 px-2 py-0.5 text-[10px] font-bold text-violet-700">学習済み</span>}
+                        {m.source === 'bundled' && <span className="rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-bold text-sky-700">同梱</span>}
                         {pendingModelIds.has(m.id) && <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-700">採用待ち</span>}
                       </div>
                       <div className="mt-0.5 font-mono text-[10px] text-slate-400">

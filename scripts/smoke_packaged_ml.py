@@ -75,8 +75,11 @@ def main() -> None:
         try:
             _wait_for_server(base_url, process, time.monotonic() + 300)
             status = _request("GET", f"{base_url}/api/ml/status")
-            if status["ultralytics"] is not True or status["active_model"] is not None:
-                raise AssertionError(f"Unexpected initial ML status: {status}")
+            if status["ultralytics"] is not True:
+                raise AssertionError(f"ultralytics is unavailable in frozen exe: {status}")
+            active = status["active_model"]
+            if not (active and active["is_active"] and active["file_name"] == "yolo11n_all_symbols_best.pt"):
+                raise AssertionError(f"Bundled initial model was not registered: {status}")
 
             project = _request(
                 "POST",
@@ -116,8 +119,8 @@ def main() -> None:
                 time.sleep(3)
             if run["status"] != "success":
                 raise AssertionError(f"Frozen training failed: {run['status']}\n{run.get('log_tail')}")
-            if not run["base_model"].endswith("models\\yolov8n.pt"):
-                raise AssertionError(f"Training did not use the bundled model: {run['base_model']}")
+            if not run["base_model"].endswith(f"{active['sha256']}.pt"):
+                raise AssertionError(f"Training did not start from the bundled model: {run['base_model']}")
             if run.get("decision") != "pending":
                 raise AssertionError(f"Trained model should await adoption: {run.get('decision')}")
             decided = _request(

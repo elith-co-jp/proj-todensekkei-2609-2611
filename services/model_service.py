@@ -13,9 +13,11 @@ from sqlalchemy.orm import Session
 
 from database import MODEL_DIR
 from models import MlModel
+from runtime import is_frozen, resource_base
 from services.blob_store import store_blob
 
 MAX_MODEL_BYTES = 1024 * 1024 * 1024  # 1 GiB
+BUNDLED_MODEL_NAME = "yolo11n_all_symbols_best.pt"
 
 
 def model_path(sha256: str) -> Path:
@@ -37,6 +39,35 @@ def store_model_bytes(raw: bytes, file_name: str) -> tuple[str, int]:
 def next_version(db: Session) -> int:
     current = db.query(MlModel).order_by(MlModel.version.desc()).first()
     return (current.version if current else 0) + 1
+
+
+def ensure_bundled_model(db: Session) -> MlModel | None:
+    """凍結 exe に同梱した初期推論モデルを初回起動時に登録する。
+
+    モデル未登録のときだけ `MlModel(source='bundled', is_active=True)` を作る。
+    開発環境や既にモデルがある DB では何もしない。
+    """
+    if not is_frozen():
+        return None
+    bundled = resource_base() / "models" / BUNDLED_MODEL_NAME
+    if not bundled.is_file():
+        return None
+    if db.query(MlModel).count():
+        return None
+    digest, size = store_model_bytes(bundled.read_bytes(), bundled.name)
+    model = MlModel(
+        name=bundled.stem,
+        version=next_version(db),
+        file_name=bundled.name,
+        sha256=digest,
+        size_bytes=size,
+        source="bundled",
+        is_active=True,
+        note="exe に同梱の初期モデル",
+    )
+    db.add(model)
+    db.commit()
+    return model
 
 
 def active_model(db: Session) -> MlModel | None:

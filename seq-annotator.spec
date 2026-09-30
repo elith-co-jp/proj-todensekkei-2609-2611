@@ -25,6 +25,10 @@ base_model = spec_dir / ".build-assets" / "yolov8n.pt"
 if not base_model.is_file():
     raise FileNotFoundError("Run python scripts/fetch_base_model.py before packaging")
 datas.append((str(base_model), "models"))
+initial_model = spec_dir / "assets" / "models" / "yolo11n_all_symbols_best.pt"
+if not initial_model.is_file():
+    raise FileNotFoundError("assets/models/yolo11n_all_symbols_best.pt is missing")
+datas.append((str(initial_model), "models"))
 binaries = []
 hiddenimports = []
 

@@ -91,6 +91,10 @@ def init_db() -> None:
                     )
                 )
             db.commit()
+        # 凍結 exe の初回起動では同梱の推論モデルを登録する
+        from services.model_service import ensure_bundled_model
+
+        ensure_bundled_model(db)
     finally:
         db.close()
 
