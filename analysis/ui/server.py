@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import email
+import email.policy
 import json
 import mimetypes
 import os
@@ -27,6 +29,8 @@ DEFAULT_GPU_PYTHON = ROOT_DIR / "private" / "envs" / "conda_envs" / "yolo-gpu" /
 ALLOWED_PDF_EXTENSIONS = {".pdf"}
 ALLOWED_ZIP_EXTENSIONS = {".zip"}
 ALLOWED_MODEL_EXTENSIONS = {".pt", ".pth"}
+LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1"}
+ALLOWED_INTERPRETER_NAME = re.compile(r"(pythonw?|py)[\d.]*(\.exe)?", re.IGNORECASE)
 
 _processes: dict[str, subprocess.Popen[str]] = {}
 _process_lock = threading.Lock()
@@ -207,34 +211,19 @@ def parse_multipart_form(content_type: str, body: bytes) -> dict[str, list[FormF
     if media_type != "multipart/form-data" or not params.get("boundary"):
         raise RequestError(HTTPStatus.BAD_REQUEST, "multipart/form-data is required")
 
-    boundary = params["boundary"].encode("utf-8")
-    delimiter = b"--" + boundary
+    # email パーサに委譲して、コンテンツ中に偶然現れる境界文字列を区切りと誤認しないようにする
+    envelope = f"Content-Type: {content_type}\r\nMIME-Version: 1.0\r\n\r\n".encode("utf-8") + body
+    message = email.message_from_bytes(envelope, policy=email.policy.default)
+
     form: dict[str, list[FormField]] = {}
-    for raw_part in body.split(delimiter):
-        if not raw_part or raw_part in {b"--", b"--\r\n", b"\r\n"}:
+    for part in message.iter_parts():
+        if part.get_content_disposition() != "form-data":
             continue
-        if raw_part.startswith(b"--"):
-            continue
-        if raw_part.startswith(b"\r\n"):
-            raw_part = raw_part[2:]
-        if raw_part.endswith(b"\r\n"):
-            raw_part = raw_part[:-2]
-
-        header_blob, separator, data = raw_part.partition(b"\r\n\r\n")
-        if not separator:
-            continue
-        headers: dict[str, str] = {}
-        for line in header_blob.decode("utf-8", errors="replace").split("\r\n"):
-            if ":" not in line:
-                continue
-            key, header_value = line.split(":", 1)
-            headers[key.strip().lower()] = header_value.strip()
-
-        _disposition, disposition_params = parse_header_params(headers.get("content-disposition", ""))
-        name = disposition_params.get("name")
+        name = part.get_param("name", header="content-disposition")
         if not name:
             continue
-        filename = disposition_params.get("filename")
+        filename = part.get_filename()
+        data = part.get_payload(decode=True) or b""
         field = (
             FormField(filename=filename, data=data)
             if filename is not None
@@ -245,25 +234,34 @@ def parse_multipart_form(content_type: str, body: bytes) -> dict[str, list[FormF
 
 
 def discover_models() -> list[dict[str, Any]]:
-    yolo_root = ROOT_DIR / "private" / "training" / "yolo"
-    if not yolo_root.exists():
-        return []
+    search_roots = [
+        ROOT_DIR / "private" / "training" / "yolo",
+        ROOT_DIR / "analysis" / "weights",
+    ]
     candidates = []
-    for path in yolo_root.rglob("*.pt"):
-        if not path.is_file():
+    seen: set[Path] = set()
+    for root in search_roots:
+        if not root.exists():
             continue
-        try:
-            stat = path.stat()
-        except OSError:
-            continue
-        candidates.append(
-            {
-                "path": str(path),
-                "name": path.name,
-                "size_mb": round(stat.st_size / 1024 / 1024, 2),
-                "modified_at": datetime.fromtimestamp(stat.st_mtime, timezone.utc).isoformat(timespec="seconds"),
-            }
-        )
+        for path in root.rglob("*.pt"):
+            if not path.is_file():
+                continue
+            resolved = path.resolve()
+            if resolved in seen:
+                continue
+            seen.add(resolved)
+            try:
+                stat = path.stat()
+            except OSError:
+                continue
+            candidates.append(
+                {
+                    "path": str(path),
+                    "name": path.name,
+                    "size_mb": round(stat.st_size / 1024 / 1024, 2),
+                    "modified_at": datetime.fromtimestamp(stat.st_mtime, timezone.utc).isoformat(timespec="seconds"),
+                }
+            )
     return sorted(candidates, key=lambda item: item["modified_at"], reverse=True)[:30]
 
 
@@ -581,6 +579,41 @@ def run_job(job_id: str, command: list[str], env_updates: dict[str, str]) -> Non
         update_state(job_id, status="failed", ended_at=utc_now(), error=str(caught))
 
 
+def expand_page_numbers(specs: list[str]) -> list[int]:
+    pages: set[int] = set()
+    for spec in specs:
+        for part in spec.split(","):
+            part = part.strip()
+            if not part:
+                continue
+            try:
+                if "-" in part:
+                    start, end = (int(item) for item in part.split("-", 1))
+                    if end < start:
+                        raise ValueError
+                    pages.update(range(start, end + 1))
+                else:
+                    pages.add(int(part))
+            except ValueError as caught:
+                raise RequestError(HTTPStatus.BAD_REQUEST, f"invalid page spec: {part}") from caught
+    return sorted(pages)
+
+
+def pdf_page_count(pdf: Path) -> int | None:
+    try:
+        import pymupdf
+    except ImportError:
+        try:
+            import fitz as pymupdf  # type: ignore[no-redef]
+        except ImportError:
+            return None
+    try:
+        with pymupdf.open(pdf) as document:
+            return document.page_count
+    except Exception:
+        return None
+
+
 def create_job(form: dict[str, list[FormField]]) -> dict[str, Any]:
     terminal_source = form_value(form, "terminal_source", "annotation-or-inferred") or "annotation-or-inferred"
     text_suppression = form_value(form, "text_suppression", "none") or "none"
@@ -639,10 +672,22 @@ def create_job(form: dict[str, list[FormField]]) -> dict[str, Any]:
         python_path = ROOT_DIR / python_path
     if not python_path.exists() or not python_path.is_file():
         raise RequestError(HTTPStatus.BAD_REQUEST, f"Python executable not found: {python_path}")
+    if not ALLOWED_INTERPRETER_NAME.fullmatch(python_path.name):
+        raise RequestError(HTTPStatus.BAD_REQUEST, "python_executable must be a Python interpreter")
 
     page_args = split_values(form_value(form, "pages", "1-5"))
     if not page_args:
         raise RequestError(HTTPStatus.BAD_REQUEST, "pages are required")
+    page_numbers = expand_page_numbers(page_args)
+    total_pages = pdf_page_count(pdf)
+    if total_pages is not None:
+        page_numbers = [page for page in page_numbers if 1 <= page <= total_pages]
+        if not page_numbers:
+            raise RequestError(
+                HTTPStatus.BAD_REQUEST,
+                f"PDF は {total_pages} ページです。有効なページを指定してください",
+            )
+        page_args = [str(page) for page in page_numbers]
 
     run_ocr = form_bool(form, "run_ocr", True)
     device = form_value(form, "device", "cpu") or "cpu"
@@ -745,10 +790,22 @@ class AnalysisUIHandler(BaseHTTPRequestHandler):
     def log_message(self, format: str, *args: Any) -> None:
         sys.stderr.write(f"[analysis-ui] {self.address_string()} - {format % args}\n")
 
+    def _origin_allowed(self) -> bool:
+        origin = self.headers.get("Origin")
+        if not origin:
+            return True
+        try:
+            host = (urlparse(origin).hostname or "").lower()
+        except ValueError:
+            return False
+        return host in LOOPBACK_HOSTS
+
     def handle_request(self, method: str) -> None:
         try:
             parsed = urlparse(self.path)
             path = parsed.path
+            if method == "POST" and not self._origin_allowed():
+                raise RequestError(HTTPStatus.FORBIDDEN, "許可されていないオリジンです")
             if method == "GET" and path == "/":
                 self.send_file(STATIC_DIR / "index.html")
             elif method == "GET" and path.startswith("/static/"):

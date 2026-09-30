@@ -67,6 +67,28 @@ def parse_pages(values: list[str]) -> list[int]:
     return sorted(pages)
 
 
+def _analysis_cache_key(pdf: Path, dpi: int, run_ocr: bool, wire_text_mask: str) -> dict[str, Any]:
+    stat = pdf.stat()
+    return {
+        "pdf_name": pdf.name,
+        "pdf_size": stat.st_size,
+        "pdf_mtime_ns": stat.st_mtime_ns,
+        "dpi": dpi,
+        "run_ocr": run_ocr,
+        "wire_text_mask": wire_text_mask,
+    }
+
+
+def _read_analysis_cache_key(page_dir: Path) -> dict[str, Any] | None:
+    key_path = page_dir / "analysis_key.json"
+    if not key_path.exists():
+        return None
+    try:
+        return json.loads(key_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
 def ensure_analysis_outputs(
     pdf: Path,
     pages: list[int],
@@ -75,11 +97,24 @@ def ensure_analysis_outputs(
     run_ocr: bool,
     wire_text_mask: str,
 ) -> None:
+    cache_key = _analysis_cache_key(pdf, dpi, run_ocr, wire_text_mask)
     for page in pages:
         page_dir = analysis_root / f"page_{page:03d}"
-        if (page_dir / "connection_graph.json").exists() and (page_dir / "base.png").exists():
+        cached = _read_analysis_cache_key(page_dir)
+        if (
+            cached == cache_key
+            and (page_dir / "connection_graph.json").exists()
+            and (page_dir / "base.png").exists()
+        ):
             continue
         analyze_page(pdf, page, dpi, analysis_root, run_ocr=run_ocr, wire_text_mask=wire_text_mask)
+        try:
+            page_dir.mkdir(parents=True, exist_ok=True)
+            (page_dir / "analysis_key.json").write_text(
+                json.dumps(cache_key, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
+        except OSError:
+            pass
 
 
 def box_center(box: dict[str, int | float]) -> tuple[float, float]:

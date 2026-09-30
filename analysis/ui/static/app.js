@@ -5,6 +5,8 @@ const state = {
 
 const $ = (selector) => document.querySelector(selector)
 
+const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))
+
 function setText(selector, value) {
   const element = $(selector)
   if (element) element.textContent = value
@@ -34,7 +36,7 @@ async function fetchJson(url, options) {
 }
 
 function statusClass(status) {
-  return `status-chip status-${status || 'queued'}`
+  return `status-chip status-${esc(status || 'queued')}`
 }
 
 function compactPath(path) {
@@ -52,7 +54,7 @@ function qualityPills(quality) {
     ['端子接続', quality.symbol_terminal_link_count],
     ['別ページ参照', quality.external_reference_count],
   ].filter(([, value]) => value !== undefined && value !== null)
-  return parts.map(([key, value]) => `<span class="pill">${key}: ${value}</span>`).join('')
+  return parts.map(([key, value]) => `<span class="pill">${esc(key)}: ${esc(value)}</span>`).join('')
 }
 
 function renderJobs(jobs) {
@@ -67,13 +69,13 @@ function renderJobs(jobs) {
       const pages = job.input?.pages?.join(', ') || ''
       return `
         <div class="job-row">
-          <span class="${statusClass(job.status)}">${job.status}</span>
-          <span class="muted">${job.created_at || ''}</span>
+          <span class="${statusClass(job.status)}">${esc(job.status)}</span>
+          <span class="muted">${esc(job.created_at || '')}</span>
           <div>
-            <div>${compactPath(job.input?.pdf || '')}</div>
-            <div class="muted">pages: ${pages}</div>
+            <div>${esc(compactPath(job.input?.pdf || ''))}</div>
+            <div class="muted">pages: ${esc(pages)}</div>
           </div>
-          <button type="button" class="button secondary" data-open-job="${job.id}">開く</button>
+          <button type="button" class="button secondary" data-open-job="${esc(job.id)}">開く</button>
         </div>
       `
     })
@@ -95,9 +97,9 @@ function renderResults(job) {
 
   resultSummary.className = 'summary'
   resultSummary.innerHTML = [
-    `<span class="pill">状態: ${outputs.summary.status || job.status}</span>`,
-    `<span class="pill">対象ページ: ${(outputs.summary.pages || []).join(', ')}</span>`,
-    outputs.summary_json_url ? `<a class="pill" href="${outputs.summary_json_url}" target="_blank" rel="noreferrer">実行概要</a>` : '',
+    `<span class="pill">状態: ${esc(outputs.summary.status || job.status)}</span>`,
+    `<span class="pill">対象ページ: ${esc((outputs.summary.pages || []).join(', '))}</span>`,
+    outputs.summary_json_url ? `<a class="pill" href="${esc(outputs.summary_json_url)}" target="_blank" rel="noreferrer">実行概要</a>` : '',
   ].join('')
 
   archive.href = outputs.archive_url || '#'
@@ -106,19 +108,19 @@ function renderResults(job) {
   pageResults.innerHTML = (outputs.pages || [])
     .map((page) => {
       const links = [
-        page.final_json_url ? `<a href="${page.final_json_url}" target="_blank" rel="noreferrer">ページ解析データ</a>` : '',
-        page.labeled_connections_url ? `<a href="${page.labeled_connections_url}" target="_blank" rel="noreferrer">接続一覧</a>` : '',
-        page.external_references_url ? `<a href="${page.external_references_url}" target="_blank" rel="noreferrer">別ページ参照</a>` : '',
+        page.final_json_url ? `<a href="${esc(page.final_json_url)}" target="_blank" rel="noreferrer">ページ解析データ</a>` : '',
+        page.labeled_connections_url ? `<a href="${esc(page.labeled_connections_url)}" target="_blank" rel="noreferrer">接続一覧</a>` : '',
+        page.external_references_url ? `<a href="${esc(page.external_references_url)}" target="_blank" rel="noreferrer">別ページ参照</a>` : '',
       ].join('')
       return `
         <article class="page-item">
           <div class="page-title-row">
             <div>
-              <h3>page_${String(page.page).padStart(3, '0')}</h3>
+              <h3>page_${esc(String(page.page).padStart(3, '0'))}</h3>
               <div class="summary">${qualityPills(page.quality)}</div>
             </div>
           </div>
-          ${page.review_url ? `<img class="review-image" src="${page.review_url}" alt="page ${page.page} review" />` : ''}
+          ${page.review_url ? `<img class="review-image" src="${esc(page.review_url)}" alt="page ${esc(page.page)} review" />` : ''}
           <details class="detail-links">
             <summary>出力ファイル</summary>
             <div class="page-links">${links}</div>
