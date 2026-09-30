@@ -81,10 +81,17 @@ def _ensure_standard_streams() -> None:
     """Windowed exe の未接続・非 UTF-8 標準ストリームを安全な捨て先へ逃がす。"""
     frozen_windows = getattr(sys, "frozen", False) and sys.platform.startswith("win")
     for name in ("stdout", "stderr"):
-        if frozen_windows or getattr(sys, name, None) is None:
+        stream = getattr(sys, name, None)
+        if frozen_windows or stream is None:
             stream = open(os.devnull, "w", encoding="utf-8", buffering=1)
             setattr(sys, name, stream)
             _NULL_STREAMS.append(stream)
+            continue
+        # 非凍結でも cp1252 等のストリームは日本語出力で落ちるため UTF-8 化する
+        encoding = (getattr(stream, "encoding", None) or "").lower().replace("-", "")
+        if encoding not in {"utf8"}:
+            with contextlib.suppress(Exception):
+                stream.reconfigure(encoding="utf-8", errors="replace")
 
 
 def main() -> None:

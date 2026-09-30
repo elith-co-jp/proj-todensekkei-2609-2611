@@ -30,6 +30,19 @@ def test_frozen_windows_uses_utf8_streams(monkeypatch):
     print("ブラウザで開きます")
 
 
+def test_unfrozen_non_utf8_streams_are_reconfigured(monkeypatch):
+    """cp1252 コンソールからの非凍結起動でも日本語バナーで落ちない。"""
+    stream = io.TextIOWrapper(io.BytesIO(), encoding="cp1252")
+    monkeypatch.setattr(sys, "frozen", False, raising=False)
+    monkeypatch.setattr(sys, "stdout", stream)
+    monkeypatch.setattr(sys, "stderr", io.TextIOWrapper(io.BytesIO(), encoding="cp1252"))
+
+    desktop._ensure_standard_streams()
+
+    assert sys.stdout is stream
+    assert sys.stdout.encoding == "utf-8"
+
+
 def test_main_disables_uvicorn_default_log_config(monkeypatch):
     calls = {}
 

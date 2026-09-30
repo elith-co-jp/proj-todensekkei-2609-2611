@@ -11,10 +11,11 @@ import os
 import threading
 import time
 from contextlib import asynccontextmanager
+from urllib.parse import urlsplit
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from database import init_db
@@ -83,6 +84,34 @@ app.add_middleware(
 
 app.include_router(annotations.router)
 app.include_router(ml.router)
+
+
+_LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1"}
+# 運用者が SEQANNO_CORS_ORIGINS で明示したオリジンも信頼する
+_CONFIGURED_ORIGINS = {o.strip().rstrip("/").lower() for o in _origins.split(",") if o.strip()}
+
+
+@app.middleware("http")
+async def _reject_foreign_origins(request: Request, call_next):
+    """localhost CSRF 対策: Origin がローカル以外のブラウザ発リクエストを拒否する。
+
+    この API は認証を持たないため、multipart などプリフライト不要の POST は
+    任意サイトから送信できてしまう（アプリ終了・モデル登録など）。
+    Origin 未送信（curl・ファイル配信でない同一オリジン環境）は通し、
+    送信される場合はループバック系ホストか許可オリジンのみ通す。
+    """
+    origin = request.headers.get("origin")
+    if origin:
+        allowed = origin.rstrip("/").lower() in _CONFIGURED_ORIGINS
+        if not allowed:
+            try:
+                host = (urlsplit(origin).hostname or "").lower()
+            except ValueError:
+                host = ""
+            allowed = host in _LOOPBACK_HOSTS
+        if not allowed:
+            return JSONResponse({"detail": "許可されていないオリジンです"}, status_code=403)
+    return await call_next(request)
 
 
 @app.get("/api/health")

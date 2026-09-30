@@ -195,7 +195,7 @@ ZIP を選択してインポートすると、`bundle.json` の有無で復元�
 | 項目 | 内容 |
 |------|------|
 | 認証 | なし（ローカル運用前提）。必要ならセッション認証を追加する |
-| 外部通信 | なし。CORS は `SEQANNO_CORS_ORIGINS` で明示したオリジンのみ |
+| 外部通信 | なし。CORS は `SEQANNO_CORS_ORIGINS` で明示したオリジンのみ。ブラウザ発のリクエストは `Origin` がローカル（localhost/127.0.0.1/::1）または許可オリジン以外の場合 403 で拒否（localhost CSRF 対策） |
 | アップロード上限 | PDF 256 MiB・500ページ／画像 1 枚 64 MiB／ZIP 展開後 2 GiB・20,000 ファイル・圧縮率 25 倍 |
 | PDF 画像化 | Poppler を利用し 150 DPI の PNG に変換。元ファイル名と1始まりのページ番号を保持 |
 | 同時編集 | 排他制御なし（後勝ち）。分担する場合は図面単位で分け、ZIP で統合する |
@@ -210,3 +210,4 @@ ZIP を選択してインポートすると、`bundle.json` の有無で復元�
 | `tests/test_annotation_api.py` | クラスマスタ、PDFページ分割、CRUD、一括置換、参照解決、座標の丸め、日本語エラー |
 | `tests/test_export_import.py` | ZIP 構成、YOLO ラベル形式、data.yaml、全画像 train 出力（val 分割なし）、CSV／netlist、往復復元、素の YOLO 取り込み、セキュリティ（パストラバーサル・`__MACOSX`・非 ZIP） |
 | `tests/test_ml_cycle.py` | モデル登録・切替・削除、推論の前提エラー（モデル未登録 / ultralytics 未導入）、推論結果 ZIP 取込（対応付け・置換・無効 ZIP）、推論由来シンボルの保存と統計、学習の前提エラー |
+| `tests/test_security.py` | `Origin` ガード（外部オリジン・`null` の拒否、ループバック・無 `Origin` の許可） |
