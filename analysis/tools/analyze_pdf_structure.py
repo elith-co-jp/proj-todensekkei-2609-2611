@@ -1654,6 +1654,9 @@ def analyze_page(
     summary = {
         **common,
         "pdf": str(pdf_path),
+        "pdf_size_bytes": pdf_path.stat().st_size,
+        "pdf_mtime_ns": pdf_path.stat().st_mtime_ns,
+        "ocr_requested": run_ocr,
         "horizontal_candidate_count": len(h_lines),
         "vertical_candidate_count": len(v_lines),
         "restored_vertical_segment_count": len(restored_v_lines),

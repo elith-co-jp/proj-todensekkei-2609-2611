@@ -24,6 +24,8 @@ STATIC_DIR = Path(__file__).resolve().parent / "static"
 JOB_ROOT = ROOT_DIR / "private" / "results" / "analysis_ui" / "jobs"
 RUN_SCRIPT = ROOT_DIR / "analysis" / "tools" / "run_yolo_e2e_pipeline.py"
 DEFAULT_GPU_PYTHON = ROOT_DIR / "private" / "envs" / "conda_envs" / "yolo-gpu" / "bin" / "python"
+WIRE_ANALYSIS_DPI = 150
+WIRE_TEXT_MASK = "components"
 ALLOWED_PDF_EXTENSIONS = {".pdf"}
 ALLOWED_ZIP_EXTENSIONS = {".zip"}
 ALLOWED_MODEL_EXTENSIONS = {".pt", ".pth"}
@@ -305,8 +307,9 @@ def collect_outputs(job_id: str) -> dict[str, Any]:
                 "page": page.get("page"),
                 "quality": page.get("quality") or {},
                 "review_url": make_file_url(job_id, outputs.get("review")),
+                "wire_overlay_url": make_file_url(job_id, outputs.get("wire_overlay")),
                 "final_json_url": make_file_url(job_id, outputs.get("final_json")),
-                "labeled_connections_url": make_file_url(job_id, outputs.get("labeled_connections")),
+                "from_to_url": make_file_url(job_id, outputs.get("from_to")),
                 "external_references_url": make_file_url(job_id, outputs.get("external_references")),
             }
         )
@@ -319,6 +322,7 @@ def collect_outputs(job_id: str) -> dict[str, Any]:
             "annotation_zip": summary.get("annotation_zip"),
         },
         "pages": sorted(pages, key=lambda item: int(item.get("page") or 0)),
+        "structure_json_url": make_file_url(job_id, (summary.get("outputs") or {}).get("structure_json")),
         "summary_json_url": make_file_url(job_id, str(summary_path)),
         "archive_url": f"/api/jobs/{job_id}/archive",
     }
@@ -452,24 +456,33 @@ def create_demo_job() -> dict[str, Any]:
         },
         "outputs": {
             "final_json": str(page_dir / "final_output.json"),
-            "labeled_connections": str(page_dir / "labeled_connections.json"),
+            "from_to": str(page_dir / "from_to.json"),
             "external_references": str(page_dir / "external_references.json"),
             "review": str(page_dir / "review.svg"),
         },
     }
-    labeled_connections = {
-        "schema_version": "todensekkei.labeled_connections.v1",
+    from_to = {
+        "schema_version": "todensekkei.from_to.v1",
         "source": final_output["source"],
-        "basis": "demo terminal members grouped by predicted wire net",
-        "connection_pair_count": 1,
-        "connection_pairs": [
+        "definition": "Direct terminal-to-terminal connections; connected components are not expanded into all pairs.",
+        "directed": False,
+        "terminal_count": 2,
+        "connected_terminal_count": 2,
+        "unconnected_terminal_count": 0,
+        "connection_count": 1,
+        "connections": [
             {
-                "net_id": "net_0001",
+                "id": "from_to_00001",
+                "type": "wire",
+                "directed": False,
                 "from": {"symbol_id": "symbol_001", "class_name": "contact_a", "label": "MC-1", "terminal_ref": "P1"},
                 "to": {"symbol_id": "symbol_002", "class_name": "connector", "label": "CN-2", "terminal_ref": "P1"},
+                "basis": "first_terminal_reached_by_wire_graph_traversal",
+                "status": "predicted",
             }
         ],
     }
+    final_output["from_to"] = from_to
     external_references = {
         "schema_version": "todensekkei.external_references.v1",
         "source": final_output["source"],
@@ -487,11 +500,21 @@ def create_demo_job() -> dict[str, Any]:
         "annotation_zip": None,
         "page_sheet_map": {},
         "page_summaries": [{"page": 1, "quality": final_output["quality"], "outputs": final_output["outputs"]}],
+        "outputs": {"structure_json": str(output_dir / "structure.json")},
         "notes": ["This is placeholder demo data for UI review. It does not contain real drawings."],
     }
+    structure = {
+        "schema_version": "todensekkei.document_structure.v1",
+        "status": "completed",
+        "result_type": "demo",
+        "source": {"pdf_name": pdf_path.name, "page_count": 1, "pages": [1]},
+        "summary": {"symbol_count": 2, "wire_count": 1, "terminal_count": 2, "from_to_connection_count": 1},
+        "pages": [final_output],
+    }
     write_json(page_dir / "final_output.json", final_output)
-    write_json(page_dir / "labeled_connections.json", labeled_connections)
+    write_json(page_dir / "from_to.json", from_to)
     write_json(page_dir / "external_references.json", external_references)
+    write_json(output_dir / "structure.json", structure)
     write_json(output_dir / "e2e_summary.json", summary)
     (page_dir / "review.svg").write_text(demo_review_svg(1), encoding="utf-8")
 
@@ -603,6 +626,7 @@ def create_job(form: dict[str, list[FormField]]) -> dict[str, Any]:
     directory = job_dir(job_id)
     input_dir = directory / "inputs"
     output_dir = directory / "outputs"
+    analysis_dir = directory / "wire_analysis"
     input_dir.mkdir(parents=True, exist_ok=True)
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -655,6 +679,13 @@ def create_job(form: dict[str, list[FormField]]) -> dict[str, Any]:
         *page_args,
         "--out-dir",
         str(output_dir),
+        "--analysis-root",
+        str(analysis_dir),
+        "--dpi",
+        str(WIRE_ANALYSIS_DPI),
+        "--wire-text-mask",
+        WIRE_TEXT_MASK,
+        "--skip-ocr",
         "--model",
         str(model),
         "--device",
@@ -670,8 +701,6 @@ def create_job(form: dict[str, list[FormField]]) -> dict[str, Any]:
         "--gold-unmatched-yolo",
         gold_unmatched_yolo,
     ]
-    if not run_ocr:
-        command.append("--skip-ocr")
     if annotation_zip is not None:
         command.extend(["--annotation-zip", str(annotation_zip)])
     page_sheet_items = parse_page_sheet_map(form_value(form, "page_sheet_map"))
@@ -700,6 +729,12 @@ def create_job(form: dict[str, list[FormField]]) -> dict[str, Any]:
             "text_suppression": text_suppression,
             "symbol_label_ocr_engine": symbol_label_ocr_engine,
             "run_ocr": run_ocr,
+            "wire_analysis": {
+                "analysis_root": str(analysis_dir),
+                "dpi": WIRE_ANALYSIS_DPI,
+                "text_mask": WIRE_TEXT_MASK,
+                "page_ocr": False,
+            },
             "external_reference_source": external_reference_source,
             "page_sheet_map": page_sheet_items,
             "gold_symbol_classes": gold_classes,
