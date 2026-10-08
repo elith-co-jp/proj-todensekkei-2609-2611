@@ -13,6 +13,7 @@ from PIL import Image, ImageDraw
 
 from analyze_pdf_structure import analyze_page
 from analyze_annotation_graph import load_zip_payload, symbol_bbox
+from build_from_to_review_outputs import build_predicted_graph_pairs
 from build_e2e_demo_outputs import (
     DEFAULT_ANALYSIS_ROOT,
     DEFAULT_PDF_PATH,
@@ -46,9 +47,21 @@ DEFAULT_MODEL_PATH = Path(
     "from_scratch_all_symbols_raw_v1/weights/best.pt"
 )
 DEFAULT_OUT_DIR = Path("private/results/e2e")
+DEFAULT_WIRE_ANALYSIS_DPI = 150
+DEFAULT_WIRE_TEXT_MASK = "components"
 FONT_SM = load_font(15)
 FONT_MD = load_font(18)
 DEFAULT_INFERRED_TERMINAL_CLASSES = {"contact_a", "contact_b", "solenoid", "relay_coil"}
+DIRECT_INTERNAL_BRIDGE_CLASSES = {"contact_a", "contact_b", "solenoid"}
+DIRECT_NODE_ANCHOR_CLASSES = {"connector", "junction", "power_bus", "terminal"}
+DIRECT_TERMINAL_GAP_BRIDGE_CLASSES = {"connector", "contact_a", "contact_b", "junction", "solenoid"}
+DIRECT_TERMINAL_TERMINAL_BRIDGE_CLASSES = {"junction"}
+DIRECT_NODE_ANCHOR_THRESHOLD = 16.0
+DIRECT_TERMINAL_GAP_BRIDGE_MAX = 110.0
+DIRECT_WIRE_GAP_BRIDGE_MAX = 50.0
+DIRECT_GAP_BRIDGE_ALIGN_THRESHOLD = 18.0
+DIRECT_WIRE_GAP_TERMINAL_ANCHOR_THRESHOLD = 18.0
+DIRECT_TERMINAL_TERMINAL_BRIDGE_MAX = 90.0
 
 
 def parse_pages(values: list[str]) -> list[int]:
@@ -107,6 +120,8 @@ def ensure_analysis_outputs(
             cached == cache_key
             and (page_dir / "connection_graph.json").exists()
             and (page_dir / "base.png").exists()
+            and (page_dir / "detected_wires.json").exists()
+            and (page_dir / "final_extraction_review.png").exists()
         ):
             continue
         analyze_page(pdf, page, dpi, analysis_root, run_ocr=run_ocr, wire_text_mask=wire_text_mask)
@@ -693,29 +708,16 @@ def draw_yolo_overlay(source: Image.Image, symbols: list[dict[str, Any]]) -> Ima
     return canvas
 
 
-def draw_extraction_panel(payload: dict[str, Any]) -> Image.Image:
-    width = int(payload["image_size"]["width"])
-    height = int(payload["image_size"]["height"])
-    canvas = Image.new("RGB", (width, height), "white")
+def draw_wire_overlay(source: Image.Image, payload: dict[str, Any]) -> Image.Image:
+    canvas = source.convert("RGB").copy()
     draw = ImageDraw.Draw(canvas)
 
     for wire in payload.get("wires", []):
         start, end = wire_points(wire)
-        color = (210, 35, 30) if float(wire.get("confidence", 0)) >= 0.72 else (230, 130, 30)
-        draw.line((start, end), fill=color, width=6)
-
-    for node in payload.get("nodes", []):
-        x = int(node["x"])
-        y = int(node["y"])
-        r = 5 if node.get("type") == "junction" else 3
-        draw.ellipse((x - r, y - r, x + r, y + r), fill=(37, 99, 235))
-
-    for label in payload.get("labels", []):
-        box = label.get("bbox")
-        if not box:
-            continue
-        text = str(label.get("text") or label.get("raw_text") or label["id"])[:24]
-        draw.text((int(box["x0"]), int(box["y0"])), text, fill=(0, 115, 70), font=FONT_SM)
+        confidence = float(wire.get("confidence", 0))
+        color = (220, 40, 35) if confidence >= 0.75 else (235, 120, 30)
+        width = 8 if confidence >= 0.75 else 6 if confidence >= 0.6 else 4
+        draw.line((start, end), fill=color, width=width)
 
     return canvas
 
@@ -731,7 +733,7 @@ def make_review_sheet(
     panels = [
         ("original", source.convert("RGB")),
         ("YOLO detections on original", yolo_overlay.convert("RGB")),
-        ("detected wires and text", extraction.convert("RGB")),
+        ("predicted wires on original", extraction.convert("RGB")),
         ("reconstructed result", reconstructed.convert("RGB")),
     ]
     header_h = 42
@@ -761,34 +763,37 @@ def write_compact_outputs(
 ) -> dict[str, str]:
     out_dir.mkdir(parents=True, exist_ok=True)
     final_json = out_dir / "final_output.json"
-    labeled_json = out_dir / "labeled_connections.json"
+    from_to_json = out_dir / "from_to.json"
     external_refs_json = out_dir / "external_references.json"
     review_png = out_dir / "review.png"
-    labeled_connections = payload.get("labeled_connections") or build_labeled_connections(payload)
+    wire_overlay_png = out_dir / "wire_overlay.png"
+    from_to = payload.get("from_to") or build_direct_from_to(payload)
     reconstructed = draw_reconstruction(payload, semantic_colors=False, label_style="none")
     _diff_image, diff_metrics = draw_wire_support_diff(source_image, payload)
+    wire_overlay = draw_wire_overlay(source_image, payload)
     review = make_review_sheet(
         source_image,
         draw_yolo_overlay(source_image, symbols),
-        draw_extraction_panel(payload),
+        wire_overlay,
         reconstructed,
     )
     payload = {
         **payload,
-        "labeled_connections": labeled_connections,
+        "from_to": from_to,
         "quality": {
             **payload.get("quality", {}),
             "wire_support_diff": diff_metrics,
         },
         "outputs": {
             "final_json": str(final_json),
-            "labeled_connections": str(labeled_json),
+            "from_to": str(from_to_json),
             "external_references": str(external_refs_json),
             "review": str(review_png),
+            "wire_overlay": str(wire_overlay_png),
         },
     }
     write_json(final_json, payload)
-    write_json(labeled_json, labeled_connections)
+    write_json(from_to_json, from_to)
     write_json(
         external_refs_json,
         {
@@ -801,6 +806,7 @@ def write_compact_outputs(
         },
     )
     review.save(review_png)
+    wire_overlay.save(wire_overlay_png)
     return payload["outputs"]
 
 
@@ -1388,17 +1394,6 @@ def build_net_candidates(
     return nets
 
 
-def terminal_point_by_ref(symbol: dict[str, Any], terminal_ref: str | None) -> list[float] | None:
-    if terminal_ref:
-        for terminal in symbol.get("terminals") or []:
-            if terminal.get("ref") == terminal_ref:
-                point = terminal.get("point")
-                return [round(float(point[0]), 1), round(float(point[1]), 1)] if point else None
-    if symbol.get("center"):
-        return [round(float(symbol["center"][0]), 1), round(float(symbol["center"][1]), 1)]
-    return None
-
-
 def compact_label_candidate(candidate: dict[str, Any] | None) -> dict[str, Any] | None:
     if not candidate:
         return None
@@ -1452,143 +1447,154 @@ def compact_word_rule_label(label: dict[str, Any] | None) -> dict[str, Any] | No
     }
 
 
-def connection_member_view(member: dict[str, Any], symbol_by_id: dict[str, dict[str, Any]]) -> dict[str, Any]:
-    symbol = symbol_by_id.get(str(member.get("symbol_id")), {})
-    label_source = "ocr_word_rule" if symbol.get("label_word_rule") else "ocr_candidate" if symbol.get("label_candidate") else "annotation_or_detection"
-    raw_ocr = None
-    if symbol.get("label_ocr"):
-        raw_ocr = symbol["label_ocr"].get("raw_text")
+def direct_terminal_key(symbol_id: str, terminal_ref: str, index: int) -> str:
+    return f"{symbol_id}:{terminal_ref or f'P{index:02d}'}"
+
+
+def direct_terminal_view(
+    symbol: dict[str, Any],
+    terminal: dict[str, Any],
+    member_key: str,
+    links: list[dict[str, Any]],
+) -> dict[str, Any]:
+    raw_ocr = symbol.get("label_ocr", {}).get("raw_text") if symbol.get("label_ocr") else None
+    label_source = (
+        "ocr_word_rule"
+        if symbol.get("label_word_rule")
+        else "ocr_candidate"
+        if symbol.get("label_candidate")
+        else "detection"
+    )
     return {
-        "symbol_id": member.get("symbol_id"),
-        "gold_ref": symbol.get("gold_ref"),
+        "id": member_key,
+        "symbol_id": symbol["id"],
         "class_name": symbol.get("class_name") or symbol.get("type"),
+        "symbol_confidence": symbol.get("confidence"),
+        "symbol_bbox": symbol.get("bbox"),
         "label": symbol.get("label") or "",
         "label_source": label_source,
         "raw_ocr": raw_ocr,
         "label_candidate": compact_label_candidate(symbol.get("label_candidate")),
         "label_word_rule": compact_word_rule_label(symbol.get("label_word_rule")),
-        "terminal_ref": member.get("terminal_ref"),
-        "terminal_name": member.get("terminal_name") or "",
-        "terminal_point": terminal_point_by_ref(symbol, member.get("terminal_ref")),
-        "wire_id": member.get("wire_id"),
-        "node_id": member.get("node_id"),
-        "link_distance": member.get("distance"),
-        "link_reason": member.get("reason"),
+        "terminal_ref": terminal.get("ref"),
+        "terminal_name": terminal.get("name") or "",
+        "point": [round(float(value), 1) for value in terminal["point"]],
+        "source": terminal.get("source"),
+        "wire_ids": sorted({str(link["wire_id"]) for link in links if link.get("wire_id")}),
+        "node_ids": sorted({str(link["node_id"]) for link in links if link.get("node_id")}),
+        "link_reasons": sorted({str(link["reason"]) for link in links if link.get("reason")}),
     }
 
 
-def terminal_member_key(member: dict[str, Any]) -> tuple[str, str, str, str]:
-    return (
-        str(member.get("symbol_id") or ""),
-        str(member.get("terminal_ref") or ""),
-        str(member.get("wire_id") or ""),
-        str(member.get("node_id") or ""),
-    )
-
-
-def build_labeled_connections(payload: dict[str, Any]) -> dict[str, Any]:
-    symbol_by_id = {str(symbol["id"]): symbol for symbol in payload.get("symbols", [])}
-    nets = []
-    all_pairs = []
-    symbol_connections: dict[str, dict[str, Any]] = {}
-    for net in payload.get("nets", []):
-        raw_members = sorted(net.get("terminal_members", []), key=terminal_member_key)
-        members = [connection_member_view(member, symbol_by_id) for member in raw_members]
-        pairs = []
-        for left_index, left in enumerate(members):
-            for right in members[left_index + 1 :]:
-                if left.get("symbol_id") == right.get("symbol_id"):
-                    continue
-                pair = {
-                    "net_id": net["id"],
-                    "from": {
-                        "symbol_id": left.get("symbol_id"),
-                        "gold_ref": left.get("gold_ref"),
-                        "class_name": left.get("class_name"),
-                        "label": left.get("label"),
-                        "terminal_ref": left.get("terminal_ref"),
-                        "terminal_name": left.get("terminal_name"),
-                    },
-                    "to": {
-                        "symbol_id": right.get("symbol_id"),
-                        "gold_ref": right.get("gold_ref"),
-                        "class_name": right.get("class_name"),
-                        "label": right.get("label"),
-                        "terminal_ref": right.get("terminal_ref"),
-                        "terminal_name": right.get("terminal_name"),
-                    },
-                    "basis": "same_predicted_net",
-                }
-                pairs.append(pair)
-                all_pairs.append(pair)
-        for member in members:
-            symbol_id = str(member.get("symbol_id") or "")
-            if not symbol_id:
-                continue
-            symbol_connections.setdefault(
-                symbol_id,
-                {
-                    "symbol_id": symbol_id,
-                    "gold_ref": member.get("gold_ref"),
-                    "class_name": member.get("class_name"),
-                    "label": member.get("label") or "",
-                    "terminals": [],
-                },
-            )
-            connected_members = []
-            seen_connected: set[tuple[str, str]] = set()
-            for other in members:
-                if other.get("symbol_id") == member.get("symbol_id"):
-                    continue
-                key = (str(other.get("symbol_id") or ""), str(other.get("terminal_ref") or ""))
-                if key in seen_connected:
-                    continue
-                seen_connected.add(key)
-                connected_members.append(
+def build_direct_terminal_records(
+    payload: dict[str, Any],
+) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
+    records: list[dict[str, Any]] = []
+    terminal_by_key: dict[str, dict[str, Any]] = {}
+    for symbol in payload.get("symbols", []):
+        links_by_terminal: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        for link in symbol.get("terminal_links", []):
+            links_by_terminal[str(link.get("terminal_ref") or "")].append(link)
+        for index, terminal in enumerate(symbol.get("terminals") or [], start=1):
+            terminal_ref = str(terminal.get("ref") or "")
+            member_key = direct_terminal_key(str(symbol["id"]), terminal_ref, index)
+            links = links_by_terminal.get(terminal_ref) or []
+            terminal_by_key[member_key] = direct_terminal_view(symbol, terminal, member_key, links)
+            for link_index, link in enumerate(links or [{}], start=1):
+                records.append(
                     {
-                        "symbol_id": other.get("symbol_id"),
-                        "gold_ref": other.get("gold_ref"),
-                        "class_name": other.get("class_name"),
-                        "label": other.get("label") or "",
-                        "terminal_ref": other.get("terminal_ref"),
-                        "terminal_name": other.get("terminal_name") or "",
+                        "id": f"terminal_{len(records) + 1:05d}",
+                        "member_key": member_key,
+                        "symbol_id": symbol["id"],
+                        "class_name": symbol.get("class_name") or symbol.get("type") or "",
+                        "bbox": symbol.get("bbox"),
+                        "point": [float(terminal["point"][0]), float(terminal["point"][1])],
+                        "wire_id": link.get("wire_id"),
+                        "wire_id_hint": terminal.get("wire_id_hint"),
+                        "node_id": link.get("node_id"),
+                        "link_index": link_index,
                     }
                 )
-            symbol_connections[symbol_id]["terminals"].append(
-                {
-                    "terminal_ref": member.get("terminal_ref"),
-                    "terminal_name": member.get("terminal_name") or "",
-                    "terminal_point": member.get("terminal_point"),
-                    "net_id": net["id"],
-                    "wire_id": member.get("wire_id"),
-                    "node_id": member.get("node_id"),
-                    "link_distance": member.get("link_distance"),
-                    "connected_member_count": len(connected_members),
-                    "connected_members": connected_members,
-                }
-            )
-        nets.append(
+    return records, terminal_by_key
+
+
+def build_direct_from_to(payload: dict[str, Any]) -> dict[str, Any]:
+    terminal_records, terminal_by_key = build_direct_terminal_records(payload)
+    bridge_stats: Counter[str] = Counter()
+    pairs = build_predicted_graph_pairs(
+        payload,
+        terminal_records,
+        internal_bridge_classes=DIRECT_INTERNAL_BRIDGE_CLASSES,
+        node_anchor_classes=DIRECT_NODE_ANCHOR_CLASSES,
+        node_anchor_threshold=DIRECT_NODE_ANCHOR_THRESHOLD,
+        terminal_gap_bridge_classes=DIRECT_TERMINAL_GAP_BRIDGE_CLASSES,
+        terminal_gap_bridge_max=DIRECT_TERMINAL_GAP_BRIDGE_MAX,
+        wire_gap_bridge_max=DIRECT_WIRE_GAP_BRIDGE_MAX,
+        gap_bridge_align_threshold=DIRECT_GAP_BRIDGE_ALIGN_THRESHOLD,
+        wire_gap_bridge_terminal_anchor_threshold=DIRECT_WIRE_GAP_TERMINAL_ANCHOR_THRESHOLD,
+        terminal_terminal_bridge_classes=DIRECT_TERMINAL_TERMINAL_BRIDGE_CLASSES,
+        terminal_terminal_bridge_max=DIRECT_TERMINAL_TERMINAL_BRIDGE_MAX,
+        gap_bridge_text_overlap_max=1.0,
+        gap_bridge_symbol_overlap_max=1.0,
+        nonconductive_anchor_policy="all",
+        bridge_stats=bridge_stats,
+    )
+    valid_pairs = sorted(
+        pair for pair in pairs if pair[0] in terminal_by_key and pair[1] in terminal_by_key
+    )
+    connected_terminal_ids = {terminal_id for pair in valid_pairs for terminal_id in pair}
+    connections = []
+    for index, (left_key, right_key) in enumerate(valid_pairs, start=1):
+        left = terminal_by_key[left_key]
+        right = terminal_by_key[right_key]
+        left_endpoint = {
+            key: left.get(key)
+            for key in ("id", "symbol_id", "class_name", "label", "terminal_ref", "terminal_name", "point")
+        }
+        right_endpoint = {
+            key: right.get(key)
+            for key in ("id", "symbol_id", "class_name", "label", "terminal_ref", "terminal_name", "point")
+        }
+        connections.append(
             {
-                "net_id": net["id"],
-                "status": net.get("status"),
-                "wire_ids": net.get("wire_ids", []),
-                "node_ids": net.get("node_ids", []),
-                "edge_ids": net.get("edge_ids", []),
-                "member_count": len(members),
-                "pair_count": len(pairs),
-                "members": members,
-                "connection_pairs": pairs,
+                "id": f"from_to_{index:05d}",
+                "type": "internal" if left["symbol_id"] == right["symbol_id"] else "wire",
+                "directed": False,
+                "from": left_endpoint,
+                "to": right_endpoint,
+                "basis": "first_terminal_reached_by_wire_graph_traversal",
+                "status": "predicted",
             }
         )
+    terminals = [terminal_by_key[key] for key in sorted(terminal_by_key)]
     return {
-        "schema_version": "todensekkei.labeled_connections.v1",
+        "schema_version": "todensekkei.from_to.v1",
         "source": payload.get("source"),
-        "basis": "terminal members grouped by predicted wire net",
-        "net_count": len(nets),
-        "connection_pair_count": len(all_pairs),
-        "nets": nets,
-        "symbol_connections": sorted(symbol_connections.values(), key=lambda item: str(item.get("symbol_id"))),
-        "connection_pairs": all_pairs,
+        "definition": "Direct terminal-to-terminal connections; connected components are not expanded into all pairs.",
+        "directed": False,
+        "terminal_count": len(terminals),
+        "connected_terminal_count": len(connected_terminal_ids),
+        "unconnected_terminal_count": len(terminals) - len(connected_terminal_ids),
+        "connection_count": len(connections),
+        "terminals": terminals,
+        "unconnected_terminal_ids": [
+            terminal["id"] for terminal in terminals if terminal["id"] not in connected_terminal_ids
+        ],
+        "connections": connections,
+        "resolver": {
+            "algorithm": "direct_wire_graph_traversal",
+            "internal_bridge_classes": sorted(DIRECT_INTERNAL_BRIDGE_CLASSES),
+            "node_anchor_classes": sorted(DIRECT_NODE_ANCHOR_CLASSES),
+            "node_anchor_threshold": DIRECT_NODE_ANCHOR_THRESHOLD,
+            "terminal_gap_bridge_classes": sorted(DIRECT_TERMINAL_GAP_BRIDGE_CLASSES),
+            "terminal_gap_bridge_max": DIRECT_TERMINAL_GAP_BRIDGE_MAX,
+            "wire_gap_bridge_max": DIRECT_WIRE_GAP_BRIDGE_MAX,
+            "gap_bridge_align_threshold": DIRECT_GAP_BRIDGE_ALIGN_THRESHOLD,
+            "wire_gap_terminal_anchor_threshold": DIRECT_WIRE_GAP_TERMINAL_ANCHOR_THRESHOLD,
+            "terminal_terminal_bridge_classes": sorted(DIRECT_TERMINAL_TERMINAL_BRIDGE_CLASSES),
+            "terminal_terminal_bridge_max": DIRECT_TERMINAL_TERMINAL_BRIDGE_MAX,
+            "bridge_stats": dict(sorted(bridge_stats.items())),
+        },
     }
 
 
@@ -1782,12 +1788,17 @@ def process_page(
             "external_references are annotation-derived page-continuation symbols until a detector/OCR path is added.",
         ],
     }
-    payload["labeled_connections"] = build_labeled_connections(payload)
+    payload["from_to"] = build_direct_from_to(payload)
+    payload["quality"]["from_to_terminal_count"] = payload["from_to"]["terminal_count"]
+    payload["quality"]["from_to_connected_terminal_count"] = payload["from_to"]["connected_terminal_count"]
+    payload["quality"]["from_to_connection_count"] = payload["from_to"]["connection_count"]
     if debug_artifacts:
         paths = write_visual_outputs(payload, source, page_out_dir)
         final_payload = load_json(paths.final_json)
         write_json(page_out_dir / "detected_symbols_yolo.json", symbols)
-        write_json(page_out_dir / "labeled_connections.json", payload["labeled_connections"])
+        write_json(page_out_dir / "from_to.json", payload["from_to"])
+        final_payload.setdefault("outputs", {})["from_to"] = str(page_out_dir / "from_to.json")
+        write_json(paths.final_json, final_payload)
     else:
         outputs = write_compact_outputs(payload, source, symbols, page_out_dir)
         final_payload = load_json(page_out_dir / "final_output.json")
@@ -1838,10 +1849,10 @@ def parse_args() -> argparse.Namespace:
         default=[],
         help="merge predicted wire nets through multi-terminal symbols of these classes",
     )
-    parser.add_argument("--junction-node-policy", choices=("all", "explicit"), default="all")
+    parser.add_argument("--junction-node-policy", choices=("all", "explicit"), default="explicit")
     parser.add_argument("--junction-node-classes", nargs="*", default=["junction"])
     parser.add_argument("--junction-node-threshold", type=float, default=24.0)
-    parser.add_argument("--dpi", type=int, default=200)
+    parser.add_argument("--dpi", type=int, default=DEFAULT_WIRE_ANALYSIS_DPI)
     parser.add_argument(
         "--wire-text-mask",
         choices=(
@@ -1858,7 +1869,7 @@ def parse_args() -> argparse.Namespace:
             "ocr_box_ink_erase",
             "components_ocr_box_ink_erase",
         ),
-        default="none",
+        default=DEFAULT_WIRE_TEXT_MASK,
     )
     parser.add_argument("--other-wire-mask", choices=("none", "io-card-horizontal"), default="none")
     parser.add_argument("--other-wire-mask-confidence", type=float, default=0.85)
@@ -1896,6 +1907,24 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def load_symbol_ocr_reader(engine: str, language: str) -> tuple[Any | None, str, str | None]:
+    if engine == "none":
+        return None, "none", None
+    try:
+        if engine == "easyocr":
+            import easyocr
+
+            return easyocr.Reader([language], gpu=False, verbose=False), engine, None
+        if engine == "rapidocr":
+            from rapidocr_onnxruntime import RapidOCR
+
+            return RapidOCR(), engine, None
+    except (ImportError, ModuleNotFoundError) as caught:
+        warning = f"symbol label OCR '{engine}' is unavailable ({caught}); continuing without symbol label OCR"
+        return None, "none", warning
+    raise ValueError(f"unsupported symbol OCR engine: {engine}")
+
+
 def main() -> None:
     args = parse_args()
     pages = parse_pages(args.pages)
@@ -1910,15 +1939,12 @@ def main() -> None:
     project_by_sheet = load_annotation_projects(args.annotation_zip)
     annotated_sheets = set(project_by_sheet)
     page_sheet_map = parse_mapping(args.page_sheet_map)
-    symbol_ocr_reader = None
-    if args.symbol_label_ocr_engine == "easyocr":
-        import easyocr
-
-        symbol_ocr_reader = easyocr.Reader([args.symbol_label_ocr_lang], gpu=False, verbose=False)
-    elif args.symbol_label_ocr_engine == "rapidocr":
-        from rapidocr_onnxruntime import RapidOCR
-
-        symbol_ocr_reader = RapidOCR()
+    symbol_ocr_reader, effective_symbol_ocr_engine, symbol_ocr_warning = load_symbol_ocr_reader(
+        args.symbol_label_ocr_engine,
+        args.symbol_label_ocr_lang,
+    )
+    if symbol_ocr_warning:
+        print(f"[warning] {symbol_ocr_warning}", flush=True)
 
     ensure_analysis_outputs(
         args.pdf,
@@ -1944,7 +1970,7 @@ def main() -> None:
             text_suppression=args.text_suppression,
             text_suppression_scope=args.text_suppression_scope,
             symbol_ocr_reader=symbol_ocr_reader,
-            symbol_ocr_engine=args.symbol_label_ocr_engine,
+            symbol_ocr_engine=effective_symbol_ocr_engine,
             symbol_ocr_classes=set(args.symbol_label_classes),
             symbol_ocr_padding=args.symbol_ocr_padding,
             symbol_ocr_preprocess=args.symbol_ocr_preprocess,
@@ -1976,6 +2002,40 @@ def main() -> None:
         )
         for page in pages
     ]
+    page_payloads = [load_json(Path(item["outputs"]["final_json"])) for item in page_summaries]
+    structure_path = args.out_dir / "structure.json"
+    structure = {
+        "schema_version": "todensekkei.document_structure.v1",
+        "status": "completed",
+        "result_type": "predicted",
+        "source": {
+            "pdf_name": args.pdf.name,
+            "pdf_path": str(args.pdf),
+            "page_count": len(page_payloads),
+            "pages": pages,
+        },
+        "model": {
+            "name": args.model.name,
+            "path": str(args.model),
+        },
+        "summary": {
+            "symbol_count": sum(int(item.get("quality", {}).get("symbol_count", 0)) for item in page_payloads),
+            "wire_count": sum(int(item.get("quality", {}).get("wire_count", 0)) for item in page_payloads),
+            "terminal_count": sum(int(item.get("from_to", {}).get("terminal_count", 0)) for item in page_payloads),
+            "connected_terminal_count": sum(
+                int(item.get("from_to", {}).get("connected_terminal_count", 0)) for item in page_payloads
+            ),
+            "from_to_connection_count": sum(
+                int(item.get("from_to", {}).get("connection_count", 0)) for item in page_payloads
+            ),
+            "external_reference_count": sum(
+                int(item.get("external_reference_summary", {}).get("external_reference_count", 0))
+                for item in page_payloads
+            ),
+        },
+        "pages": page_payloads,
+    }
+    write_json(structure_path, structure)
     summary = {
         "schema_version": "todensekkei.yolo_e2e.summary.v1",
         "status": "prototype",
@@ -1983,7 +2043,15 @@ def main() -> None:
         "pages": pages,
         "model": str(args.model),
         "annotation_zip": str(args.annotation_zip) if args.annotation_zip else None,
+        "dpi": args.dpi,
+        "analysis_root": str(args.analysis_root),
+        "wire_analysis_ocr": not args.skip_ocr,
         "wire_text_mask": args.wire_text_mask,
+        "symbol_label_ocr": {
+            "requested_engine": args.symbol_label_ocr_engine,
+            "effective_engine": effective_symbol_ocr_engine,
+            "warning": symbol_ocr_warning,
+        },
         "other_wire_mask": {
             "mode": args.other_wire_mask,
             "confidence": args.other_wire_mask_confidence,
@@ -1994,6 +2062,7 @@ def main() -> None:
         },
         "page_sheet_map": page_sheet_map,
         "page_summaries": page_summaries,
+        "outputs": {"structure_json": str(structure_path)},
         "notes": [
             "All outputs are local-only artifacts under private/.",
             "This is a prototype pipeline: YOLO symbols, image-processing wires, graph candidates, and visual reconstruction.",

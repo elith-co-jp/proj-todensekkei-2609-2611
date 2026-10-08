@@ -99,6 +99,7 @@ function renderResults(job) {
   resultSummary.innerHTML = [
     `<span class="pill">状態: ${esc(outputs.summary.status || job.status)}</span>`,
     `<span class="pill">対象ページ: ${esc((outputs.summary.pages || []).join(', '))}</span>`,
+    outputs.structure_json_url ? `<a class="pill" href="${esc(outputs.structure_json_url)}" target="_blank" rel="noreferrer">構造JSON</a>` : '',
     outputs.summary_json_url ? `<a class="pill" href="${esc(outputs.summary_json_url)}" target="_blank" rel="noreferrer">実行概要</a>` : '',
   ].join('')
 
@@ -108,8 +109,10 @@ function renderResults(job) {
   pageResults.innerHTML = (outputs.pages || [])
     .map((page) => {
       const links = [
+        page.wire_overlay_url ? `<a href="${esc(page.wire_overlay_url)}" target="_blank" rel="noreferrer">配線重畳画像</a>` : '',
+        page.review_url ? `<a href="${esc(page.review_url)}" target="_blank" rel="noreferrer">全体比較画像</a>` : '',
         page.final_json_url ? `<a href="${esc(page.final_json_url)}" target="_blank" rel="noreferrer">ページ解析データ</a>` : '',
-        page.labeled_connections_url ? `<a href="${esc(page.labeled_connections_url)}" target="_blank" rel="noreferrer">接続一覧</a>` : '',
+        page.from_to_url ? `<a href="${esc(page.from_to_url)}" target="_blank" rel="noreferrer">from-to接続</a>` : '',
         page.external_references_url ? `<a href="${esc(page.external_references_url)}" target="_blank" rel="noreferrer">別ページ参照</a>` : '',
       ].join('')
       return `
@@ -120,7 +123,11 @@ function renderResults(job) {
               <div class="summary">${qualityPills(page.quality)}</div>
             </div>
           </div>
-          ${page.review_url ? `<img class="review-image" src="${esc(page.review_url)}" alt="page ${esc(page.page)} review" />` : ''}
+          ${page.wire_overlay_url
+            ? `<img class="review-image" src="${esc(page.wire_overlay_url)}" alt="page ${esc(page.page)} predicted wires" />`
+            : page.review_url
+              ? `<img class="review-image" src="${esc(page.review_url)}" alt="page ${esc(page.page)} review" />`
+              : ''}
           <details class="detail-links">
             <summary>出力ファイル</summary>
             <div class="page-links">${links}</div>
