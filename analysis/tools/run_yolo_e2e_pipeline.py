@@ -11,7 +11,7 @@ from typing import Any
 
 from PIL import Image, ImageDraw
 
-from analyze_pdf_structure import analyze_page
+from analyze_pdf_structure import WIRE_GEOMETRY_REVISION, analyze_page
 from analyze_annotation_graph import load_zip_payload, symbol_bbox
 from build_from_to_review_outputs import build_predicted_graph_pairs
 from build_e2e_demo_outputs import (
@@ -40,6 +40,7 @@ from experiment_symbol_port_inference import (
     infer_ports_for_symbol,
 )
 from prepare_yolo_dataset import suppress_text_like_components
+from filter_wire_decorations import filter_wire_decorations, rapidocr_text_confirmation
 
 
 DEFAULT_MODEL_PATH = Path(
@@ -88,6 +89,7 @@ def _analysis_cache_key(pdf: Path, dpi: int, run_ocr: bool, wire_text_mask: str)
             digest.update(chunk)
     return {
         "pdf_sha256": digest.hexdigest(),
+        "wire_geometry_revision": WIRE_GEOMETRY_REVISION,
         "dpi": dpi,
         "run_ocr": run_ocr,
         "wire_text_mask": wire_text_mask,
@@ -1700,6 +1702,11 @@ def process_page(
         min_area_ratio=other_wire_mask_min_area_ratio,
         max_area_ratio=other_wire_mask_max_area_ratio,
         min_aspect_ratio=other_wire_mask_min_aspect_ratio,
+    )
+    payload = filter_wire_decorations(
+        payload, source, symbols,
+        confirm_text=rapidocr_text_confirmation(symbol_ocr_reader)
+        if symbol_ocr_reader is not None and symbol_ocr_engine == "rapidocr" else None,
     )
     inferred_terminal_config = port_inference_config(inferred_terminal_config_name)
     payload = enrich_symbols_and_graph(

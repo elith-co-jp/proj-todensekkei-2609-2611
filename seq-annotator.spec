@@ -47,7 +47,7 @@ except Exception:  # noqa: BLE001  未導入時は通常の import 解析に任�
     pass
 
 # 推論・学習は遅延 import。設定 YAML や動的に読むモジュールも同梱する。
-for pkg in ("ultralytics", "torchvision"):
+for pkg in ("ultralytics", "torchvision", "rapidocr_onnxruntime", "onnxruntime"):
     d, b, h = collect_all(pkg)
     datas += d
     binaries += b
@@ -55,7 +55,7 @@ for pkg in ("ultralytics", "torchvision"):
 
 a = Analysis(
     ["desktop.py"],
-    pathex=[str(spec_dir)],
+    pathex=[str(spec_dir), str(spec_dir / "analysis" / "tools")],
     binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,

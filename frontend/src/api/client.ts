@@ -9,6 +9,7 @@ import type {
   ProjectRow,
   Stats,
   SymbolClass,
+  StructureResult,
   TrainingRun,
 } from '../types'
 
@@ -163,6 +164,23 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ project_ids: projectIds, conf: conf ?? 0.25 }),
     }),
+
+  runAnalysis: (projectIds: number[], conf = 0.25) =>
+    req<InferenceRunResponse>('/api/ml/analysis/run', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ project_ids: projectIds, conf }),
+    }),
+
+  getStructure: (projectId: number) =>
+    req<{ project_id: number; result: StructureResult | null }>(`/api/ml/projects/${projectId}/structure`),
+
+  exportStructure: (projectIds: number[]) =>
+    download('/api/ml/analysis/export', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ project_ids: projectIds }),
+    }, 'structure.json'),
 
   importPredictionsZip: (file: File) => {
     const fd = new FormData()

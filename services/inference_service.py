@@ -17,7 +17,7 @@ from pathlib import PurePosixPath
 
 from sqlalchemy.orm import Session
 
-from models import AnnotationProject, MlModel, Prediction, SymbolClass
+from models import AnnotationProject, MlModel, Prediction, StructurePrediction, SymbolClass
 from services.annotation_service import classes_ordered, image_path
 from services.export_service import safe_members
 from services.geometry import sanitize_box
@@ -37,6 +37,10 @@ def _class_by_yolo_index(db: Session) -> dict[int, SymbolClass]:
 
 
 def clear_predictions(db: Session, project_id: int) -> None:
+    # Never keep a graph from an earlier set of symbol predictions.
+    db.query(StructurePrediction).filter(StructurePrediction.project_id == project_id).delete(
+        synchronize_session=False
+    )
     db.query(Prediction).filter(Prediction.project_id == project_id).delete(
         synchronize_session=False
     )
@@ -79,6 +83,8 @@ def run_inference(
     model: MlModel,
     projects: list[AnnotationProject],
     conf: float,
+    *,
+    include_structure: bool = False,
 ) -> list[dict]:
     """登録済みモデルで推論し、結果を predictions テーブルへ保存する。"""
     if not ultralytics_available():
@@ -98,6 +104,8 @@ def run_inference(
     detector_names = getattr(detector, "names", None) or {}
     summary = []
     for project in projects:
+        if include_structure and len(project.images) != 1:
+            raise RuntimeError("構造解析は1図面につき1画像で実行してください。")
         detections: list[dict] = []
         skipped_images = 0
         for image in project.images:
@@ -126,9 +134,14 @@ def run_inference(
                             cls = class_by_index.get(int(cls_index))
                     if cls is None:
                         continue
+                    cx, cy, w, h = sanitize_box(cx, cy, w, h)
+                    if w <= 0 or h <= 0:
+                        continue
                     detections.append(
                         {
                             "class_id": cls.id,
+                            "class_key": cls.key,
+                            "class_label": cls.label,
                             "cx": cx,
                             "cy": cy,
                             "w": w,
@@ -136,15 +149,32 @@ def run_inference(
                             "confidence": float(score) if score is not None else None,
                         }
                     )
+        structure = None
+        if include_structure:
+            if skipped_images:
+                raise RuntimeError(f"図面画像が見つかりません: {project.name}")
+            from services.structure_service import analyze_project
+
+            structure = analyze_project(project, model, detections)
         count = _record_predictions(
             db, project, detections, model, model_label=model.name
         )
+        if structure is not None:
+            from services.structure_service import save_structure
+
+            save_structure(db, project.id, structure)
         summary.append(
             {
                 "project_id": project.id,
                 "name": project.name,
                 "detections": count,
                 "skipped_images": skipped_images,
+                **({
+                    "structure_available": True,
+                    "wire_count": len(structure.get("wires", [])),
+                    "connection_count": structure["from_to"]["connection_count"],
+                    "warnings": structure.get("warnings", []),
+                } if structure is not None else {}),
             }
         )
     db.commit()

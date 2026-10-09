@@ -35,8 +35,8 @@ type Notice = { kind: 'success' | 'error'; title: string; body: string }
 const TRAINING_POLL_MS = 3000
 
 const CYCLE_STEPS = [
-  { icon: Zap, label: '1. 推論', desc: '登録モデルで図面からシンボルを検出' },
-  { icon: FileJson, label: '2. 結果表示', desc: '検出結果を JSON で確認' },
+  { icon: Zap, label: '1. 解析', desc: 'シンボル・配線・接続を検出' },
+  { icon: FileJson, label: '2. 結果表示', desc: '図面で確認・構造JSONを出力' },
   { icon: Layers, label: '3. 修正', desc: 'エディタで誤検出・漏れを修正' },
   { icon: Brain, label: '4. 学習', desc: '修正済みデータで YOLO を再学習' },
   { icon: Scale, label: '5. 比較・採用', desc: '新旧モデルの精度を比較して採用可否を選択' },
@@ -45,7 +45,7 @@ const CYCLE_STEPS = [
 // 時間のかかる操作で画面全体に出すローディング表示（busy キー → メッセージ）
 const BUSY_OVERLAY: Record<string, { message: string; hint: string }> = {
   inference: {
-    message: 'AI 推論を実行しています',
+    message: '図面を解析しています',
     hint: '登録図面を順に処理しています。対象が多いほど時間がかかります。',
   },
   import: {
@@ -149,12 +149,15 @@ export default function MlOpsPage() {
     setBusy('inference')
     setNotice(null)
     try {
-      const r = await api.runInference(Array.from(ids), conf)
+      const r = await api.runAnalysis(Array.from(ids), conf)
       setInferenceResult(r)
+      setImportResult(null)
+      setJsonCache({})
+      setJsonOpen(null)
       setNotice({
         kind: 'success',
-        title: '推論が完了しました',
-        body: `${r.detection_count} 件のシンボルを検出しました（${r.results.length} 図面）。各図面のエディタで確認・修正してください。`,
+        title: '解析結果を保存しました',
+        body: `${r.detection_count} 件のシンボル、${r.results.reduce((n, page) => n + (page.wire_count ?? 0), 0)} 本の配線を検出しました（${r.results.length} 図面）。${r.results.some((page) => page.warnings?.length) ? '一部のラベル読み取りに問題があります。解析結果を確認してください。' : ''}`,
       })
       await reload()
     } catch (e) {
@@ -171,6 +174,9 @@ export default function MlOpsPage() {
     try {
       const r = await api.importPredictionsZip(f)
       setImportResult(r)
+      setInferenceResult(null)
+      setJsonCache({})
+      setJsonOpen(null)
       setNotice({
         kind: 'success',
         title: '推論結果を取り込みました',
@@ -292,6 +298,14 @@ export default function MlOpsPage() {
   }
 
   const summaryFor = (id: number) => summaries.find((s) => s.project_id === id)
+
+  const downloadStructure = async (projectIds: number[]) => {
+    try {
+      await api.exportStructure(projectIds)
+    } catch (caught) {
+      setNotice({ kind: 'error', title: 'JSONの出力に失敗しました', body: caught instanceof Error ? caught.message : String(caught) })
+    }
+  }
 
   // 採用待ちの学習ジョブ（すべて判定パネルを出す）
   const pendingRuns = runs.filter((r) => r.status === 'success' && r.decision === 'pending' && r.result_model)
@@ -479,7 +493,7 @@ export default function MlOpsPage() {
               </span>
               <div>
                 <div className="text-[9px] font-bold uppercase tracking-wider text-slate-400">Inference</div>
-                <h2 className="text-sm font-black">推論を実行する</h2>
+                <h2 className="text-sm font-black">解析を実行する</h2>
               </div>
               <span className="flex-1" />
               {status?.active_model && (
@@ -544,7 +558,7 @@ export default function MlOpsPage() {
                   ? 'モデルを先に登録してください'
                   : !status?.ultralytics
                     ? 'この環境では実行できません（外部実行）'
-                    : 'AI 推論を実行'}
+                    : 'AI 解析を実行'}
               </button>
 
               <div className="border-t border-slate-100 pt-4">
@@ -581,8 +595,9 @@ export default function MlOpsPage() {
                 </span>
                 <div>
                   <div className="text-[9px] font-bold uppercase tracking-wider text-slate-400">Results</div>
-                  <h2 className="text-sm font-black">直近の推論結果</h2>
+                  <h2 className="text-sm font-black">直近の解析結果</h2>
                 </div>
+                {inferenceResult && <button type="button" className="btn btn-sm ml-auto" onClick={() => void downloadStructure(inferenceResult.results.map((page) => page.project_id))}><Download size={14} />構造JSON</button>}
               </div>
               <div className="p-4 sm:p-5">
                 <div className="thin-scroll max-h-80 overflow-auto rounded-2xl border border-slate-200">
@@ -590,14 +605,14 @@ export default function MlOpsPage() {
                     <div key={r.project_id}>
                       <div className="flex items-center gap-2 border-b border-slate-100 px-3 py-2 text-xs">
                         <span className="font-mono text-slate-400">{r.project_id}</span>
-                        <Link to={`/projects/${r.project_id}`} className="truncate font-bold text-slate-700 hover:text-cyan-700">
+                        <Link to={`/projects/${r.project_id}/analysis`} className="truncate font-bold text-slate-700 hover:text-cyan-700">
                           {r.name}
                         </Link>
                         <span className="flex-1" />
                         <span className="font-mono text-slate-500">{r.detections} 件</span>
-                        <button type="button" className="btn btn-sm" onClick={() => void toggleJson(r.project_id)}>
+                        {r.structure_available ? <button type="button" className="icon-button" title="構造JSONをダウンロード" aria-label="構造JSONをダウンロード" onClick={() => void downloadStructure([r.project_id])}><Download size={15} /></button> : <button type="button" className="btn btn-sm" onClick={() => void toggleJson(r.project_id)}>
                           {jsonOpen === r.project_id ? 'JSON を閉じる' : 'JSON'}
-                        </button>
+                        </button>}
                       </div>
                       {jsonOpen === r.project_id && (
                         <pre className="thin-scroll max-h-64 overflow-auto border-b border-slate-100 bg-slate-900 p-3 font-mono text-[10px] leading-4 text-emerald-100">

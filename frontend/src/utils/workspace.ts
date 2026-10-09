@@ -169,7 +169,7 @@ export function getProjectNavigation(projects: ReadonlyArray<{ id: number }>, cu
 }
 
 export function isEditorPath(pathname: string): boolean {
-  return /^\/projects\/\d+$/.test(pathname)
+  return /^\/projects\/\d+(?:\/analysis)?$/.test(pathname)
 }
 
 export function isCurrentProject(project: { id: number } | null, routeProjectId: number): boolean {

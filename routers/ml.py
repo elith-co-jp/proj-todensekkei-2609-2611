@@ -6,8 +6,12 @@
 
 from __future__ import annotations
 
+import json
+import logging
+import threading
+
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from sqlalchemy.orm import Session
 
 from database import get_db
@@ -30,9 +34,12 @@ from services.model_service import (
     serialize_model,
     store_model_bytes,
 )
+from services.structure_service import document_structure, get_structure
 from services.training_service import running_training, serialize_run, start_training
 
 router = APIRouter(prefix="/api/ml", tags=["ml"])
+_inference_lock = threading.Lock()
+_logger = logging.getLogger(__name__)
 
 
 def _get_model_or_404(db: Session, model_id: int) -> MlModel:
@@ -116,6 +123,15 @@ def download_model(model_id: int, db: Session = Depends(get_db)):
 # ---------------------------------------------------------------- 推論
 @router.post("/inference/run")
 def inference_run(payload: InferenceRunRequest, db: Session = Depends(get_db)):
+    return _run_inference(payload, db, include_structure=False)
+
+
+@router.post("/analysis/run")
+def analysis_run(payload: InferenceRunRequest, db: Session = Depends(get_db)):
+    return _run_inference(payload, db, include_structure=True)
+
+
+def _run_inference(payload: InferenceRunRequest, db: Session, *, include_structure: bool):
     model = active_model(db)
     if model is None:
         raise HTTPException(
@@ -127,16 +143,57 @@ def inference_run(payload: InferenceRunRequest, db: Session = Depends(get_db)):
     projects = q.order_by(AnnotationProject.id.asc()).all()
     if not projects:
         raise HTTPException(404, "対象のプロジェクトがありません")
+    if payload.project_ids and set(payload.project_ids) != {p.id for p in projects}:
+        raise HTTPException(404, "対象に存在しない図面が含まれています")
+    if not _inference_lock.acquire(blocking=False):
+        raise HTTPException(409, "別の解析を実行中です。完了してから再実行してください。")
     try:
-        results = run_inference(db, model, projects, conf=payload.conf)
+        if include_structure:
+            results = run_inference(db, model, projects, conf=payload.conf, include_structure=True)
+        else:
+            results = run_inference(db, model, projects, conf=payload.conf)
     except RuntimeError as exc:
+        db.rollback()
         raise HTTPException(400, str(exc)) from exc
+    except Exception as exc:
+        db.rollback()
+        _logger.exception("Inference failed")
+        raise HTTPException(500, "解析に失敗しました。保存済みの結果は変更されていません。") from exc
+    finally:
+        _inference_lock.release()
     return {
         "model": serialize_model(model),
         "conf": payload.conf,
         "results": results,
         "detection_count": sum(r["detections"] for r in results),
     }
+
+
+@router.get("/projects/{project_id}/structure")
+def project_structure(project_id: int, db: Session = Depends(get_db)):
+    get_project_or_404(db, project_id)
+    return {"project_id": project_id, "result": get_structure(db, project_id)}
+
+
+@router.post("/analysis/export")
+def export_structure(payload: InferenceRunRequest, db: Session = Depends(get_db)):
+    query = db.query(AnnotationProject).order_by(AnnotationProject.id)
+    if payload.project_ids:
+        query = query.filter(AnnotationProject.id.in_(payload.project_ids))
+    projects = query.all()
+    if not projects or (payload.project_ids and set(payload.project_ids) != {p.id for p in projects}):
+        raise HTTPException(404, "対象の図面が見つかりません")
+    pages = []
+    for project in projects:
+        result = get_structure(db, project.id)
+        if result is None:
+            raise HTTPException(409, f"構造解析が未実行の図面があります: {project.name}")
+        pages.append(result)
+    return Response(
+        json.dumps(document_structure(pages), ensure_ascii=False, indent=2, allow_nan=False),
+        media_type="application/json",
+        headers={"Content-Disposition": 'attachment; filename="structure.json"'},
+    )
 
 
 @router.post("/inference/import")
@@ -148,10 +205,14 @@ async def inference_import(archive: UploadFile = File(...), db: Session = Depend
     blob = await archive.read()
     if not blob:
         raise HTTPException(400, "ファイルが空です")
+    if not _inference_lock.acquire(blocking=False):
+        raise HTTPException(409, "解析を実行中です。完了してから取り込んでください。")
     try:
         return import_predictions_zip(db, blob, source_label=name)
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
+    finally:
+        _inference_lock.release()
 
 
 @router.get("/predictions")

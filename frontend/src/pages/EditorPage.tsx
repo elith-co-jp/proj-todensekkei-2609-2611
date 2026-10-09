@@ -1315,6 +1315,9 @@ export default function EditorPage() {
           )}
         </nav>
 
+        <Link to={`/projects/${projectId}/analysis`} className="icon-button border border-white/10 text-slate-300 hover:bg-white/10 hover:text-white" title="解析結果を表示" aria-label="解析結果を表示">
+          <Cable size={17} />
+        </Link>
         <button
           type="button"
           className="flex min-h-10 items-center gap-1.5 rounded-xl border border-cyan-400/30 bg-cyan-400/10 px-3 text-xs font-bold text-cyan-100 transition hover:bg-cyan-400/20 disabled:opacity-40"

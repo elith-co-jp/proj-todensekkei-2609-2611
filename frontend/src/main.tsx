@@ -9,6 +9,7 @@ import EditorPage from './pages/EditorPage'
 import ExportPage from './pages/ExportPage'
 import GuidePage from './pages/GuidePage'
 import MlOpsPage from './pages/MlOpsPage'
+import AnalysisPage from './pages/AnalysisPage'
 
 const router = createHashRouter([
   {
@@ -17,6 +18,7 @@ const router = createHashRouter([
     children: [
       { index: true, element: <ProjectListPage /> },
       { path: 'projects/:id', element: <EditorPage /> },
+      { path: 'projects/:id/analysis', element: <AnalysisPage /> },
       { path: 'export', element: <ExportPage /> },
       { path: 'ml', element: <MlOpsPage /> },
       { path: 'guide', element: <GuidePage /> },

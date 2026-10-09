@@ -84,6 +84,9 @@ class AnnotationProject(Base):
     predictions = relationship(
         "Prediction", back_populates="project", cascade="all, delete-orphan"
     )
+    structure_prediction = relationship(
+        "StructurePrediction", back_populates="project", cascade="all, delete-orphan", uselist=False
+    )
 
 
 class AnnotationImage(Base):
@@ -230,6 +233,19 @@ class Prediction(Base):
     project = relationship("AnnotationProject", back_populates="predictions")
     model = relationship("MlModel", back_populates="predictions")
     symbol_class = relationship("SymbolClass")
+
+
+class StructurePrediction(Base):
+    """Latest automatic wire/graph result, independent of manual annotations."""
+
+    __tablename__ = "structure_predictions"
+
+    project_id = Column(
+        Integer, ForeignKey("annotation_projects.id", ondelete="CASCADE"), primary_key=True
+    )
+    payload_json = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=utc_now_naive)
+    project = relationship("AnnotationProject", back_populates="structure_prediction")
 
 
 class TrainingRun(Base):
