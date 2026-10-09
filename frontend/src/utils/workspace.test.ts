@@ -51,7 +51,7 @@ describe('getProjectNavigation', () => {
 })
 
 describe('isEditorPath', () => {
-  it.each(['/projects/1', '/projects/130'])('%sを編集ルートとして判定する', (path) => {
+  it.each(['/projects/1', '/projects/130', '/projects/1/analysis'])('%sを編集ルートとして判定する', (path) => {
     expect(isEditorPath(path)).toBe(true)
   })
 

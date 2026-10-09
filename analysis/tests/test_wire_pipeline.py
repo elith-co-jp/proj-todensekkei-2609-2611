@@ -69,6 +69,13 @@ class WirePipelineTests(unittest.TestCase):
                 ensure_analysis_outputs(pdf, [1], root / "analysis", 150, False, "components")
                 analyze_page.assert_not_called()
 
+                old_key = _analysis_cache_key(pdf, 150, False, "components")
+                del old_key["wire_geometry_revision"]
+                (page_dir / "analysis_key.json").write_text(json.dumps(old_key), encoding="utf-8")
+                ensure_analysis_outputs(pdf, [1], root / "analysis", 150, False, "components")
+                analyze_page.assert_called_once()
+                analyze_page.reset_mock()
+
                 ensure_analysis_outputs(pdf, [1], root / "analysis", 200, False, "components")
                 analyze_page.assert_called_once_with(
                     pdf,

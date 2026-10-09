@@ -148,6 +148,30 @@ export type InferenceRunResult = {
   name: string
   detections: number
   skipped_images?: number
+  structure_available?: boolean
+  wire_count?: number
+  connection_count?: number
+  warnings?: string[]
+}
+
+export type StructureResult = {
+  status: 'completed' | 'partial'
+  source: { project_id: number; image_sha256: string }
+  image_size: { width: number; height: number }
+  wires: { id: string; polyline: [number, number][] }[]
+  symbols: {
+    id: string
+    class_name: string
+    class_label: string
+    label?: string
+    bbox: { x0: number; y0: number; x1: number; y1: number }
+  }[]
+  from_to: { connection_count: number; connections: {
+    id: string
+    from: { symbol_id: string; label: string; terminal_name: string }
+    to: { symbol_id: string; label: string; terminal_name: string }
+  }[] }
+  warnings: string[]
 }
 
 export type InferenceRunResponse = {

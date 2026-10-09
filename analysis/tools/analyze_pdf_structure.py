@@ -19,6 +19,7 @@ from PIL import Image, ImageDraw, ImageFont, ImageOps
 DEFAULT_PDF_PATH = Path("private/inputs/reference/reference.pdf")
 DEFAULT_OUT_DIR = Path("private/results/pdf_structure/pdf_structure")
 PDF_ENV_VAR = "TODENSEKKEI_REFERENCE_PDF"
+WIRE_GEOMETRY_REVISION = "horizontal_connected_stroke_v2"
 
 
 @dataclass(frozen=True)
@@ -163,25 +164,31 @@ def _overlap(start_a: int, end_a: int, start_b: int, end_b: int) -> int:
     return max(0, min(end_a, end_b) - max(start_a, start_b))
 
 
-def _merge_parallel_boxes(boxes: Iterable[Box], orientation: str, gap: int = 2) -> list[Box]:
+def _merge_parallel_boxes(
+    boxes: Iterable[Box], orientation: str, gap: int = 2, *, component_labels: np.ndarray | None = None
+) -> list[Box]:
     ordered = sorted(boxes, key=lambda box: (box.y0, box.x0) if orientation == "h" else (box.x0, box.y0))
-    active: list[Box] = []
-    merged: list[Box] = []
+    active: list[tuple[Box, dict[int, Box]]] = []
+    merged: list[tuple[Box, dict[int, Box]]] = []
+
+    def union(a: Box, b: Box) -> Box:
+        return Box(min(a.x0, b.x0), min(a.y0, b.y0), max(a.x1, b.x1), max(a.y1, b.y1))
 
     for box in ordered:
-        next_active: list[Box] = []
-        for existing in active:
+        component = int(component_labels[box.y0, box.x0]) if component_labels is not None else 0
+        next_active: list[tuple[Box, dict[int, Box]]] = []
+        for existing, components in active:
             if orientation == "h" and existing.y1 + gap < box.y0:
-                merged.append(existing)
+                merged.append((existing, components))
             elif orientation == "v" and existing.x1 + gap < box.x0:
-                merged.append(existing)
+                merged.append((existing, components))
             else:
-                next_active.append(existing)
+                next_active.append((existing, components))
         active = next_active
 
         match_index: int | None = None
         best_overlap = 0
-        for index, existing in enumerate(active):
+        for index, (existing, _components) in enumerate(active):
             if orientation == "h":
                 overlap = _overlap(existing.x0, existing.x1, box.x0, box.x1)
                 required = max(8, int(min(existing.width, box.width) * 0.35))
@@ -193,21 +200,37 @@ def _merge_parallel_boxes(boxes: Iterable[Box], orientation: str, gap: int = 2) 
                 best_overlap = overlap
 
         if match_index is None:
-            active.append(box)
+            active.append((box, {component: box}))
         else:
-            existing = active[match_index]
-            active[match_index] = Box(
-                min(existing.x0, box.x0),
-                min(existing.y0, box.y0),
-                max(existing.x1, box.x1),
-                max(existing.y1, box.y1),
-            )
+            existing, components = active[match_index]
+            components[component] = union(components.get(component, box), box)
+            active[match_index] = (union(existing, box), components)
 
     merged.extend(active)
-    return merged
+    if component_labels is None:
+        return [box for box, _ in merged]
+
+    result: list[Box] = []
+
+    def span(item: Box) -> int:
+        return item.width if orientation == "h" else item.height
+
+    for box, components in merged:
+        # Locate each candidate on its longest connected stroke, not detached
+        # text inside its bbox. Do not promote the discarded text to new wires.
+        longest = max(span(item) for item in components.values())
+        # Restrict correction to a stroke spanning the original candidate.
+        # Partial/gapped candidates remain the existing recovery path's job.
+        if longest < span(box):
+            result.append(box)
+            continue
+        result.extend(item for item in components.values() if span(item) == longest)
+    return result
 
 
-def scan_line_segments(mask: np.ndarray, orientation: str, min_length: int) -> list[LineSegment]:
+def scan_line_segments(
+    mask: np.ndarray, orientation: str, min_length: int, *, isolate_components: bool = False
+) -> list[LineSegment]:
     height, width = mask.shape
     candidates: list[Box] = []
     if orientation == "h":
@@ -236,7 +259,10 @@ def scan_line_segments(mask: np.ndarray, orientation: str, min_length: int) -> l
     else:
         raise ValueError("orientation must be 'h' or 'v'")
 
-    merged = _merge_parallel_boxes(candidates, orientation)
+    component_labels = None
+    if isolate_components:
+        _, component_labels = cv2.connectedComponents(mask, connectivity=8)
+    merged = _merge_parallel_boxes(candidates, orientation, component_labels=component_labels)
     if orientation == "h":
         filtered = [box for box in merged if box.width >= min_length and box.width >= box.height * 6]
     else:
@@ -563,7 +589,8 @@ def build_initial_wire_candidates(
 ) -> tuple[list[LineSegment], list[LineSegment], list[LineSegment]]:
     h_mask = line_mask(binary, "h")
     v_mask = line_mask(binary, "v")
-    h_lines = filter_line_segments(scan_line_segments(h_mask, "h", 18))
+    # Keep raw scans and vertical recovery unchanged; correct horizontal-mask geometry only.
+    h_lines = filter_line_segments(scan_line_segments(h_mask, "h", 18, isolate_components=True))
     v_lines = filter_line_segments(scan_line_segments(v_mask, "v", 18))
 
     def keep(line: LineSegment) -> bool:
@@ -1457,9 +1484,30 @@ def analyze_page(
     run_ocr: bool,
     wire_text_mask: str = "none",
 ) -> dict:
+    return analyze_image(
+        render_page(pdf_path, page_number, dpi),
+        page_number,
+        dpi,
+        out_dir,
+        run_ocr,
+        wire_text_mask,
+        source_name=str(pdf_path),
+    )
+
+
+def analyze_image(
+    image: Image.Image,
+    page_number: int,
+    dpi: int,
+    out_dir: Path,
+    run_ocr: bool,
+    wire_text_mask: str = "none",
+    *,
+    source_name: str = "",
+    write_debug_images: bool = True,
+) -> dict:
     page_dir = out_dir / f"page_{page_number:03d}"
     page_dir.mkdir(parents=True, exist_ok=True)
-    image = render_page(pdf_path, page_number, dpi)
     binary = make_binary_mask(image)
     width, height = image.size
     base_h = scan_line_segments(binary, "h", max(36, width // 100))
@@ -1647,13 +1695,14 @@ def analyze_page(
         + "\n",
         encoding="utf-8",
     )
-    image.save(page_dir / "base.png")
-    line_removed_input.save(page_dir / "ocr_line_removed_input.png")
-    draw_detection_review(image, wires, labels, graph).save(page_dir / "final_extraction_review.png")
+    if write_debug_images:
+        image.save(page_dir / "base.png")
+        line_removed_input.save(page_dir / "ocr_line_removed_input.png")
+        draw_detection_review(image, wires, labels, graph).save(page_dir / "final_extraction_review.png")
 
     summary = {
         **common,
-        "pdf": str(pdf_path),
+        "pdf": source_name,
         "horizontal_candidate_count": len(h_lines),
         "vertical_candidate_count": len(v_lines),
         "restored_vertical_segment_count": len(restored_v_lines),

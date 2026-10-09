@@ -6,3 +6,4 @@
 # 無い環境ではエクスポート → 外部 `yolo predict` / 学習 → 結果・best.pt 取込の
 # ワークフローに自動で誘導される。
 ultralytics==8.4.156
+rapidocr-onnxruntime>=1.4,<2

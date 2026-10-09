@@ -175,13 +175,13 @@ export default function ProjectListPage() {
     setBusy(true)
     setError(null)
     setBusyLabel({
-      message: 'AI 推論を実行しています',
-      hint: '1枚あたり数秒かかります。対象が多い場合はしばらくお待ちください。',
+      message: '図面を解析しています',
+      hint: 'シンボル・配線・接続関係を処理しています。',
     })
     try {
-      const r = await api.runInference(Array.from(checked))
+      const r = await api.runAnalysis(Array.from(checked))
       setMsg(
-        `AI 推論が完了しました（${r.detection_count} 件検出）。図面を開くと「AI 推論」ボタンで結果を取り込めます`,
+        `解析完了: シンボル ${r.detection_count} 件、配線 ${r.results.reduce((n, page) => n + (page.wire_count ?? 0), 0)} 本。${r.results.flatMap((page) => page.warnings ?? []).length ? '一部のラベル読み取りに問題があります。解析結果を確認してください。' : ''}`,
       )
       setJustRegistered(null)
       await load()
@@ -199,13 +199,13 @@ export default function ProjectListPage() {
     setBusy(true)
     setError(null)
     setBusyLabel({
-      message: 'AI 推論を実行しています',
-      hint: '1枚あたり数秒かかります。対象が多い場合はしばらくお待ちください。',
+      message: '図面を解析しています',
+      hint: 'シンボル・配線・接続関係を処理しています。',
     })
     try {
-      const r = await api.runInference(justRegistered)
+      const r = await api.runAnalysis(justRegistered)
       setMsg(
-        `AI 推論が完了しました（${r.detection_count} 件検出）。図面を開くと検出結果を確認・修正できます`,
+        `解析完了: シンボル ${r.detection_count} 件、配線 ${r.results.reduce((n, page) => n + (page.wire_count ?? 0), 0)} 本。${r.results.flatMap((page) => page.warnings ?? []).length ? '一部のラベル読み取りに問題があります。解析結果を確認してください。' : ''}`,
       )
       setJustRegistered(null)
       await load()
@@ -335,7 +335,7 @@ export default function ProjectListPage() {
               onClick={() => void inferRegistered()}
               disabled={busy}
             >
-              <Sparkles size={13} /> 登録した {justRegistered.length} 件に AI 推論を実行
+              <Sparkles size={13} /> 登録した {justRegistered.length} 件に AI 解析を実行
             </button>
           )}
         </div>
@@ -359,7 +359,7 @@ export default function ProjectListPage() {
             />
           </label>
           <button type="button" className="btn btn-sm" onClick={() => void inferChecked()} disabled={busy}>
-            <Sparkles size={14} /> {checked.size ? `選択 ${checked.size} 件` : '全件'}に AI 推論
+            <Sparkles size={14} /> {checked.size ? `選択 ${checked.size} 件` : '全件'}に AI 解析
           </button>
           <button type="button" className="btn btn-sm" onClick={() => void exportChecked()} disabled={busy}>
             <Download size={14} /> {checked.size ? `選択 ${checked.size} 件` : '全件'}を出力
@@ -390,7 +390,7 @@ export default function ProjectListPage() {
                 <th className="th w-24 text-right">シンボル</th>
                 <th className="th w-20 text-right">端子</th>
                 <th className="th w-20 text-right">配線</th>
-                <th className="th w-20"><span className="sr-only">編集</span></th>
+                <th className="th w-28"><span className="sr-only">解析結果・編集</span></th>
               </tr>
             </thead>
             <tbody>
@@ -437,6 +437,9 @@ export default function ProjectListPage() {
                   <td className="td text-right font-mono text-xs text-slate-500">{row.terminal_count}</td>
                   <td className="td text-right font-mono text-xs">{row.connection_count}</td>
                   <td className="td text-right">
+                    <Link to={`/projects/${row.id}/analysis`} className="icon-button mr-1 h-9 w-9 border border-slate-200 text-cyan-700 hover:bg-cyan-50" aria-label={`${row.name}の解析結果`} title="解析結果">
+                      <Cable size={16} />
+                    </Link>
                     <Link
                       to={`/projects/${row.id}`}
                       className="icon-button h-9 w-9 border border-slate-200 text-slate-500 hover:border-cyan-300 hover:bg-cyan-50 hover:text-cyan-700"
@@ -484,6 +487,9 @@ export default function ProjectListPage() {
                     <div><div className="text-[9px] text-slate-400">配線</div><div className="mt-1 text-xs font-bold">{row.connection_count}</div></div>
                   </div>
                 </div>
+                <Link to={`/projects/${row.id}/analysis`} className="icon-button border border-slate-200 text-cyan-700" aria-label={`${row.name}の解析結果`} title="解析結果">
+                  <Cable size={17} />
+                </Link>
                 <Link
                   to={`/projects/${row.id}`}
                   className="icon-button border border-slate-200 text-slate-500"

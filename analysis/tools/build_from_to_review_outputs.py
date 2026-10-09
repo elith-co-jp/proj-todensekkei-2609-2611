@@ -522,6 +522,21 @@ def build_predicted_graph_pairs(
     stop_by_member: dict[str, str] = {}
     terminal_members_by_graph_node: dict[str, set[str]] = defaultdict(set)
     stats = bridge_stats if bridge_stats is not None else Counter()
+    excluded_segments = payload.get("quality", {}).get("wire_decoration_filter", {}).get("excluded_segments", [])
+
+    def follows_excluded_decoration(start: tuple[float, float], end: tuple[float, float]) -> bool:
+        # Crossing a card border is allowed; following a rejected border is not.
+        tolerance = max(2.0, 2.0 * payload.get("image_size", {}).get("width", 1755) / 1755)
+        for segment in excluded_segments:
+            along, across = (0, 1) if segment["orientation"] == "h" else (1, 0)
+            if max(abs(start[across] - segment["axis"]), abs(end[across] - segment["axis"])) > tolerance:
+                continue
+            lo, hi = sorted((start[along], end[along]))
+            overlap = min(hi, segment["end"]) - max(lo, segment["start"])
+            if overlap > max(2.0, min(6.0, (hi - lo) * 0.25)):
+                return True
+        return False
+
     symbol_boxes: dict[str, tuple[str, dict[str, float]]] = {}
     for record in terminal_records:
         symbol_id = str(record.get("symbol_id") or "")
@@ -677,6 +692,9 @@ def build_predicted_graph_pairs(
             bridge_end = node_point(nodes_by_id[endpoint_node])
         else:
             _projection_t, _distance, bridge_end = point_segment_projection(terminal_point, segment["start"], segment["end"])
+        if follows_excluded_decoration(terminal_point, bridge_end):
+            stats["terminal_gap_bridge_rejected_decoration_count"] += 1
+            return False
         text_overlap = segment_text_overlap_ratio(terminal_point, bridge_end, text_regions)
         if text_overlap > gap_bridge_text_overlap_max:
             stats["terminal_gap_bridge_rejected_text_overlap_count"] += 1
@@ -749,6 +767,9 @@ def build_predicted_graph_pairs(
                     if endpoint_key not in best_by_endpoint or gap < best_by_endpoint[endpoint_key][0]:
                         best_by_endpoint[endpoint_key] = candidate
         for index, (endpoint_key, (gap, target_edge_id, t, projection, _wire_id)) in enumerate(best_by_endpoint.items(), start=1):
+            if follows_excluded_decoration(coords[endpoint_key], projection):
+                stats["wire_gap_bridge_rejected_decoration_count"] += 1
+                continue
             if segment_text_overlap_ratio(coords[endpoint_key], projection, text_regions) > gap_bridge_text_overlap_max:
                 stats["wire_gap_bridge_rejected_text_overlap_count"] += 1
                 continue
@@ -816,6 +837,9 @@ def build_predicted_graph_pairs(
                 bridge_pairs.add(sorted_pair(current["stop_id"], other["stop_id"]))
 
         for left, right in sorted(bridge_pairs):
+            if follows_excluded_decoration(coords[left], coords[right]):
+                stats["terminal_terminal_bridge_rejected_decoration_count"] += 1
+                continue
             left_symbol_id = ""
             right_symbol_id = ""
             for record in terminals:
