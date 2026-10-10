@@ -510,3 +510,115 @@ describe('EditorPage interactions', () => {
     expect(apiMocks.saveAnnotations).toHaveBeenCalledTimes(1)
   })
 })
+
+describe('EditorPage レイヤー表示', () => {
+  it('クラス行で種別ごとにシンボルの表示を切り替えられる', async () => {
+    const { container, findByRole, getByRole } = renderEditor()
+    await findByRole('region', { name: '図面アノテーションキャンバス' })
+
+    expect(getByRole('group', { name: 'アノテーションのレイヤー' })).toBeTruthy()
+    expect(container.querySelectorAll('svg rect[stroke="#0891b2"]')).toHaveLength(2)
+
+    fireEvent.click(getByRole('button', { name: 'リレーを非表示' }))
+    expect(container.querySelectorAll('svg rect[stroke="#0891b2"]')).toHaveLength(0)
+
+    fireEvent.click(getByRole('button', { name: 'リレーを表示' }))
+    expect(container.querySelectorAll('svg rect[stroke="#0891b2"]')).toHaveLength(2)
+  })
+
+  it('重なった枠は上の枠を隠すと下の枠をクリックで選択できる', async () => {
+    apiMocks.getProject.mockImplementation(async (id: number) => {
+      const p = project(id)
+      p.symbols[1] = { ...p.symbols[1], cx: 0.32, cy: 0.42 } // SYM-0001 と重なる
+      return p
+    })
+    Object.defineProperties(HTMLElement.prototype, {
+      setPointerCapture: { configurable: true, value: () => {} },
+      releasePointerCapture: { configurable: true, value: () => {} },
+      hasPointerCapture: { configurable: true, value: () => true },
+    })
+    const { findByRole, getByRole } = renderEditor()
+    const canvas = await findByRole('region', { name: '図面アノテーションキャンバス' })
+
+    fireEvent.keyDown(window, { key: 'v' })
+    fireEvent.pointerDown(canvas, { pointerId: 1, button: 0, clientX: 310, clientY: 324 })
+    fireEvent.pointerUp(window, { pointerId: 1 })
+    const symbol2Row = getByRole('button', { name: /^SYM-0002リレー$/ })
+    expect(symbol2Row.getAttribute('aria-expanded')).toBe('true')
+
+    fireEvent.click(getByRole('button', { name: 'SYM-0002を非表示' }))
+    expect(symbol2Row.getAttribute('aria-expanded')).toBe('false')
+
+    fireEvent.pointerDown(canvas, { pointerId: 2, button: 0, clientX: 310, clientY: 324 })
+    fireEvent.pointerUp(window, { pointerId: 2 })
+    const symbol1Row = getByRole('button', { name: /^SYM-0001リレー$/ })
+    expect(symbol1Row.getAttribute('aria-expanded')).toBe('true')
+  })
+
+  it('非表示にしても保存対象のデータは変わらず、「すべて表示」で元に戻る', async () => {
+    const { container, findByRole, getByRole } = renderEditor()
+    const canvas = await findByRole('region', { name: '図面アノテーションキャンバス' })
+
+    fireEvent.click(getByRole('button', { name: 'SYM-0001を非表示' }))
+    expect(container.querySelectorAll('svg rect[stroke="#0891b2"]')).toHaveLength(1)
+
+    fireEvent.keyDown(canvas, { key: 'Enter' })
+    await waitFor(() => expect(apiMocks.saveAnnotations).toHaveBeenCalledTimes(1))
+    expect(apiMocks.saveAnnotations.mock.calls[0][1].symbols).toHaveLength(3)
+
+    fireEvent.click(getByRole('button', { name: 'すべて表示' }))
+    expect(container.querySelectorAll('svg rect[stroke="#0891b2"]')).toHaveLength(3)
+  })
+
+  it('パネルボタンの Enter では新しいシンボルが追加されない', async () => {
+    const { container, findByRole, getByRole } = renderEditor()
+    await findByRole('region', { name: '図面アノテーションキャンバス' })
+
+    // 描画モードのままレイヤー行のボタンにフォーカスして Enter を押した想定
+    fireEvent.keyDown(getByRole('button', { name: 'リレーを非表示' }), { key: 'Enter' })
+    expect(container.querySelectorAll('svg rect[stroke="#0891b2"]')).toHaveLength(2)
+  })
+
+  it('非表示のまま Undo で消えたシンボルの ref を再利用した新規シンボルも表示される', async () => {
+    const { container, findByRole, getByRole } = renderEditor()
+    const canvas = await findByRole('region', { name: '図面アノテーションキャンバス' })
+
+    fireEvent.keyDown(canvas, { key: 'Enter' }) // SYM-0003 作成
+    fireEvent.click(getByRole('button', { name: 'SYM-0003を非表示' }))
+    expect(container.querySelectorAll('svg rect[stroke="#0891b2"]')).toHaveLength(2)
+
+    fireEvent.keyDown(window, { key: 'z', ctrlKey: true }) // 作成を Undo → SYM-0003 消滅
+    fireEvent.keyDown(canvas, { key: 'Enter' }) // 欠番の ref を再利用して再作成
+    fireEvent.keyDown(window, { key: 'Escape' }) // 選択解除（角ハンドルの rect を数えないため）
+    expect(container.querySelectorAll('svg rect[stroke="#0891b2"]')).toHaveLength(3)
+  })
+
+  it('レイヤーパネル上のホイールでは図面がズームしない', async () => {
+    const { container, findByRole, getByRole } = renderEditor()
+    await findByRole('region', { name: '図面アノテーションキャンバス' })
+    const transform = () =>
+      (container.querySelector('.origin-top-left') as HTMLElement | null)?.style.transform ?? ''
+
+    const before = transform()
+    fireEvent.wheel(getByRole('group', { name: 'アノテーションのレイヤー' }), { deltaY: -120 })
+    expect(transform()).toBe(before)
+  })
+
+  it('端子レイヤーはモードに入ると自動で再表示される', async () => {
+    const { container, findByRole, getByRole } = renderEditor()
+    const canvas = await findByRole('region', { name: '図面アノテーションキャンバス' })
+
+    fireEvent.click(getByRole('button', { name: /^SYM-0001リレー$/ }))
+    fireEvent.keyDown(window, { key: 't' })
+    fireEvent.keyDown(canvas, { key: 'Enter' })
+    expect(container.querySelectorAll('svg circle[stroke="#3f9067"]')).toHaveLength(1)
+
+    fireEvent.click(getByRole('button', { name: '端子を非表示' }))
+    expect(container.querySelectorAll('svg circle[stroke="#3f9067"]')).toHaveLength(0)
+
+    fireEvent.keyDown(window, { key: 'v' })
+    fireEvent.keyDown(window, { key: 't' })
+    expect(getByRole('button', { name: '端子を非表示' })).toBeTruthy()
+    expect(container.querySelectorAll('svg circle[stroke="#3f9067"]')).toHaveLength(1)
+  })
+})

@@ -12,6 +12,7 @@ import {
   Download,
   Eye,
   EyeOff,
+  Layers,
   Maximize2,
   MousePointer2,
   PanelRightClose,
@@ -195,6 +196,13 @@ function clamp01(v: number) {
   return v < 0 ? 0 : v > 1 ? 1 : v
 }
 
+/** レイヤー行の表示状態: 全表示 / 全非表示 / 一部非表示 */
+type LayerState = 'on' | 'off' | 'partial'
+function layerStateOf(hidden: number, total: number): LayerState {
+  if (total === 0 || hidden === 0) return 'on'
+  return hidden === total ? 'off' : 'partial'
+}
+
 /** 矩形が画像の外へはみ出さないように中心を寄せる */
 function fitInside(cx: number, cy: number, w: number, h: number) {
   const bw = Math.min(w, 1)
@@ -248,6 +256,14 @@ export default function EditorPage() {
     typeof window === 'undefined' ? true : window.matchMedia('(min-width: 1024px)').matches,
   )
   const [shortcutsVisible, setShortcutsVisible] = useState(false)
+
+  /* レイヤー表示: 非表示シンボルは ref 単位で持ち、クラス/AI検出行は一括操作として扱う */
+  const [hiddenSymbols, setHiddenSymbols] = useState<ReadonlySet<string>>(() => new Set())
+  const [showTerminals, setShowTerminals] = useState(true)
+  const [showConnections, setShowConnections] = useState(true)
+  const [layersOpen, setLayersOpen] = useState(() =>
+    typeof window === 'undefined' ? true : window.matchMedia('(min-width: 1024px)').matches,
+  )
 
   const undoStack = useRef<Snapshot[]>([])
   const redoStack = useRef<Snapshot[]>([])
@@ -442,6 +458,31 @@ export default function EditorPage() {
     () => getProjectNavigation(projectRows, projectId),
     [projectId, projectRows],
   )
+  const visibleSymbols = useMemo(
+    () => symbols.filter((s) => !hiddenSymbols.has(s.ref)),
+    [symbols, hiddenSymbols],
+  )
+
+  /* 作業モードに入ったら対象レイヤーが見える状態に戻す（見えないまま置かせない）。
+     モード内での明示的な非表示はそのままにし、モードへの遷移時だけ再表示する */
+  useEffect(() => {
+    if (mode === 'terminal') setShowTerminals(true)
+    if (mode === 'connect') setShowConnections(true)
+  }, [mode])
+
+  /* Undo/Redo や外部更新で消えたシンボルの非表示フラグは残さない
+     （ref は欠番を再利用するため、残すと新しく描いた枠が見えない・選べない状態になる） */
+  useEffect(() => {
+    setHiddenSymbols((prev) => {
+      if (prev.size === 0) return prev
+      const refs = new Set(symbols.map((s) => s.ref))
+      const next = new Set<string>()
+      prev.forEach((ref) => {
+        if (refs.has(ref)) next.add(ref)
+      })
+      return next.size === prev.size ? prev : next
+    })
+  }, [symbols])
 
   /* ------------------------------------------------------------------ 読み込み */
   useEffect(() => {
@@ -535,6 +576,7 @@ export default function EditorPage() {
         setSelectedRef(null)
         setSelectedConn(null)
         setPending(null)
+        setHiddenSymbols(new Set())
         setSaveStatus(pendingSave ? 'pending' : activeSave ? 'saving' : failedSave ? 'error' : 'saved')
         setMetaSaveStatus(
           pendingMetaSave ? 'pending' : activeMetaSave ? 'saving' : failedMetaSave ? 'error' : 'saved',
@@ -658,6 +700,12 @@ export default function EditorPage() {
     setSymbols((prev) => prev.filter((s) => s.ref !== ref))
     setConnections((prev) => prev.filter((c) => c.from_symbol_ref !== ref && c.to_symbol_ref !== ref))
     setSelectedRef((cur) => (cur === ref ? null : cur))
+    setHiddenSymbols((prev) => {
+      if (!prev.has(ref)) return prev
+      const next = new Set(prev)
+      next.delete(ref)
+      return next
+    })
   }
 
   /* AI 推論結果を編集対象のシンボルとして取り込む（破線表示・人が修正して蓄積）*/
@@ -769,8 +817,8 @@ export default function EditorPage() {
   }
 
   const hitSymbol = (nx: number, ny: number): SymbolBox | null => {
-    for (let i = symbols.length - 1; i >= 0; i--) {
-      const s = symbols[i]
+    for (let i = visibleSymbols.length - 1; i >= 0; i--) {
+      const s = visibleSymbols[i]
       if (
         nx >= s.cx - s.w / 2 &&
         nx <= s.cx + s.w / 2 &&
@@ -783,9 +831,10 @@ export default function EditorPage() {
   }
 
   const hitTerminal = (nx: number, ny: number): { symbol: SymbolBox; terminalRef: string } | null => {
+    if (!showTerminals) return null
     const r = 8 / zoom / Math.max(iw, ih)
-    for (let i = symbols.length - 1; i >= 0; i--) {
-      const s = symbols[i]
+    for (let i = visibleSymbols.length - 1; i >= 0; i--) {
+      const s = visibleSymbols[i]
       for (const t of s.terminals) {
         if (Math.hypot((t.tx - nx) * iw, (t.ty - ny) * ih) <= Math.max(6, r * iw))
           return { symbol: s, terminalRef: t.ref }
@@ -797,8 +846,8 @@ export default function EditorPage() {
   const hitCorner = (nx: number, ny: number): { ref: string; corner: Corner } | null => {
     const rx = 9 / zoom / iw
     const ry = 9 / zoom / ih
-    for (let i = symbols.length - 1; i >= 0; i--) {
-      const s = symbols[i]
+    for (let i = visibleSymbols.length - 1; i >= 0; i--) {
+      const s = visibleSymbols[i]
       const l = s.cx - s.w / 2
       const r = s.cx + s.w / 2
       const t = s.cy - s.h / 2
@@ -814,6 +863,41 @@ export default function EditorPage() {
       }
     }
     return null
+  }
+
+  /* 非表示にしたシンボルは選択・始点保留からも外す（見えない枠を編集状態にしない） */
+  const setSymbolHidden = (ref: string, hidden: boolean) => {
+    setHiddenSymbols((prev) => {
+      const next = new Set(prev)
+      if (hidden) next.add(ref)
+      else next.delete(ref)
+      return next
+    })
+    if (hidden) {
+      setSelectedRef((cur) => (cur === ref ? null : cur))
+      setPending((cur) => (cur?.symbolRef === ref ? null : cur))
+    }
+  }
+
+  const setSymbolGroupHidden = (refs: string[], hidden: boolean) => {
+    const targets = new Set(refs)
+    setHiddenSymbols((prev) => {
+      const next = new Set(prev)
+      if (hidden) refs.forEach((ref) => next.add(ref))
+      else refs.forEach((ref) => next.delete(ref))
+      return next
+    })
+    if (hidden) {
+      setSelectedRef((cur) => (cur && targets.has(cur) ? null : cur))
+      setPending((cur) => (cur && targets.has(cur.symbolRef) ? null : cur))
+    }
+  }
+
+  const resetLayers = () => {
+    setHiddenSymbols(new Set())
+    setSelectedRef(null)
+    setShowTerminals(true)
+    setShowConnections(true)
   }
 
   /* ------------------------------------------------------------------ ポインター（マウス／ペン／タッチ） */
@@ -1236,6 +1320,27 @@ export default function EditorPage() {
     ? 'ブラウザの一時保存領域を利用できません。サーバー保存が完了するまで、この画面から移動できません。'
     : error
 
+  /* レイヤーパネルの行データ（クラスはマスタの並び順＋未登録キーは末尾） */
+  const terminalCount = symbols.reduce((n, s) => n + s.terminals.length, 0)
+  const inferenceRefs = symbols.filter((s) => s.origin === 'inference').map((s) => s.ref)
+  const hiddenInferenceCount = inferenceRefs.filter((ref) => hiddenSymbols.has(ref)).length
+  const classOrder = classes.map((c) => c.key)
+  const classLayerRows = [...new Set(symbols.map((s) => s.class_key))]
+    .sort(
+      (a, b) =>
+        (classOrder.indexOf(a) < 0 ? classOrder.length : classOrder.indexOf(a)) -
+        (classOrder.indexOf(b) < 0 ? classOrder.length : classOrder.indexOf(b)),
+    )
+    .map((key) => {
+      const members = symbols.filter((s) => s.class_key === key)
+      const hidden = members.reduce((n, s) => n + (hiddenSymbols.has(s.ref) ? 1 : 0), 0)
+      return { key, label: labelOf(key), color: colorOf(key), total: members.length, hidden }
+    })
+  const allLayersVisible = hiddenSymbols.size === 0 && showTerminals && showConnections
+  /* バッジは「表示をオフにした要素の数」（隠したシンボル + 端子/配線レイヤー） */
+  const hiddenAnnotationCount =
+    hiddenSymbols.size + (showTerminals ? 0 : 1) + (showConnections ? 0 : 1)
+
   const draftRect =
     drag.kind === 'draw'
       ? {
@@ -1434,6 +1539,31 @@ export default function EditorPage() {
           </select>
         </label>
 
+        <span className="mx-1 h-7 w-px flex-none bg-white/10" />
+        <button
+          type="button"
+          className={`inline-flex min-h-10 items-center gap-2 whitespace-nowrap rounded-xl border px-3 text-xs font-bold transition ${
+            layersOpen
+              ? 'border-cyan-400/40 bg-cyan-400/10 text-cyan-100 hover:bg-cyan-400/20'
+              : 'border-white/10 bg-white/[0.04] text-slate-300 hover:border-white/20 hover:bg-white/[0.08] hover:text-white'
+          }`}
+          onClick={() => setLayersOpen((value) => !value)}
+          aria-expanded={layersOpen}
+          aria-controls="annotation-layers"
+          title="アノテーションの種類ごとに表示を切り替えます"
+        >
+          <Layers size={16} />
+          <span className="hidden md:inline">レイヤー</span>
+          {hiddenAnnotationCount > 0 && (
+            <span
+              className="rounded-full bg-amber-400/20 px-1.5 font-mono text-[10px] text-amber-200"
+              title={`表示をオフにしたアノテーション ${hiddenAnnotationCount} 件`}
+            >
+              {hiddenAnnotationCount}
+            </span>
+          )}
+        </button>
+
         <div className="flex-1" />
         <div className="flex items-center gap-1" role="group" aria-label={`編集履歴 ${histVersion}`}>
           <button
@@ -1555,6 +1685,84 @@ export default function EditorPage() {
               )
             })()}
           </div>
+          {layersOpen && (
+            <div
+              id="annotation-layers"
+              className="absolute right-3 top-14 z-10 flex max-h-[calc(100%-8rem)] w-64 flex-col overflow-hidden rounded-2xl border border-white/70 bg-white/95 text-slate-800 shadow-xl shadow-slate-900/15 backdrop-blur sm:right-4 lg:top-4"
+              onPointerDown={(event) => event.stopPropagation()}
+              onWheel={(event) => event.stopPropagation()}
+              onKeyDown={(event) => event.stopPropagation()}
+            >
+              <div className="flex flex-none items-center justify-between gap-2 border-b border-slate-200 px-3 py-2">
+                <span className="text-[10px] font-bold uppercase tracking-[0.16em] text-slate-500">
+                  Layers
+                </span>
+                <button
+                  type="button"
+                  className="min-h-8 rounded-lg px-2 text-[11px] font-bold text-cyan-700 hover:bg-cyan-50 disabled:text-slate-300"
+                  onClick={resetLayers}
+                  disabled={allLayersVisible}
+                >
+                  すべて表示
+                </button>
+              </div>
+              <div
+                className="thin-scroll flex-1 overflow-auto p-1.5"
+                role="group"
+                aria-label="アノテーションのレイヤー"
+              >
+                <LayerRow
+                  icon={Cable}
+                  color="#7c3aed"
+                  label="配線"
+                  count={connections.length}
+                  state={showConnections ? 'on' : 'off'}
+                  onToggle={() => setShowConnections((value) => !value)}
+                />
+                <LayerRow
+                  icon={CircleDot}
+                  color="#265f44"
+                  label="端子"
+                  count={terminalCount}
+                  state={showTerminals ? 'on' : 'off'}
+                  onToggle={() => setShowTerminals((value) => !value)}
+                />
+                {inferenceRefs.length > 0 && (
+                  <LayerRow
+                    icon={Sparkles}
+                    color="#0891b2"
+                    label="AI 検出"
+                    count={inferenceRefs.length}
+                    state={layerStateOf(hiddenInferenceCount, inferenceRefs.length)}
+                    onToggle={() =>
+                      setSymbolGroupHidden(inferenceRefs, hiddenInferenceCount === 0)
+                    }
+                  />
+                )}
+                {classLayerRows.length > 0 && (
+                  <div className="px-2 pb-1 pt-2 text-[10px] font-bold text-slate-400">
+                    シンボル（種別）
+                  </div>
+                )}
+                {classLayerRows.map((layer) => (
+                  <LayerRow
+                    key={layer.key}
+                    icon={Square}
+                    color={layer.color}
+                    label={layer.label}
+                    count={layer.hidden > 0 ? `${layer.total - layer.hidden}/${layer.total}` : layer.total}
+                    state={layerStateOf(layer.hidden, layer.total)}
+                    onToggle={() =>
+                      setSymbolGroupHidden(
+                        symbols.filter((s) => s.class_key === layer.key).map((s) => s.ref),
+                        layer.hidden === 0,
+                      )
+                    }
+                  />
+                ))}
+              </div>
+            </div>
+          )}
           <div
             className="absolute left-0 top-0 origin-top-left"
             style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})` }}
@@ -1574,7 +1782,7 @@ export default function EditorPage() {
               viewBox={`0 0 ${iw} ${ih}`}
             >
               {/* 配線 */}
-              {connections.map((c, i) => {
+              {showConnections && connections.map((c, i) => {
                 const a = nodePos(c.from_symbol_ref, c.from_terminal_ref)
                 const b = nodePos(c.to_symbol_ref, c.to_terminal_ref)
                 if (!a || !b) return null
@@ -1596,7 +1804,7 @@ export default function EditorPage() {
                 )
               })}
               {/* シンボル */}
-              {symbols.map((s) => {
+              {visibleSymbols.map((s) => {
                 const x = (s.cx - s.w / 2) * iw
                 const y = (s.cy - s.h / 2) * ih
                 const w = s.w * iw
@@ -1649,7 +1857,7 @@ export default function EditorPage() {
                           strokeWidth={1.5 / zoom}
                         />
                       ))}
-                    {s.terminals.map((t) => (
+                    {showTerminals && s.terminals.map((t) => (
                       <g key={t.ref}>
                         <circle
                           cx={t.tx * iw}
@@ -1835,18 +2043,23 @@ export default function EditorPage() {
                   図面上をドラッグしてください
                 </p>
               )}
-              {symbols.map((s) => (
+              {symbols.map((s) => {
+                const symbolHidden = hiddenSymbols.has(s.ref)
+                return (
                 <div
                   key={s.ref}
                   className={`border-b border-slate-100 px-3 py-2.5 ${
                     selectedRef === s.ref ? 'bg-koa-50 shadow-[inset_3px_0_0_#0055a4]' : 'hover:bg-slate-50'
-                  }`}
+                  } ${symbolHidden ? 'opacity-55' : ''}`}
                 >
                   <div className="flex items-center gap-2">
                     <button
                       type="button"
                       className="flex min-h-8 min-w-0 flex-1 items-center gap-2 rounded-lg text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500"
-                      onClick={() => setSelectedRef(s.ref)}
+                      onClick={() => {
+                        if (symbolHidden) setSymbolHidden(s.ref, false)
+                        setSelectedRef(s.ref)
+                      }}
                       aria-expanded={selectedRef === s.ref}
                     >
                       <span className="h-3 w-3 flex-none rounded-sm" style={{ background: colorOf(s.class_key) }} />
@@ -1857,6 +2070,16 @@ export default function EditorPage() {
                         </span>
                       )}
                       <span className="truncate text-[11px] text-slate-500">{labelOf(s.class_key)}</span>
+                    </button>
+                    <button
+                      type="button"
+                      className="icon-button h-8 w-8 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+                      onClick={() => setSymbolHidden(s.ref, !symbolHidden)}
+                      aria-pressed={symbolHidden}
+                      aria-label={symbolHidden ? `${s.ref}を表示` : `${s.ref}を非表示`}
+                      title={symbolHidden ? `${s.ref}を表示` : `${s.ref}を非表示`}
+                    >
+                      {symbolHidden ? <EyeOff size={13} /> : <Eye size={13} />}
                     </button>
                     <button
                       type="button"
@@ -1963,7 +2186,8 @@ export default function EditorPage() {
                     </div>
                   )}
                 </div>
-              ))}
+                )
+              })}
             </div>
           )}
 
@@ -2159,6 +2383,45 @@ function MetaPanel({
         <br />
         sha256: <span className="font-mono">{project.images[0]?.sha256.slice(0, 16) ?? '—'}…</span>
       </div>
+    </div>
+  )
+}
+
+/* ==================================================================== レイヤー行 */
+function LayerRow({
+  icon: Icon,
+  color,
+  label,
+  count,
+  state,
+  onToggle,
+}: {
+  icon: typeof Square
+  color: string
+  label: string
+  count: React.ReactNode
+  state: LayerState
+  onToggle: () => void
+}) {
+  const title =
+    state === 'on' ? `${label}を非表示` : state === 'partial' ? `${label}をすべて表示` : `${label}を表示`
+  return (
+    <div className="flex items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-slate-100">
+      <Icon size={14} style={{ color }} className="flex-none" />
+      <span className="min-w-0 flex-1 truncate text-xs font-semibold text-slate-700">{label}</span>
+      <span className="font-mono text-[10px] text-slate-400">{count}</span>
+      <button
+        type="button"
+        className={`icon-button h-7 w-7 hover:bg-slate-200 ${
+          state === 'on' ? 'text-slate-600' : state === 'partial' ? 'text-amber-500' : 'text-slate-300'
+        }`}
+        onClick={onToggle}
+        aria-pressed={state !== 'on'}
+        aria-label={title}
+        title={title}
+      >
+        {state === 'on' ? <Eye size={15} /> : <EyeOff size={15} />}
+      </button>
     </div>
   )
 }
