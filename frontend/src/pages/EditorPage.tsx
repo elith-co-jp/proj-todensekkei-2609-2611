@@ -470,6 +470,20 @@ export default function EditorPage() {
     if (mode === 'connect') setShowConnections(true)
   }, [mode])
 
+  /* Undo/Redo や外部更新で消えたシンボルの非表示フラグは残さない
+     （ref は欠番を再利用するため、残すと新しく描いた枠が見えない・選べない状態になる） */
+  useEffect(() => {
+    setHiddenSymbols((prev) => {
+      if (prev.size === 0) return prev
+      const refs = new Set(symbols.map((s) => s.ref))
+      const next = new Set<string>()
+      prev.forEach((ref) => {
+        if (refs.has(ref)) next.add(ref)
+      })
+      return next.size === prev.size ? prev : next
+    })
+  }, [symbols])
+
   /* ------------------------------------------------------------------ 読み込み */
   useEffect(() => {
     let alive = true
@@ -1672,6 +1686,8 @@ export default function EditorPage() {
               id="annotation-layers"
               className="absolute right-3 top-14 z-10 flex max-h-[calc(100%-8rem)] w-64 flex-col overflow-hidden rounded-2xl border border-white/70 bg-white/95 text-slate-800 shadow-xl shadow-slate-900/15 backdrop-blur sm:right-4 lg:top-4"
               onPointerDown={(event) => event.stopPropagation()}
+              onWheel={(event) => event.stopPropagation()}
+              onKeyDown={(event) => event.stopPropagation()}
             >
               <div className="flex flex-none items-center justify-between gap-2 border-b border-slate-200 px-3 py-2">
                 <span className="text-[10px] font-bold uppercase tracking-[0.16em] text-slate-500">

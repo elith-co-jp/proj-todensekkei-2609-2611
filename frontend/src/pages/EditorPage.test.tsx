@@ -570,6 +570,40 @@ describe('EditorPage レイヤー表示', () => {
     expect(container.querySelectorAll('svg rect[stroke="#0891b2"]')).toHaveLength(3)
   })
 
+  it('パネルボタンの Enter では新しいシンボルが追加されない', async () => {
+    const { container, findByRole, getByRole } = renderEditor()
+    await findByRole('region', { name: '図面アノテーションキャンバス' })
+
+    // 描画モードのままレイヤー行のボタンにフォーカスして Enter を押した想定
+    fireEvent.keyDown(getByRole('button', { name: 'リレーを非表示' }), { key: 'Enter' })
+    expect(container.querySelectorAll('svg rect[stroke="#0891b2"]')).toHaveLength(2)
+  })
+
+  it('非表示のまま Undo で消えたシンボルの ref を再利用した新規シンボルも表示される', async () => {
+    const { container, findByRole, getByRole } = renderEditor()
+    const canvas = await findByRole('region', { name: '図面アノテーションキャンバス' })
+
+    fireEvent.keyDown(canvas, { key: 'Enter' }) // SYM-0003 作成
+    fireEvent.click(getByRole('button', { name: 'SYM-0003を非表示' }))
+    expect(container.querySelectorAll('svg rect[stroke="#0891b2"]')).toHaveLength(2)
+
+    fireEvent.keyDown(window, { key: 'z', ctrlKey: true }) // 作成を Undo → SYM-0003 消滅
+    fireEvent.keyDown(canvas, { key: 'Enter' }) // 欠番の ref を再利用して再作成
+    fireEvent.keyDown(window, { key: 'Escape' }) // 選択解除（角ハンドルの rect を数えないため）
+    expect(container.querySelectorAll('svg rect[stroke="#0891b2"]')).toHaveLength(3)
+  })
+
+  it('レイヤーパネル上のホイールでは図面がズームしない', async () => {
+    const { container, findByRole, getByRole } = renderEditor()
+    await findByRole('region', { name: '図面アノテーションキャンバス' })
+    const transform = () =>
+      (container.querySelector('.origin-top-left') as HTMLElement | null)?.style.transform ?? ''
+
+    const before = transform()
+    fireEvent.wheel(getByRole('group', { name: 'アノテーションのレイヤー' }), { deltaY: -120 })
+    expect(transform()).toBe(before)
+  })
+
   it('端子レイヤーはモードに入ると自動で再表示される', async () => {
     const { container, findByRole, getByRole } = renderEditor()
     const canvas = await findByRole('region', { name: '図面アノテーションキャンバス' })
