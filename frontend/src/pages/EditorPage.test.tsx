@@ -597,7 +597,8 @@ describe('EditorPage レイヤー表示', () => {
     await findByRole('region', { name: '図面アノテーションキャンバス' })
 
     fireEvent.click(getByRole('button', { name: /^SYM-0001リレー$/ })) // SYM-0001 を選択
-    const x = () => container.querySelector('svg rect[stroke="#0891b2"]').getAttribute('x')
+    const x = () =>
+      container.querySelector('svg rect[stroke="#0891b2"]')?.getAttribute('x') ?? null
     const before = x()
 
     fireEvent.keyDown(getByRole('button', { name: 'リレーを非表示' }), { key: 'ArrowRight' })
