@@ -1691,7 +1691,18 @@ export default function EditorPage() {
               className="absolute right-3 top-14 z-10 flex max-h-[calc(100%-8rem)] w-64 flex-col overflow-hidden rounded-2xl border border-white/70 bg-white/95 text-slate-800 shadow-xl shadow-slate-900/15 backdrop-blur sm:right-4 lg:top-4"
               onPointerDown={(event) => event.stopPropagation()}
               onWheel={(event) => event.stopPropagation()}
-              onKeyDown={(event) => event.stopPropagation()}
+              onKeyDown={(event) => {
+                // キャンバスの編集処理（矩形/端子/配線の確定・選択枠の移動/削除）へ
+                // 流すとパネル操作中に図面が変わるため、それらのキーは止める。
+                // それ以外のキー（Undo・保存・モード切替等）は編集ショートカットとして
+                // 通し、パネルにフォーカスがあっても使えるようにする
+                const blocked =
+                  event.key === 'Enter' ||
+                  event.key === 'Delete' ||
+                  event.key === 'Backspace' ||
+                  event.key.startsWith('Arrow')
+                if (blocked) event.stopPropagation()
+              }}
             >
               <div className="flex flex-none items-center justify-between gap-2 border-b border-slate-200 px-3 py-2">
                 <span className="text-[10px] font-bold uppercase tracking-[0.16em] text-slate-500">
