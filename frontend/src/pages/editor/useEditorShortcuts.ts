@@ -108,7 +108,7 @@ export function useEditorShortcuts(opts: {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  })
+  }, [cancelActivePointer, classes, redo, saveNow, selectedConn, selectedRef, undo])
 
   const onCanvasKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
     if (event.key === 'Enter' && mode === 'box') {
