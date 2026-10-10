@@ -1692,10 +1692,16 @@ export default function EditorPage() {
               onPointerDown={(event) => event.stopPropagation()}
               onWheel={(event) => event.stopPropagation()}
               onKeyDown={(event) => {
-                // Enter はボタン起動とキャンバスの編集処理（矩形/端子/配線の確定）で
-                // 二重発火するため止める。それ以外のキー（Undo・保存・モード切替等）は
-                // 編集ショートカットとして通し、パネルにフォーカスがあっても使えるようにする
-                if (event.key === 'Enter') event.stopPropagation()
+                // キャンバスの編集処理（矩形/端子/配線の確定・選択枠の移動/削除）へ
+                // 流すとパネル操作中に図面が変わるため、それらのキーは止める。
+                // それ以外のキー（Undo・保存・モード切替等）は編集ショートカットとして
+                // 通し、パネルにフォーカスがあっても使えるようにする
+                const blocked =
+                  event.key === 'Enter' ||
+                  event.key === 'Delete' ||
+                  event.key === 'Backspace' ||
+                  event.key.startsWith('Arrow')
+                if (blocked) event.stopPropagation()
               }}
             >
               <div className="flex flex-none items-center justify-between gap-2 border-b border-slate-200 px-3 py-2">

@@ -592,6 +592,18 @@ describe('EditorPage レイヤー表示', () => {
     expect(container.querySelectorAll('svg rect[stroke="#0891b2"]')).toHaveLength(2)
   })
 
+  it('パネル上の矢印キーで選択中のシンボルが動かない', async () => {
+    const { container, findByRole, getByRole } = renderEditor()
+    await findByRole('region', { name: '図面アノテーションキャンバス' })
+
+    fireEvent.click(getByRole('button', { name: /^SYM-0001リレー$/ })) // SYM-0001 を選択
+    const x = () => container.querySelector('svg rect[stroke="#0891b2"]').getAttribute('x')
+    const before = x()
+
+    fireEvent.keyDown(getByRole('button', { name: 'リレーを非表示' }), { key: 'ArrowRight' })
+    expect(x()).toBe(before)
+  })
+
   it('非表示のまま Undo で消えたシンボルの ref を再利用した新規シンボルも表示される', async () => {
     const { container, findByRole, getByRole } = renderEditor()
     const canvas = await findByRole('region', { name: '図面アノテーションキャンバス' })
