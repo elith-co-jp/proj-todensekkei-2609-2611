@@ -81,6 +81,7 @@ export default function EditorPage() {
   const [metaSaveStatus, setMetaSaveStatus] = useState<SaveStatus>('saved')
   const [exporting, setExporting] = useState(false)
   const [aiApplying, setAiApplying] = useState(false)
+  const [shortcutsVisible, setShortcutsVisible] = useState(false)
   const [inspectorOpen, setInspectorOpen] = useState(() =>
     typeof window === 'undefined' ? true : window.matchMedia('(min-width: 1024px)').matches,
   )
@@ -1211,6 +1212,8 @@ export default function EditorPage() {
             zoom={zoom}
             zoomAt={zoomAt}
             fit={fit}
+            shortcutsVisible={shortcutsVisible}
+            onToggleShortcuts={() => setShortcutsVisible((value) => !value)}
           />
           {layersOpen && (
             <LayerPanel

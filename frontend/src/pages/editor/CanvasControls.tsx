@@ -1,4 +1,3 @@
-import { useState } from 'react'
 import { Eye, EyeOff, Maximize2, PanelRightOpen, ZoomIn, ZoomOut } from 'lucide-react'
 
 import { MODES } from './model'
@@ -23,6 +22,8 @@ export function CanvasControls({
   zoom,
   zoomAt,
   fit,
+  shortcutsVisible,
+  onToggleShortcuts,
 }: {
   mode: Mode
   inspectorOpen: boolean
@@ -30,8 +31,9 @@ export function CanvasControls({
   zoom: number
   zoomAt: (factor: number, cx: number, cy: number) => void
   fit: (preferReadableScale?: boolean) => void
+  shortcutsVisible: boolean
+  onToggleShortcuts: () => void
 }) {
-  const [shortcutsVisible, setShortcutsVisible] = useState(false)
   return (
     <>
       {!inspectorOpen && (
@@ -96,7 +98,7 @@ export function CanvasControls({
         <button
           type="button"
           className="flex min-h-10 items-center gap-2 rounded-xl border border-slate-300 bg-white px-3 text-xs font-black text-slate-950 shadow-lg shadow-slate-900/15 backdrop-blur hover:bg-slate-50"
-          onClick={() => setShortcutsVisible((value) => !value)}
+          onClick={onToggleShortcuts}
           aria-expanded={shortcutsVisible}
         >
           {shortcutsVisible ? <EyeOff size={15} /> : <Eye size={15} />}
