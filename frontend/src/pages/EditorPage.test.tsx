@@ -579,6 +579,19 @@ describe('EditorPage レイヤー表示', () => {
     expect(container.querySelectorAll('svg rect[stroke="#0891b2"]')).toHaveLength(2)
   })
 
+  it('パネルにフォーカスがあっても Ctrl+Z などの編集ショートカットが使える', async () => {
+    const { container, findByRole, getByRole } = renderEditor()
+    const canvas = await findByRole('region', { name: '図面アノテーションキャンバス' })
+
+    fireEvent.keyDown(canvas, { key: 'Enter' }) // SYM-0003 作成
+    fireEvent.keyDown(window, { key: 'Escape' })
+    expect(container.querySelectorAll('svg rect[stroke="#0891b2"]')).toHaveLength(3)
+
+    // レイヤー行のボタン上で Ctrl+Z → 作成が Undo される
+    fireEvent.keyDown(getByRole('button', { name: 'リレーを非表示' }), { key: 'z', ctrlKey: true })
+    expect(container.querySelectorAll('svg rect[stroke="#0891b2"]')).toHaveLength(2)
+  })
+
   it('非表示のまま Undo で消えたシンボルの ref を再利用した新規シンボルも表示される', async () => {
     const { container, findByRole, getByRole } = renderEditor()
     const canvas = await findByRole('region', { name: '図面アノテーションキャンバス' })
