@@ -1337,7 +1337,8 @@ export default function EditorPage() {
       return { key, label: labelOf(key), color: colorOf(key), total: members.length, hidden }
     })
   const allLayersVisible = hiddenSymbols.size === 0 && showTerminals && showConnections
-  const hiddenLayerCount =
+  /* バッジは「表示をオフにした要素の数」（隠したシンボル + 端子/配線レイヤー） */
+  const hiddenAnnotationCount =
     hiddenSymbols.size + (showTerminals ? 0 : 1) + (showConnections ? 0 : 1)
 
   const draftRect =
@@ -1553,9 +1554,12 @@ export default function EditorPage() {
         >
           <Layers size={16} />
           <span className="hidden md:inline">レイヤー</span>
-          {hiddenLayerCount > 0 && (
-            <span className="rounded-full bg-amber-400/20 px-1.5 font-mono text-[10px] text-amber-200">
-              {hiddenLayerCount}
+          {hiddenAnnotationCount > 0 && (
+            <span
+              className="rounded-full bg-amber-400/20 px-1.5 font-mono text-[10px] text-amber-200"
+              title={`表示をオフにしたアノテーション ${hiddenAnnotationCount} 件`}
+            >
+              {hiddenAnnotationCount}
             </span>
           )}
         </button>
