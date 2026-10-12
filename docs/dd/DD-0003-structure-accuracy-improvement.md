@@ -35,7 +35,7 @@
 1. **シンボル内部導通ブリッジ**: `symbol_terminal_bridge_classes` に `contact_a, contact_b, solenoid, relay_coil, lamp, push_button, diode, junction` を指定。2端子素子の P1-P2 を同一ノードに併合する（ラダー図の直列素子）。connector/terminal はピンごと別ノードのため除く。なお junction 以外で推定端子が3個以上のシンボルはブリッジ対象外（4端子接点の別回路誤併合を防止）。
 2. **全クラスのポート推定**: `DEFAULT_INFERRED_TERMINAL_CLASSES` を全12クラスへ拡張。bbox辺上の実インク接触点をポートとして使うため、端子アノテーション無しでも connector/other 等が接続できる。
 3. **接線フォールバック**: `TOUCHING_WIRE_FALLBACK_CLASSES = {connector, junction, power_bus, terminal}`。端子リンクが無いとき bbox に接するワイヤへ接続する。
-4. **ジャンクション導通**: `junction_node_policy` を `all` に。ただし交差判定は線分ボックス幾何のため、ソース画像のインク有無（交点±6px）で導通を検証し、近接するだけの別配線の誤併合を防ぐ。ソース画像未指定時は従来どおり全導通。
+4. **ジャンクション導通**: `junction_node_policy` を `all` に。ただし交差判定は線分ボックス幾何のため、ソース画像のインクで導通を検証する（交点中心±2pxにインク＋4方向5px腕のうち3方向以上にインクがある場合のみ導通）。T字/十字交差は保持しつつ、近接するだけの別配線や隙間のある交差の誤併合を防ぐ。ソース画像未指定時は従来どおり全導通。
 5. **破線保持**: `filter_wire_decorations` で 400px 未満の破線セグメントを保持（`DASHED_RULE_MIN_LENGTH`）。短い破線はシーケンス図の機械的/電気的連結であり、正解データでも接続として数えられていた。長い罫線・罫は従来どおり除去。
 6. **ギャップブリッジ緩和**: `DIRECT_*` 閾値を TERMINAL_GAP 160 / WIRE_GAP 80 / TERM-TERM 140 / NODE_ANCHOR 24 に拡大（alignment・文字・シンボル重なりチェックは維持）。
 

@@ -1279,17 +1279,28 @@ def build_net_candidates(
         if source_image is not None:
             junction_mask = make_binary_mask(source_image)
             mask_h, mask_w = junction_mask.shape[:2]
-            radius = 6
+
+            def _ink_at(px: int, py: int, r: int = 2) -> bool:
+                window = junction_mask[
+                    max(0, py - r):min(mask_h, py + r + 1),
+                    max(0, px - r):min(mask_w, px + r + 1),
+                ]
+                return bool((window > 0).any())
+
             for node in nodes:
                 if str(node.get("type") or "") != "junction":
                     continue
                 x = int(round(float(node["x"])))
                 y = int(round(float(node["y"])))
-                window = junction_mask[
-                    max(0, y - radius):min(mask_h, y + radius + 1),
-                    max(0, x - radius):min(mask_w, x + radius + 1),
-                ]
-                if int((window > 0).sum()) > 0:
+                if not _ink_at(x, y):
+                    continue
+                arm_distance = 5
+                arms = sum(
+                    1
+                    for dx, dy in ((arm_distance, 0), (-arm_distance, 0), (0, arm_distance), (0, -arm_distance))
+                    if _ink_at(x + dx, y + dy)
+                )
+                if arms >= 3:
                     conductive_junction_node_ids.add(str(node["id"]))
         else:
             conductive_junction_node_ids = {
