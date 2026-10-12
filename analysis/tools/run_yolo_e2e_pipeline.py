@@ -35,10 +35,7 @@ from analysis.wiring.ocr import load_symbol_ocr_reader  # noqa: E402
 from analysis.wiring.ports import DEFAULT_INFERRED_TERMINAL_CLASSES, port_inference_config  # noqa: E402
 
 
-DEFAULT_MODEL_PATH = Path(
-    "private/training/yolo/adachi25_train_official5_all_annotated_raw_v1/runs/"
-    "from_scratch_all_symbols_raw_v1/weights/best.pt"
-)
+DEFAULT_MODEL_PATH = Path(__file__).resolve().parents[2] / "assets" / "models" / "yolo11s_symbols_best.pt"
 DEFAULT_OUT_DIR = Path("private/results/e2e")
 DEFAULT_WIRE_ANALYSIS_DPI = 150
 FONT_SM = load_font(15)
@@ -1168,7 +1165,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--pages", nargs="+", default=["1-5"])
     parser.add_argument("--analysis-root", type=Path, default=DEFAULT_ANALYSIS_ROOT)
     parser.add_argument("--out-dir", type=Path, default=DEFAULT_OUT_DIR)
-    parser.add_argument("--model", type=Path, default=DEFAULT_MODEL_PATH)
+    parser.add_argument(
+        "--model", type=Path, default=DEFAULT_MODEL_PATH,
+        help="YOLO weights (default: the repository's assets/models/yolo11s_symbols_best.pt)",
+    )
     parser.add_argument("--annotation-zip", type=Path, default=None)
     parser.add_argument("--page-sheet-map", nargs="*", default=[])
     parser.add_argument(
