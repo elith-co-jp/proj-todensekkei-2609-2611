@@ -11,7 +11,7 @@ from typing import Any
 
 from PIL import Image, ImageDraw
 
-from analyze_pdf_structure import WIRE_GEOMETRY_REVISION, analyze_page
+from analyze_pdf_structure import WIRE_GEOMETRY_REVISION, analyze_page, make_binary_mask
 from analyze_annotation_graph import load_zip_payload, symbol_bbox
 from build_from_to_review_outputs import build_predicted_graph_pairs
 from build_e2e_demo_outputs import (
@@ -1227,6 +1227,7 @@ def enrich_symbols_and_graph(
             junction_node_policy=junction_node_policy,
             junction_node_classes=junction_node_classes,
             junction_node_threshold=junction_node_threshold,
+            source_image=source_image,
         ),
     }
 
@@ -1241,6 +1242,7 @@ def build_net_candidates(
     junction_node_policy: str,
     junction_node_classes: set[str],
     junction_node_threshold: float,
+    source_image: Image.Image | None = None,
 ) -> list[dict[str, Any]]:
     parent: dict[str, str] = {}
     nodes_by_id = {str(node["id"]): node for node in nodes}
@@ -1273,11 +1275,33 @@ def build_net_candidates(
                 if point_distance(point, center) <= junction_node_threshold:
                     conductive_junction_node_ids.add(str(node["id"]))
                     break
+    elif junction_node_policy == "all":
+        if source_image is not None:
+            junction_mask = make_binary_mask(source_image)
+            mask_h, mask_w = junction_mask.shape[:2]
+            radius = 6
+            for node in nodes:
+                if str(node.get("type") or "") != "junction":
+                    continue
+                x = int(round(float(node["x"])))
+                y = int(round(float(node["y"])))
+                window = junction_mask[
+                    max(0, y - radius):min(mask_h, y + radius + 1),
+                    max(0, x - radius):min(mask_w, x + radius + 1),
+                ]
+                if int((window > 0).sum()) > 0:
+                    conductive_junction_node_ids.add(str(node["id"]))
+        else:
+            conductive_junction_node_ids = {
+                str(node["id"])
+                for node in nodes
+                if str(node.get("type") or "") == "junction"
+            }
 
     def graph_node_id(node_id: str, wire_id: str | None) -> str:
         node = nodes_by_id.get(str(node_id), {})
         if (
-            junction_node_policy == "explicit"
+            junction_node_policy in ("explicit", "all")
             and str(node.get("type") or "") == "junction"
             and str(node_id) not in conductive_junction_node_ids
         ):
@@ -1331,6 +1355,8 @@ def build_net_candidates(
     for symbol in symbols:
         class_name = str(symbol.get("class_name") or symbol.get("type") or "")
         if class_name not in symbol_terminal_bridge_classes:
+            continue
+        if class_name != "junction" and len(symbol.get("terminals") or []) > 2:
             continue
         linked_roots: set[str] = set()
         for link in symbol.get("terminal_links", []):
