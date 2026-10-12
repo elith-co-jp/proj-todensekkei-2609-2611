@@ -99,7 +99,11 @@ def analyze_detections(
         payload, symbols, terminal_wire_threshold=10.0, terminal_node_threshold=28.0,
         terminal_source="inferred", inferred_terminal_classes=DEFAULT_INFERRED_TERMINAL_CLASSES,
         inferred_terminal_config=port_inference_config("template_confident_relaxed_span_ink02"),
-        symbol_terminal_bridge_classes=set(), junction_node_policy="explicit",
+        symbol_terminal_bridge_classes={
+            "contact_a", "contact_b", "solenoid", "relay_coil",
+            "lamp", "push_button", "diode", "junction",
+        },
+        junction_node_policy="all",
         junction_node_classes={"junction"}, junction_node_threshold=24.0, source_image=image,
     )
     payload["from_to"] = build_direct_from_to(payload)

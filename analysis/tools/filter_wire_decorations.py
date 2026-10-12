@@ -63,6 +63,11 @@ def _regular_dashes(support: np.ndarray, scale: float) -> bool:
     )
 
 
+# Dashed segments shorter than this are kept: on sequence diagrams short dashed
+# lines are real mechanical/electrical links, not sheet rules.
+DASHED_RULE_MIN_LENGTH = 400
+
+
 def _is_dashed(binary: np.ndarray, line: LineSegment, scale: float) -> bool:
     start, end = line_span(line)
     box = line.box
@@ -259,9 +264,12 @@ def filter_wire_decorations(
     excluded_segments = []
     for wire in payload.get("wires", []):
         line = LineSegment(wire["orientation"], Box(**wire["bbox"]))
-        if _is_dashed(binary, line, scale):
+        span_start, span_end = line_span(line)
+        # Long regular dashes are sheet guides/rules; short dashed segments are
+        # mechanical/electrical links between symbols and must stay conductive.
+        if _is_dashed(binary, line, scale) and (span_end - span_start) >= DASHED_RULE_MIN_LENGTH:
             removed.append({"wire_id": wire["id"], "reason": "regular_dashed_line"})
-            start, end = line_span(line)
+            start, end = span_start, span_end
             excluded_segments.append(
                 {"orientation": line.orientation, "axis": wire["axis"], "start": start, "end": end}
             )

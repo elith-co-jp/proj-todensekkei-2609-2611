@@ -52,17 +52,31 @@ DEFAULT_WIRE_ANALYSIS_DPI = 150
 DEFAULT_WIRE_TEXT_MASK = "components"
 FONT_SM = load_font(15)
 FONT_MD = load_font(18)
-DEFAULT_INFERRED_TERMINAL_CLASSES = {"contact_a", "contact_b", "solenoid", "relay_coil"}
-DIRECT_INTERNAL_BRIDGE_CLASSES = {"contact_a", "contact_b", "solenoid"}
+# Ports are inferred from ink touching each box edge, so any class can take part
+# in connectivity when a wire visibly meets its outline.
+DEFAULT_INFERRED_TERMINAL_CLASSES = {
+    "contact_a", "contact_b", "solenoid", "relay_coil",
+    "lamp", "push_button", "diode", "other", "terminal", "power_bus",
+    "connector", "junction",
+}
+DIRECT_INTERNAL_BRIDGE_CLASSES = {
+    "contact_a", "contact_b", "solenoid", "relay_coil", "lamp", "push_button", "diode",
+}
 DIRECT_NODE_ANCHOR_CLASSES = {"connector", "junction", "power_bus", "terminal"}
-DIRECT_TERMINAL_GAP_BRIDGE_CLASSES = {"connector", "contact_a", "contact_b", "junction", "solenoid"}
+DIRECT_TERMINAL_GAP_BRIDGE_CLASSES = {
+    "connector", "contact_a", "contact_b", "junction", "solenoid",
+    "relay_coil", "lamp", "push_button", "diode", "power_bus",
+}
 DIRECT_TERMINAL_TERMINAL_BRIDGE_CLASSES = {"junction"}
-DIRECT_NODE_ANCHOR_THRESHOLD = 16.0
-DIRECT_TERMINAL_GAP_BRIDGE_MAX = 110.0
-DIRECT_WIRE_GAP_BRIDGE_MAX = 50.0
+DIRECT_NODE_ANCHOR_THRESHOLD = 24.0
+DIRECT_TERMINAL_GAP_BRIDGE_MAX = 160.0
+DIRECT_WIRE_GAP_BRIDGE_MAX = 80.0
 DIRECT_GAP_BRIDGE_ALIGN_THRESHOLD = 18.0
 DIRECT_WIRE_GAP_TERMINAL_ANCHOR_THRESHOLD = 18.0
-DIRECT_TERMINAL_TERMINAL_BRIDGE_MAX = 90.0
+DIRECT_TERMINAL_TERMINAL_BRIDGE_MAX = 140.0
+# Classes whose electrical port is wherever a wire meets the box; when such a
+# symbol has no terminal link, attach it to every wire touching its bbox.
+TOUCHING_WIRE_FALLBACK_CLASSES = {"connector", "junction", "power_bus", "terminal"}
 
 
 def parse_pages(values: list[str]) -> list[int]:
@@ -1368,6 +1382,23 @@ def build_net_candidates(
                         "terminal_name": None,
                         "node_id": node_id,
                         "reason": "nearby_node_fallback",
+                    }
+                )
+                linked = True
+        if linked:
+            continue
+        if str(symbol.get("class_name") or symbol.get("type") or "") not in TOUCHING_WIRE_FALLBACK_CLASSES:
+            continue
+        for wire_id in symbol.get("touching_wire_ids", []):
+            for root in root_by_wire.get(str(wire_id), set()):
+                symbol_by_root[root].add(symbol["id"])
+                terminal_by_root[root].append(
+                    {
+                        "symbol_id": symbol["id"],
+                        "terminal_ref": None,
+                        "terminal_name": None,
+                        "wire_id": wire_id,
+                        "reason": "touching_wire_fallback",
                     }
                 )
 
