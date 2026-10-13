@@ -19,6 +19,7 @@
 ## 3. スコープ
 
 - 対象: 学習済み重み `analysis/weights/yolo11n_all_symbols_best.pt` および `assets/models/yolo11n_all_symbols_best.pt` の差し替え（両方）。学習手順の文書化。
+- 付随修正: `services/model_service.py` の `ensure_bundled_model` — 従来はモデル登録済みだと早期returnし、exe差替後も旧モデルで推論し続けた（同梱モデル更新が既存環境に反映されない）。sha256 変化を検知して新バージョンを登録し、使用中が bundled 由来/未設定のときのみ使用中へ切替（ユーザーが選んだモデルは維持）。開発環境は従来どおり UI でのモデル登録・active化が必要。
 - スコープ外: パイプラインコード、エディタUI、フロントエンド。旧JIS実図面での公式評価（実アノテーションデータが無いため）。
 
 ## 4. 変更案の概要
