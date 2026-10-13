@@ -42,19 +42,24 @@ def next_version(db: Session) -> int:
 
 
 def ensure_bundled_model(db: Session) -> MlModel | None:
-    """凍結 exe に同梱した初期推論モデルを初回起動時に登録する。
+    """凍結 exe に同梱した推論モデルを起動時に登録する。
 
-    モデル未登録のときだけ `MlModel(source='bundled', is_active=True)` を作る。
-    開発環境や既にモデルがある DB では何もしない。
+    - 同じ sha256 のモデルが既に登録済みなら何もしない（二重登録防止）。
+    - 同梱モデルが更新されている（新しい sha256）場合は新バージョンとして登録する。
+      旧バージョンが使用中のまま新モデルが無視されることを防ぐ。
+    - 使用中モデルが bundled 由来か未設定のときだけ新モデルを使用中にする。
+      ユーザーがアップロード/採用したモデルを使用中にしている場合はその選択を維持する。
     """
     if not is_frozen():
         return None
     bundled = resource_base() / "models" / BUNDLED_MODEL_NAME
     if not bundled.is_file():
         return None
-    if db.query(MlModel).count():
-        return None
     digest, size = store_model_bytes(bundled.read_bytes(), bundled.name)
+    if db.query(MlModel).filter(MlModel.sha256 == digest).first():
+        return None
+    active = active_model(db)
+    should_activate = active is None or active.source == "bundled"
     model = MlModel(
         name=bundled.stem,
         version=next_version(db),
@@ -62,10 +67,13 @@ def ensure_bundled_model(db: Session) -> MlModel | None:
         sha256=digest,
         size_bytes=size,
         source="bundled",
-        is_active=True,
-        note="exe に同梱の初期モデル",
+        is_active=should_activate,
+        note="exe に同梱のモデル",
     )
     db.add(model)
+    db.flush()
+    if should_activate:
+        activate(db, model)
     db.commit()
     return model
 

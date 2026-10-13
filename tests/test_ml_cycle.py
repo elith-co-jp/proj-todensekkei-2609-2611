@@ -13,7 +13,7 @@ import zipfile
 import pytest
 
 import database
-from models import TrainingRun
+from models import MlModel, TrainingRun
 from tests.conftest import SAMPLE_ANNOTATION, create_project
 
 
@@ -298,6 +298,61 @@ def test_frozen_bundled_model_auto_registered(client, tmp_path, monkeypatch):
     assert models[0]["file_name"] == "yolo11n_all_symbols_best.pt"
     status = client.get("/api/ml/status").json()
     assert status["active_model"]["name"] == "yolo11n_all_symbols_best"
+
+
+def test_frozen_bundled_model_upgrade_registers_new_version(client, tmp_path, monkeypatch):
+    """同梱モデルが新しい sha256 に変わったら新バージョンを登録して使用中にする。"""
+    from services import model_service
+
+    bundled = tmp_path / "models" / model_service.BUNDLED_MODEL_NAME
+    bundled.parent.mkdir()
+    bundled.write_bytes(b"PK\x03\x04-old-bundled")
+    monkeypatch.setattr(model_service, "resource_base", lambda: tmp_path)
+    monkeypatch.setattr(model_service, "is_frozen", lambda: True)
+
+    db = database.SessionLocal()
+    try:
+        first = model_service.ensure_bundled_model(db)
+        assert first is not None and first.is_active
+
+        bundled.write_bytes(b"PK\x03\x04-new-bundled")
+        upgraded = model_service.ensure_bundled_model(db)
+        assert upgraded is not None
+        assert upgraded.version == first.version + 1
+        assert upgraded.is_active
+        assert model_service.active_model(db).id == upgraded.id
+    finally:
+        db.close()
+
+
+def test_frozen_bundled_model_upgrade_keeps_user_active(client, tmp_path, monkeypatch):
+    """ユーザーが使用中にしたモデルは、同梱モデル更新で奪わない。"""
+    from services import model_service
+
+    bundled = tmp_path / "models" / model_service.BUNDLED_MODEL_NAME
+    bundled.parent.mkdir()
+    bundled.write_bytes(b"PK\x03\x04-old-bundled")
+    monkeypatch.setattr(model_service, "resource_base", lambda: tmp_path)
+    monkeypatch.setattr(model_service, "is_frozen", lambda: True)
+
+    db = database.SessionLocal()
+    try:
+        model_service.ensure_bundled_model(db)
+        user_model = MlModel(
+            name="user_model", version=model_service.next_version(db),
+            file_name="u.pt", sha256="u-sha", size_bytes=1,
+            source="upload", is_active=False,
+        )
+        db.add(user_model)
+        model_service.activate(db, user_model)
+        db.commit()
+
+        bundled.write_bytes(b"PK\x03\x04-newer-bundled")
+        upgraded = model_service.ensure_bundled_model(db)
+        assert upgraded is not None and not upgraded.is_active
+        assert model_service.active_model(db).id == user_model.id
+    finally:
+        db.close()
 
 
 def test_project_predictions_404(client):
