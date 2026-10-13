@@ -468,12 +468,62 @@ def make_predicted_terminals(
     return records, pred_member_info
 
 
+def _wire_ends_at_node(wires: list[dict[str, Any]], node_x: float, node_y: float, tol: float = 8.0) -> bool:
+    """True when some wire's span terminates at the node (tee join), rather
+    than all incident wires passing straight through it (bare crossing)."""
+    for wire in wires:
+        box = wire.get("box") or {}
+        if wire.get("orientation") == "h":
+            if not (float(box.get("y0", -1)) - tol <= node_y <= float(box.get("y1", -1)) + tol):
+                continue
+            if not (float(box.get("x0", -1)) - tol <= node_x <= float(box.get("x1", -1)) + tol):
+                continue
+            if abs(node_x - float(box.get("x0", -999))) <= tol or abs(node_x - float(box.get("x1", -999))) <= tol:
+                return True
+        elif wire.get("orientation") == "v":
+            if not (float(box.get("x0", -1)) - tol <= node_x <= float(box.get("x1", -1)) + tol):
+                continue
+            if not (float(box.get("y0", -1)) - tol <= node_y <= float(box.get("y1", -1)) + tol):
+                continue
+            if abs(node_y - float(box.get("y0", -999))) <= tol or abs(node_y - float(box.get("y1", -999))) <= tol:
+                return True
+    return False
+
+
 def conductive_junction_nodes(payload: dict[str, Any]) -> set[str]:
     quality = payload.get("quality", {})
     config = quality.get("terminal_linking", {})
     policy = str(config.get("junction_node_policy") or "all")
     if policy != "explicit":
-        return {str(node["id"]) for node in payload.get("nodes", []) if str(node.get("type") or "") == "junction"}
+        wires = list(payload.get("wires", []))
+        symbols = list(payload.get("symbols", []))
+        classes = set(config.get("junction_node_classes") or [])
+        threshold = float(config.get("junction_node_threshold") or 24.0)
+        junction_points = []
+        for symbol in symbols:
+            if str(symbol.get("class_name") or symbol.get("type") or "") not in classes:
+                continue
+            center = symbol.get("center")
+            if not center:
+                box = symbol.get("bbox") or {}
+                center = [
+                    (float(box.get("x0", 0)) + float(box.get("x1", 0))) / 2,
+                    (float(box.get("y0", 0)) + float(box.get("y1", 0))) / 2,
+                ]
+            junction_points.append(tuple(center))
+        result = set()
+        for node in payload.get("nodes", []):
+            if str(node.get("type") or "") != "junction":
+                continue
+            point = node_point(node)
+            if _wire_ends_at_node(wires, point[0], point[1]):
+                result.add(str(node["id"]))
+            elif any(
+                point_distance(point, junction_point) <= threshold
+                for junction_point in junction_points
+            ):
+                result.add(str(node["id"]))
+        return result
 
     classes = set(config.get("junction_node_classes") or [])
     threshold = float(config.get("junction_node_threshold") or 24.0)
@@ -510,6 +560,7 @@ def build_predicted_graph_pairs(
     gap_bridge_symbol_overlap_max: float,
     nonconductive_anchor_policy: str,
     bridge_stats: Counter[str] | None = None,
+    endpoint_bridge_max: float = 0.0,
 ) -> set[tuple[str, str]]:
     nodes_by_id = {str(node["id"]): node for node in payload.get("nodes", [])}
     edges = list(payload.get("edges", []))
@@ -730,10 +781,11 @@ def build_predicted_graph_pairs(
             source_orientation = str(source["orientation"])
             if source_orientation not in {"h", "v"}:
                 continue
-            for endpoint_key, point in (
-                (graph_node_id(str(source["from_node_id"]), source_wire_id), source["start"]),
-                (graph_node_id(str(source["to_node_id"]), source_wire_id), source["end"]),
+            for endpoint_key, point, end_node in (
+                (graph_node_id(str(source["from_node_id"]), source_wire_id), source["start"], source["from_node_id"]),
+                (graph_node_id(str(source["to_node_id"]), source_wire_id), source["end"], source["to_node_id"]),
             ):
+                is_wire_end = str(nodes_by_id.get(str(end_node), {}).get("type") or "") == "endpoint"
                 px, py = point
                 for target_edge_id, target in edge_segments.items():
                     if target_edge_id == source_edge_id:
@@ -762,7 +814,11 @@ def build_predicted_graph_pairs(
                         continue
                     t = max(0.0, min(1.0, t))
                     if not has_terminal_anchor(target_edge_id, projection):
-                        continue
+                        # A wire's own span END almost touching a perpendicular
+                        # wire is a drawn T-join — bridge it even without a
+                        # symbol terminal sitting on the junction point.
+                        if not (is_wire_end and gap <= endpoint_bridge_max):
+                            continue
                     candidate = (gap, target_edge_id, t, projection, str(target.get("wire_id") or ""))
                     if endpoint_key not in best_by_endpoint or gap < best_by_endpoint[endpoint_key][0]:
                         best_by_endpoint[endpoint_key] = candidate
@@ -781,6 +837,8 @@ def build_predicted_graph_pairs(
             stops_by_edge[target_edge_id].append((t, bridge_id))
             add_graph_edge(endpoint_key, bridge_id)
             stats["wire_gap_bridge_count"] += 1
+            if gap <= endpoint_bridge_max:
+                stats["endpoint_bridge_count"] += 1
             if gap > 1:
                 stats["wire_gap_bridge_nonzero_gap_count"] += 1
 
@@ -872,7 +930,7 @@ def build_predicted_graph_pairs(
         wire_id = record.get("wire_id")
         node_id = record.get("node_id")
         anchor_node_id = node_id
-        if not anchor_node_id and str(record.get("class_name") or "") in node_anchor_classes:
+        if not anchor_node_id and not wire_id and str(record.get("class_name") or "") in node_anchor_classes:
             candidate_node_id, node_distance = nearest_node_id(record["point"])
             if candidate_node_id and node_distance <= node_anchor_threshold:
                 anchor_node_id = candidate_node_id

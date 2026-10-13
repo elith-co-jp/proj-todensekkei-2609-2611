@@ -74,6 +74,7 @@ DIRECT_WIRE_GAP_BRIDGE_MAX = 80.0
 DIRECT_GAP_BRIDGE_ALIGN_THRESHOLD = 18.0
 DIRECT_WIRE_GAP_TERMINAL_ANCHOR_THRESHOLD = 18.0
 DIRECT_TERMINAL_TERMINAL_BRIDGE_MAX = 140.0
+DIRECT_ENDPOINT_BRIDGE_MAX = 60.0
 # Classes whose electrical port is wherever a wire meets the box; when such a
 # symbol has no terminal link, attach it to every wire touching its bbox.
 TOUCHING_WIRE_FALLBACK_CLASSES = {"connector", "junction", "power_bus", "terminal"}
@@ -1276,6 +1277,50 @@ def build_net_candidates(
                     conductive_junction_node_ids.add(str(node["id"]))
                     break
     elif junction_node_policy == "all":
+        junction_symbol_points = [
+            tuple(symbol.get("center") or box_center(symbol["bbox"]))
+            for symbol in symbols
+            if str(symbol.get("class_name") or symbol.get("type") or "") in junction_node_classes
+        ]
+
+        def _wire_ends_at(node_x: float, node_y: float, tol: float = 8.0) -> bool:
+            """A wire span terminates at this node (tee join, not a through-crossing)."""
+            for wire in wires:
+                box = wire.get("box") or {}
+                if wire.get("orientation") == "h":
+                    if not (float(box.get("y0", -1)) - tol <= node_y <= float(box.get("y1", -1)) + tol):
+                        continue
+                    if not (float(box.get("x0", -1)) - tol <= node_x <= float(box.get("x1", -1)) + tol):
+                        continue
+                    if abs(node_x - float(box.get("x0", -999))) <= tol or abs(node_x - float(box.get("x1", -999))) <= tol:
+                        return True
+                elif wire.get("orientation") == "v":
+                    if not (float(box.get("x0", -1)) - tol <= node_x <= float(box.get("x1", -1)) + tol):
+                        continue
+                    if not (float(box.get("y0", -1)) - tol <= node_y <= float(box.get("y1", -1)) + tol):
+                        continue
+                    if abs(node_y - float(box.get("y0", -999))) <= tol or abs(node_y - float(box.get("y1", -999))) <= tol:
+                        return True
+            return False
+
+        tee_node_ids = {
+            str(node["id"])
+            for node in nodes
+            if str(node.get("type") or "") == "junction"
+            and _wire_ends_at(float(node["x"]), float(node["y"]))
+        }
+        # Through-crossings (no wire ends here) only conduct when a junction
+        # symbol sits nearby — bare line crossings are not connections.
+        cross_conductive_ids = {
+            str(node["id"])
+            for node in nodes
+            if str(node.get("type") or "") == "junction"
+            and str(node["id"]) not in tee_node_ids
+            and any(
+                point_distance((float(node["x"]), float(node["y"])), point) <= junction_node_threshold
+                for point in junction_symbol_points
+            )
+        }
         if source_image is not None:
             junction_mask = make_binary_mask(source_image)
             mask_h, mask_w = junction_mask.shape[:2]
@@ -1290,6 +1335,9 @@ def build_net_candidates(
             for node in nodes:
                 if str(node.get("type") or "") != "junction":
                     continue
+                node_id = str(node["id"])
+                if node_id not in tee_node_ids and node_id not in cross_conductive_ids:
+                    continue
                 x = int(round(float(node["x"])))
                 y = int(round(float(node["y"])))
                 if not _ink_at(x, y):
@@ -1301,12 +1349,13 @@ def build_net_candidates(
                     if _ink_at(x + dx, y + dy)
                 )
                 if arms >= 3:
-                    conductive_junction_node_ids.add(str(node["id"]))
+                    conductive_junction_node_ids.add(node_id)
         else:
             conductive_junction_node_ids = {
                 str(node["id"])
                 for node in nodes
                 if str(node.get("type") or "") == "junction"
+                and (str(node["id"]) in tee_node_ids or str(node["id"]) in cross_conductive_ids)
             }
 
     def graph_node_id(node_id: str, wire_id: str | None) -> str:
@@ -1608,6 +1657,7 @@ def build_direct_from_to(payload: dict[str, Any]) -> dict[str, Any]:
         gap_bridge_symbol_overlap_max=1.0,
         nonconductive_anchor_policy="all",
         bridge_stats=bridge_stats,
+        endpoint_bridge_max=DIRECT_ENDPOINT_BRIDGE_MAX,
     )
     valid_pairs = sorted(
         pair for pair in pairs if pair[0] in terminal_by_key and pair[1] in terminal_by_key
@@ -1713,6 +1763,7 @@ def process_page(
     other_wire_mask_min_area_ratio: float,
     other_wire_mask_max_area_ratio: float,
     other_wire_mask_min_aspect_ratio: float,
+    class_conf_overrides: dict[str, float] | None = None,
 ) -> dict[str, Any]:
     page_dir = analysis_root / f"page_{page:03d}"
     payload = build_final_output_from_analysis(page_dir, "validation_pdf_with_yolo")
@@ -1724,15 +1775,25 @@ def process_page(
         text_suppression=text_suppression,
         text_suppression_scope=text_suppression_scope,
     )
+    detect_conf = conf
+    if class_conf_overrides:
+        detect_conf = min([conf, *class_conf_overrides.values()])
     symbols, model_names = run_yolo_prediction(
         model_path,
         yolo_input_path,
         imgsz=imgsz,
-        conf=conf,
+        conf=detect_conf,
         iou=iou,
         max_det=max_det,
         device=device,
     )
+    if class_conf_overrides:
+        symbols = [
+            symbol
+            for symbol in symbols
+            if float(symbol.get("confidence") or 0.0)
+            >= float(class_conf_overrides.get(str(symbol.get("class_name") or ""), conf))
+        ]
     if not debug_artifacts:
         yolo_input_path.unlink(missing_ok=True)
         preprocess_info = {key: value for key, value in preprocess_info.items() if key != "input_path"}
