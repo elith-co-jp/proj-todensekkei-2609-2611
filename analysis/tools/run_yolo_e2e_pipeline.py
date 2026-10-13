@@ -1776,15 +1776,19 @@ def process_page(
         text_suppression_scope=text_suppression_scope,
     )
     detect_conf = conf
+    detect_max_det = max_det
     if class_conf_overrides:
         detect_conf = min([conf, *class_conf_overrides.values()])
+        # max_det is applied before the per-class post-filter; extra headroom
+        # keeps low-threshold candidates from evicting detections we keep.
+        detect_max_det = max(max_det, 1000)
     symbols, model_names = run_yolo_prediction(
         model_path,
         yolo_input_path,
         imgsz=imgsz,
         conf=detect_conf,
         iou=iou,
-        max_det=max_det,
+        max_det=detect_max_det,
         device=device,
     )
     if class_conf_overrides:

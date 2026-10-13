@@ -472,7 +472,7 @@ def _wire_ends_at_node(wires: list[dict[str, Any]], node_x: float, node_y: float
     """True when some wire's span terminates at the node (tee join), rather
     than all incident wires passing straight through it (bare crossing)."""
     for wire in wires:
-        box = wire.get("box") or {}
+        box = wire.get("bbox") or wire.get("box") or {}
         if wire.get("orientation") == "h":
             if not (float(box.get("y0", -1)) - tol <= node_y <= float(box.get("y1", -1)) + tol):
                 continue
