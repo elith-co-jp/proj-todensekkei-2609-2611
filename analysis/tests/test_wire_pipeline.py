@@ -3,6 +3,7 @@ from __future__ import annotations
 # ruff: noqa: I001
 
 import json
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -16,14 +17,43 @@ TOOLS_DIR = Path(__file__).resolve().parents[1] / "tools"
 sys.path.insert(0, str(TOOLS_DIR))
 
 from run_yolo_e2e_pipeline import (
+    DEFAULT_MODEL_PATH,
     _analysis_cache_key,
     draw_wire_overlay,
     ensure_analysis_outputs,
     load_symbol_ocr_reader,
+    parse_args,
 )
 
 
 class WirePipelineTests(unittest.TestCase):
+    def test_default_model_is_the_shared_distribution_weight(self) -> None:
+        expected = TOOLS_DIR.parents[1] / "assets" / "models" / "yolo11n_all_symbols_best.pt"
+        self.assertEqual(DEFAULT_MODEL_PATH, expected)
+        self.assertTrue(DEFAULT_MODEL_PATH.is_absolute())
+        self.assertTrue(DEFAULT_MODEL_PATH.is_file())
+        with patch.object(sys, "argv", ["run_yolo_e2e_pipeline.py"]):
+            self.assertEqual(parse_args().model, expected)
+
+    def test_default_model_does_not_depend_on_working_directory(self) -> None:
+        probe = (
+            "import json, sys; "
+            "sys.path.insert(0, sys.argv.pop()); "
+            "from run_yolo_e2e_pipeline import parse_args; "
+            "model = parse_args().model; "
+            "print(json.dumps({'path': str(model), 'exists': model.is_file()}))"
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            result = subprocess.run(
+                [sys.executable, "-c", probe, str(TOOLS_DIR)],
+                cwd=temporary, capture_output=True, text=True, check=True,
+            )
+        self.assertEqual(json.loads(result.stdout), {"path": str(DEFAULT_MODEL_PATH), "exists": True})
+
+    def test_explicit_model_overrides_shared_default(self) -> None:
+        with patch.object(sys, "argv", ["run_yolo_e2e_pipeline.py", "--model", "custom.pt"]):
+            self.assertEqual(parse_args().model, Path("custom.pt"))
+
     def test_missing_symbol_ocr_dependency_does_not_block_pipeline(self) -> None:
         with patch.dict("sys.modules", {"rapidocr_onnxruntime": None}):
             reader, effective_engine, warning = load_symbol_ocr_reader("rapidocr", "en")
