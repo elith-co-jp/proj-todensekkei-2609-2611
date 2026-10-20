@@ -204,14 +204,14 @@ export default function App() {
         <div className={`flex min-h-24 items-center gap-3 px-5 py-5 ${sidebarCollapsed ? 'lg:justify-center lg:px-3' : ''}`}>
           <div className={`min-w-0 flex-1 ${sidebarCollapsed ? 'lg:hidden' : ''}`}>
             <Logo size={30} className="text-slate-950" />
-            <div className="mt-3 text-[10px] font-semibold tracking-[0.16em] text-slate-400">
+            <div className="mt-3 text-[10px] font-semibold tracking-[0.16em] text-slate-600">
               ANNOTATION OPERATIONS
             </div>
           </div>
           {sidebarCollapsed && <LogoMark size={34} className="hidden lg:block" />}
           <button
             type="button"
-            className="icon-button hidden text-slate-400 hover:bg-slate-100 hover:text-blue-700 lg:inline-flex"
+            className="icon-button hidden text-slate-600 hover:bg-slate-100 hover:text-blue-700 lg:inline-flex"
             onClick={() => setSidebarCollapsed((value) => !value)}
             aria-label={sidebarCollapsed ? 'サイドバーを開く' : 'サイドバーを閉じる'}
             title={sidebarCollapsed ? 'サイドバーを開く' : 'サイドバーを閉じる'}
@@ -231,7 +231,7 @@ export default function App() {
 
         <div className="mx-5 h-px bg-slate-200" />
 
-        {!sidebarCollapsed && <div className="px-6 pt-7 text-[10px] font-semibold tracking-[0.12em] text-slate-400">WORKSPACE</div>}
+        <div className={`px-6 pt-7 text-[10px] font-semibold tracking-[0.12em] text-slate-600 ${sidebarCollapsed ? 'lg:hidden' : ''}`}>WORKSPACE</div>
         <nav className="flex-1 space-y-1 px-3 py-3" aria-label="メインナビゲーション">
           {NAVIGATION.map(({ to, label, caption, icon: Icon, end }) => (
             <NavLink
@@ -260,7 +260,7 @@ export default function App() {
                   </span>
                   <span className={`min-w-0 ${sidebarCollapsed ? 'lg:hidden' : ''}`}>
                     <span className="block truncate text-[13px] font-semibold">{label}</span>
-                    <span className="mt-0.5 block truncate text-[10px] text-slate-400">
+                    <span className="mt-0.5 block truncate text-[10px] text-slate-600">
                       {caption}
                     </span>
                   </span>
@@ -298,7 +298,7 @@ export default function App() {
               </span>
             </button>
           )}
-          {!sidebarCollapsed && <div className="px-3 pt-3 text-[10px] text-slate-400">TodenYOLO · Schema v1.0</div>}
+          <div className={`px-3 pt-3 text-[10px] text-slate-600 ${sidebarCollapsed ? 'lg:hidden' : ''}`}>TodenYOLO · Schema v1.0</div>
         </div>
       </aside>
 
@@ -319,7 +319,7 @@ export default function App() {
           <LogoMark size={25} />
           <div className="min-w-0">
             <div className="truncate text-sm font-bold text-slate-900">TodenYOLO</div>
-            <div className="text-[10px] font-semibold tracking-[0.12em] text-slate-400">ANNOTATION OPERATIONS</div>
+            <div className="text-[10px] font-semibold tracking-[0.12em] text-slate-600">ANNOTATION OPERATIONS</div>
           </div>
         </header>
         <main className="relative min-w-0 flex-1">
