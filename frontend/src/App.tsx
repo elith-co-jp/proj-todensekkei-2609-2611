@@ -183,7 +183,7 @@ export default function App() {
       {mobileNavOpen && (
         <button
           type="button"
-          className="fixed inset-0 z-40 bg-slate-950/65 backdrop-blur-sm lg:hidden"
+          className="fixed inset-0 z-40 bg-slate-950/35 backdrop-blur-sm lg:hidden"
           onClick={closeMobileNavigation}
           aria-label="メニューを閉じる"
         />
@@ -197,24 +197,21 @@ export default function App() {
         aria-modal={mobileNavigationModalOpen ? true : undefined}
         aria-label={mobileNavigationModalOpen ? 'メインメニュー' : undefined}
         tabIndex={mobileNavigationModalOpen ? -1 : undefined}
-        className={`fixed inset-y-0 left-0 z-50 flex w-[280px] flex-none flex-col overflow-hidden bg-[#07111f] text-slate-100 shadow-2xl shadow-slate-950/30 transition-transform duration-300 lg:sticky lg:top-0 lg:h-dvh lg:translate-x-0 lg:transition-[width] ${
+        className={`fixed inset-y-0 left-0 z-50 flex w-[264px] flex-none flex-col overflow-hidden border-r border-slate-200 bg-white text-slate-800 shadow-2xl shadow-slate-950/10 transition-transform duration-300 lg:sticky lg:top-0 lg:h-dvh lg:translate-x-0 lg:shadow-none lg:transition-[width] ${
           mobileNavOpen ? 'translate-x-0' : '-translate-x-full'
-        } ${sidebarCollapsed ? 'lg:w-[84px]' : 'lg:w-[280px]'}`}
+        } ${sidebarCollapsed ? 'lg:w-[76px]' : 'lg:w-[264px]'}`}
       >
-        <div className="pointer-events-none absolute inset-x-0 top-0 h-64 bg-[radial-gradient(circle_at_top_left,rgba(20,184,166,0.18),transparent_58%),radial-gradient(circle_at_top_right,rgba(14,165,233,0.2),transparent_48%)]" />
-
-        <div className={`relative flex min-h-24 items-center gap-3 px-5 py-5 ${sidebarCollapsed ? 'lg:justify-center lg:px-3' : ''}`}>
+        <div className={`flex min-h-24 items-center gap-3 px-5 py-5 ${sidebarCollapsed ? 'lg:justify-center lg:px-3' : ''}`}>
           <div className={`min-w-0 flex-1 ${sidebarCollapsed ? 'lg:hidden' : ''}`}>
-            <Logo size={28} className="text-white" />
-            <div className="mt-3 text-[11px] font-semibold tracking-[0.16em] text-cyan-200/80">
+            <Logo size={30} className="text-slate-950" />
+            <div className="mt-3 text-[10px] font-semibold tracking-[0.16em] text-slate-400">
               ANNOTATION OPERATIONS
             </div>
-            <div className="mt-1 text-sm font-bold leading-snug text-white">TodenYOLO</div>
           </div>
           {sidebarCollapsed && <LogoMark size={34} className="hidden lg:block" />}
           <button
             type="button"
-            className="icon-button hidden text-slate-300 hover:bg-white/10 hover:text-white lg:inline-flex"
+            className="icon-button hidden text-slate-400 hover:bg-slate-100 hover:text-blue-700 lg:inline-flex"
             onClick={() => setSidebarCollapsed((value) => !value)}
             aria-label={sidebarCollapsed ? 'サイドバーを開く' : 'サイドバーを閉じる'}
             title={sidebarCollapsed ? 'サイドバーを開く' : 'サイドバーを閉じる'}
@@ -224,7 +221,7 @@ export default function App() {
           <button
             type="button"
             data-autofocus
-            className="icon-button text-slate-300 hover:bg-white/10 hover:text-white lg:hidden"
+            className="icon-button text-slate-500 hover:bg-slate-100 hover:text-blue-700 lg:hidden"
             onClick={closeMobileNavigation}
             aria-label="メニューを閉じる"
           >
@@ -232,9 +229,10 @@ export default function App() {
           </button>
         </div>
 
-        <div className="mx-4 h-px bg-gradient-to-r from-transparent via-cyan-300/30 to-transparent" />
+        <div className="mx-5 h-px bg-slate-200" />
 
-        <nav className="relative flex-1 space-y-2 px-3 py-5" aria-label="メインナビゲーション">
+        {!sidebarCollapsed && <div className="px-6 pt-7 text-[10px] font-semibold tracking-[0.12em] text-slate-400">WORKSPACE</div>}
+        <nav className="flex-1 space-y-1 px-3 py-3" aria-label="メインナビゲーション">
           {NAVIGATION.map(({ to, label, caption, icon: Icon, end }) => (
             <NavLink
               key={to}
@@ -242,28 +240,27 @@ export default function App() {
               end={end}
               title={sidebarCollapsed ? label : undefined}
               className={({ isActive }) =>
-                `group relative flex min-h-14 items-center gap-3 overflow-hidden rounded-2xl px-4 py-2.5 transition ${
+                `group relative flex min-h-12 items-center gap-3 overflow-hidden rounded-xl px-3 py-2 transition ${
                   sidebarCollapsed ? 'lg:justify-center lg:px-2' : ''
                 } ${
                   isActive
-                    ? 'bg-white/[0.11] text-white shadow-[inset_0_0_0_1px_rgba(255,255,255,0.08)]'
-                    : 'text-slate-400 hover:bg-white/[0.06] hover:text-slate-100'
+                    ? 'bg-blue-50 text-blue-700'
+                    : 'text-slate-600 hover:bg-slate-50 hover:text-blue-700'
                 }`
               }
             >
               {({ isActive }) => (
                 <>
-                  {isActive && <span className="absolute inset-y-3 left-0 w-1 rounded-r-full bg-cyan-300" />}
                   <span
-                    className={`flex h-9 w-9 flex-none items-center justify-center rounded-xl transition ${
-                      isActive ? 'bg-cyan-300 text-slate-950' : 'bg-white/[0.06] text-slate-300 group-hover:bg-white/10'
+                    className={`flex h-8 w-8 flex-none items-center justify-center rounded-lg transition ${
+                      isActive ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 group-hover:text-blue-600'
                     }`}
                   >
-                    <Icon size={18} />
+                    <Icon size={17} />
                   </span>
                   <span className={`min-w-0 ${sidebarCollapsed ? 'lg:hidden' : ''}`}>
-                    <span className="block truncate text-[13px] font-bold">{label}</span>
-                    <span className="mt-0.5 block truncate text-[10px] text-slate-500 group-hover:text-slate-400">
+                    <span className="block truncate text-[13px] font-semibold">{label}</span>
+                    <span className="mt-0.5 block truncate text-[10px] text-slate-400">
                       {caption}
                     </span>
                   </span>
@@ -273,45 +270,35 @@ export default function App() {
           ))}
         </nav>
 
-        <div className="relative p-3">
+        <div className="border-t border-slate-200 p-3">
           <button
             type="button"
-            className={`flex min-h-12 w-full items-center gap-3 rounded-2xl border border-white/[0.08] bg-white/[0.04] px-3 text-left text-slate-300 transition hover:border-cyan-300/25 hover:bg-white/[0.08] hover:text-white ${
+            className={`flex min-h-11 w-full items-center gap-3 rounded-xl px-3 text-left text-slate-600 transition hover:bg-slate-50 hover:text-blue-700 ${
               sidebarCollapsed ? 'lg:justify-center lg:px-2' : ''
             }`}
             onClick={() => setTourOpen(true)}
             title="ツアーガイドを表示"
           >
-            <CircleHelp size={18} className="flex-none text-cyan-300" />
+            <CircleHelp size={17} className="flex-none text-slate-500" />
             <span className={`text-xs font-semibold ${sidebarCollapsed ? 'lg:hidden' : ''}`}>ツアーガイドを表示</span>
           </button>
           {desktopMode && (
             <button
               type="button"
-              className={`mt-2 flex min-h-12 w-full items-center gap-3 rounded-2xl border border-rose-300/20 bg-rose-500/10 px-3 text-left text-rose-100 transition hover:border-rose-200/40 hover:bg-rose-500/15 disabled:cursor-wait disabled:opacity-70 ${
+              className={`mt-1 flex min-h-11 w-full items-center gap-3 rounded-xl px-3 text-left text-slate-500 transition hover:bg-rose-50 hover:text-rose-700 disabled:cursor-wait disabled:opacity-70 ${
                 sidebarCollapsed ? 'lg:justify-center lg:px-2' : ''
               }`}
               onClick={() => void shutdownDesktop()}
               disabled={shutdownPending}
               title="アプリを終了"
             >
-              <Power size={18} className="flex-none text-rose-200" />
+              <Power size={17} className="flex-none" />
               <span className={`text-xs font-semibold ${sidebarCollapsed ? 'lg:hidden' : ''}`}>
                 {shutdownPending ? '終了中...' : 'アプリを終了'}
               </span>
             </button>
           )}
-          {!sidebarCollapsed && (
-            <div className="mt-3 rounded-2xl bg-gradient-to-br from-cyan-300/10 to-blue-400/5 p-4 lg:block">
-              <div className="flex items-center gap-2 text-[10px] font-bold tracking-[0.12em] text-cyan-200">
-                <Sparkles size={13} /> WORKSPACE READY
-              </div>
-              <p className="mt-2 text-[10px] leading-5 text-slate-400">
-                シンボル・端子・配線をページ単位で登録し、学習データとして出力します。
-              </p>
-              <div className="mt-3 border-t border-white/[0.07] pt-3 text-[10px] text-slate-500">Schema v1.0</div>
-            </div>
-          )}
+          {!sidebarCollapsed && <div className="px-3 pt-3 text-[10px] text-slate-400">TodenYOLO · Schema v1.0</div>}
         </div>
       </aside>
 

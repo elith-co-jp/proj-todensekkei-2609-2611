@@ -219,7 +219,7 @@ export default function ProjectListPage() {
 
   const statsCards = stats
     ? [
-        { label: '登録図面', value: stats.project_count, unit: '枚', icon: FileStack, color: 'text-cyan-700 bg-cyan-50' },
+        { label: '登録図面', value: stats.project_count, unit: '枚', icon: FileStack, color: 'text-blue-700 bg-blue-50' },
         { label: 'シンボル', value: stats.symbol_count, unit: '件', icon: Shapes, color: 'text-violet-700 bg-violet-50' },
         { label: '配線', value: stats.connection_count, unit: '件', icon: Cable, color: 'text-amber-700 bg-amber-50' },
         { label: '完了', value: stats.by_status.done ?? 0, unit: '枚', icon: CheckCircle2, color: 'text-emerald-700 bg-emerald-50' },
@@ -273,21 +273,21 @@ export default function ProjectListPage() {
         </div>
       </header>
 
-      <section className="relative mb-6 overflow-hidden rounded-3xl bg-[#07111f] p-5 text-white shadow-2xl shadow-slate-900/15 sm:p-7">
-        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_12%_20%,rgba(34,211,238,0.25),transparent_28rem),radial-gradient(circle_at_88%_20%,rgba(99,102,241,0.22),transparent_24rem)]" />
+      <section className="relative mb-6 overflow-hidden rounded-3xl border border-blue-100 bg-white p-6 shadow-[0_16px_40px_-32px_rgba(37,99,235,0.4)] sm:p-8">
+        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_92%_18%,rgba(59,130,246,0.09),transparent_22rem)]" />
         <div className="relative grid gap-6 lg:grid-cols-[1fr_auto] lg:items-center">
           <div>
-            <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-[0.2em] text-cyan-200">
+            <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-blue-600">
               <Sparkles size={14} /> Page-by-page workflow
             </div>
-            <h2 className="mt-3 text-xl font-black tracking-tight sm:text-2xl">大きな図面も、1ページずつ迷わず処理</h2>
-            <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-300">
+            <h2 className="mt-3 text-xl font-semibold tracking-tight text-slate-950 sm:text-2xl">大きな図面も、1ページずつ迷わず処理</h2>
+            <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-500">
               複数ページPDFは自動でPNGへ変換します。登録後は図面を開き、前後ページへ連続移動しながら作業できます。
             </p>
           </div>
           <button
             type="button"
-            className="inline-flex min-h-12 items-center justify-center gap-2 rounded-2xl border border-white/10 bg-white/10 px-5 text-sm font-bold text-white backdrop-blur transition hover:bg-white/15"
+            className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-blue-200 bg-blue-50 px-5 text-sm font-semibold text-blue-700 transition hover:border-blue-300 hover:bg-blue-100"
             onClick={() => fileRef.current?.click()}
             disabled={busy}
           >
@@ -302,13 +302,13 @@ export default function ProjectListPage() {
             <div key={label} className="stat-card">
               <div className="flex items-start justify-between gap-3">
                 <div>
-                  <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">{label}</div>
-                  <div className="mt-2 text-2xl font-black tracking-tight text-slate-950 sm:text-3xl">
+              <div className="text-[11px] font-semibold text-slate-500">{label}</div>
+              <div className="mt-2 text-2xl font-semibold tracking-tight text-slate-950 sm:text-3xl">
                     {value}
                     <span className="ml-1 text-xs font-bold text-slate-400">{unit}</span>
                   </div>
                 </div>
-                <span className={`flex h-10 w-10 items-center justify-center rounded-2xl ${color}`}>
+                <span className={`flex h-10 w-10 items-center justify-center rounded-xl ${color}`}>
                   <Icon size={19} />
                 </span>
               </div>
@@ -344,7 +344,7 @@ export default function ProjectListPage() {
       <section className="card overflow-hidden">
         <div className="card-head flex-wrap">
           <div className="min-w-0 flex-1 sm:flex-none">
-            <h2 className="text-sm font-black text-slate-900">登録済みの図面</h2>
+            <h2 className="text-base font-semibold text-slate-900">登録済みの図面</h2>
             <p className="mt-0.5 text-[10px] text-slate-400">チェックはShiftキーで範囲選択できます</p>
           </div>
           <div className="hidden flex-1 lg:block" />
@@ -352,7 +352,7 @@ export default function ProjectListPage() {
             <span className="sr-only">図面を検索</span>
             <Search size={15} className="pointer-events-none absolute left-3 top-3 text-slate-400" />
             <input
-              className="field w-full pl-9 text-xs sm:w-72"
+              className="field w-full !rounded-full pl-9 text-xs sm:w-72"
               placeholder="ID・名称・シート番号で検索"
               value={q}
               onChange={(event) => setQ(event.target.value)}
@@ -396,17 +396,18 @@ export default function ProjectListPage() {
             <tbody>
               {rows.length === 0 && (
                 <tr>
-                  <td className="td py-14 text-center text-slate-400" colSpan={10}>
+                  <td className="td py-12 text-center text-slate-500" colSpan={10}>
+                    <FileStack size={28} className="mx-auto mb-3 text-blue-300" aria-hidden="true" />
                     {debouncedQuery ? '条件に一致する図面がありません。' : '図面がありません。PDFまたは画像を登録してください。'}
                   </td>
                 </tr>
               )}
               {rows.map((row) => (
-                <tr key={row.id} className="group transition hover:bg-cyan-50/40">
+                <tr key={row.id} className="group transition hover:bg-blue-50/50">
                   <td className="td">
                     <input
                       type="checkbox"
-                      className="h-6 w-6 rounded border-slate-300 accent-cyan-600"
+                      className="h-6 w-6 rounded border-slate-300 accent-blue-600"
                       aria-label={`${row.name}を選択`}
                       checked={checked.has(row.id)}
                       onChange={() => undefined}
@@ -415,7 +416,7 @@ export default function ProjectListPage() {
                   </td>
                   <td className="td font-mono text-xs text-slate-400">{row.id}</td>
                   <td className="td">
-                    <Link to={`/projects/${row.id}`} className="font-bold text-slate-800 transition hover:text-cyan-700">
+                    <Link to={`/projects/${row.id}`} className="font-bold text-slate-800 transition hover:text-blue-700">
                       {row.name}
                     </Link>
                   </td>
@@ -429,7 +430,7 @@ export default function ProjectListPage() {
                   <td className="td text-right font-mono text-xs">
                     {row.symbol_count}
                     {row.prediction_count > 0 && (
-                      <span className="ml-1 rounded-full bg-cyan-50 px-1.5 py-0.5 text-[9px] font-black text-cyan-700" title="AI 推論の検出件数">
+                      <span className="ml-1 rounded-full bg-blue-50 px-1.5 py-0.5 text-[9px] font-black text-blue-700" title="AI 推論の検出件数">
                         +{row.prediction_count}
                       </span>
                     )}
@@ -437,12 +438,12 @@ export default function ProjectListPage() {
                   <td className="td text-right font-mono text-xs text-slate-500">{row.terminal_count}</td>
                   <td className="td text-right font-mono text-xs">{row.connection_count}</td>
                   <td className="td text-right">
-                    <Link to={`/projects/${row.id}/analysis`} className="icon-button mr-1 h-9 w-9 border border-slate-200 text-cyan-700 hover:bg-cyan-50" aria-label={`${row.name}の解析結果`} title="解析結果">
+                    <Link to={`/projects/${row.id}/analysis`} className="icon-button mr-1 h-9 w-9 border border-slate-200 text-blue-700 hover:bg-blue-50" aria-label={`${row.name}の解析結果`} title="解析結果">
                       <Cable size={16} />
                     </Link>
                     <Link
                       to={`/projects/${row.id}`}
-                      className="icon-button h-9 w-9 border border-slate-200 text-slate-500 hover:border-cyan-300 hover:bg-cyan-50 hover:text-cyan-700"
+                      className="icon-button h-9 w-9 border border-slate-200 text-slate-500 hover:border-blue-300 hover:bg-blue-50 hover:text-blue-700"
                       aria-label={`${row.name}を編集`}
                     >
                       <ArrowUpRight size={16} />
@@ -465,7 +466,7 @@ export default function ProjectListPage() {
               <div className="flex items-start gap-3">
                 <input
                   type="checkbox"
-                  className="mt-1 h-6 w-6 rounded border-slate-300 accent-cyan-600"
+                  className="mt-1 h-6 w-6 rounded border-slate-300 accent-blue-600"
                   aria-label={`${row.name}を選択`}
                   checked={checked.has(row.id)}
                   onChange={() => toggle(row.id, false)}
@@ -487,7 +488,7 @@ export default function ProjectListPage() {
                     <div><div className="text-[9px] text-slate-400">配線</div><div className="mt-1 text-xs font-bold">{row.connection_count}</div></div>
                   </div>
                 </div>
-                <Link to={`/projects/${row.id}/analysis`} className="icon-button border border-slate-200 text-cyan-700" aria-label={`${row.name}の解析結果`} title="解析結果">
+                <Link to={`/projects/${row.id}/analysis`} className="icon-button border border-slate-200 text-blue-700" aria-label={`${row.name}の解析結果`} title="解析結果">
                   <Cable size={17} />
                 </Link>
                 <Link
