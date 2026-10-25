@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+import io
+
+import pytest
+from PIL import Image
+
 from tests.conftest import SAMPLE_ANNOTATION, create_project, make_pdf
 
 
@@ -30,6 +35,21 @@ def test_create_project_and_fetch_image(client):
     img = client.get(f"/api/projects/{pid}/image")
     assert img.status_code == 200
     assert img.headers["content-type"] == "image/png"
+
+
+def test_thumbnail_is_small_jpeg_and_reused(client):
+    pid = create_project(client, "large.png", 2400, 1600)
+
+    first = client.get(f"/api/projects/{pid}/thumbnail")
+    assert first.status_code == 200
+    assert first.headers["content-type"] == "image/jpeg"
+    with Image.open(io.BytesIO(first.content)) as thumb:
+        assert max(thumb.size) <= 640
+        assert thumb.size[0] / thumb.size[1] == pytest.approx(2400 / 1600, rel=0.01)
+
+    second = client.get(f"/api/projects/{pid}/thumbnail")
+    assert second.content == first.content
+    assert client.get("/api/projects/999999/thumbnail").status_code == 404
 
 
 def test_upload_pdf_creates_one_annotation_project_per_page(client):

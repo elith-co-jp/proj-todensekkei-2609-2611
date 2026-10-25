@@ -20,10 +20,10 @@ import { useModalFocus } from './hooks/useModalFocus'
 import { isEditorPath } from './utils/workspace'
 
 const NAVIGATION = [
-  { to: '/', label: '図面ワークスペース', caption: '登録・進捗・編集', icon: LayoutDashboard, end: true },
-  { to: '/ml', label: 'AI 改善サイクル', caption: '推論・学習・モデル', icon: Sparkles, end: false },
-  { to: '/export', label: 'データ受け渡し', caption: '出力・取り込み', icon: Download, end: false },
-  { to: '/guide', label: '操作ガイド', caption: '手順・ショートカット', icon: BookOpen, end: false },
+  { to: '/', label: '図面ワークスペース', caption: '登録・進捗・編集', icon: LayoutDashboard, end: true, tone: 'bg-blue-100 text-blue-700' },
+  { to: '/ml', label: 'AI 改善サイクル', caption: '推論・学習・モデル', icon: Sparkles, end: false, tone: 'bg-violet-100 text-violet-700' },
+  { to: '/export', label: 'データ受け渡し', caption: '出力・取り込み', icon: Download, end: false, tone: 'bg-emerald-100 text-emerald-700' },
+  { to: '/guide', label: '操作ガイド', caption: '手順・ショートカット', icon: BookOpen, end: false, tone: 'bg-amber-100 text-amber-700' },
 ]
 
 export default function App() {
@@ -233,7 +233,7 @@ export default function App() {
 
         <div className={`px-6 pt-7 text-[10px] font-semibold tracking-[0.12em] text-slate-600 ${sidebarCollapsed ? 'lg:hidden' : ''}`}>WORKSPACE</div>
         <nav className="flex-1 space-y-1 px-3 py-3" aria-label="メインナビゲーション">
-          {NAVIGATION.map(({ to, label, caption, icon: Icon, end }) => (
+          {NAVIGATION.map(({ to, label, caption, icon: Icon, end, tone }) => (
             <NavLink
               key={to}
               to={to}
@@ -252,8 +252,8 @@ export default function App() {
               {({ isActive }) => (
                 <>
                   <span
-                    className={`flex h-8 w-8 flex-none items-center justify-center rounded-lg transition ${
-                      isActive ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 group-hover:text-blue-600'
+                    className={`flex h-8 w-8 flex-none items-center justify-center rounded-lg transition ${tone} ${
+                      isActive ? 'shadow-sm ring-2 ring-white' : 'opacity-90 group-hover:opacity-100'
                     }`}
                   >
                     <Icon size={17} />

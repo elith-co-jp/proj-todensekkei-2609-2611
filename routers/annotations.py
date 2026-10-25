@@ -30,6 +30,7 @@ from schemas import (
 from services.annotation_service import (
     classes_ordered,
     ensure_class,
+    ensure_thumbnail,
     image_path,
     replace_annotations,
     serialize_project,
@@ -256,6 +257,21 @@ def get_image(project_id: int, db: Session = Depends(get_db)):
     if not path.exists():
         raise HTTPException(404, "画像ファイルが見つかりません")
     return FileResponse(path, media_type="image/png")
+
+
+@router.get("/projects/{project_id}/thumbnail")
+def get_thumbnail(project_id: int, db: Session = Depends(get_db)):
+    p = get_project_or_404(db, project_id)
+    if not p.images:
+        raise HTTPException(404, "画像が登録されていません")
+    sha256 = p.images[0].sha256
+    if not image_path(sha256).exists():
+        raise HTTPException(404, "画像ファイルが見つかりません")
+    try:
+        path = ensure_thumbnail(sha256)
+    except OSError as exc:
+        raise HTTPException(500, "サムネイルを作成できませんでした") from exc
+    return FileResponse(path, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=86400"})
 
 
 # ---------------------------------------------------------------- 入出力

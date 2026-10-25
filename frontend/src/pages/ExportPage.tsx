@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Activity, CheckCircle2, Download, Upload, XCircle } from 'lucide-react'
+import { Activity, AlertTriangle, CheckCircle2, Download, Upload, XCircle } from 'lucide-react'
 
 import { api } from '../api/client'
 import { LoadingOverlay } from '../components/LoadingOverlay'
@@ -145,28 +145,38 @@ export default function ExportPage() {
       <header className="page-header">
         <div>
           <div className="eyebrow">Data handoff</div>
-          <h1 className="page-title">データ受け渡し</h1>
+          <h1 className="page-title">データ<span className="title-accent">受け渡し</span></h1>
           <p className="page-description">
             入力したシンボル・端子・配線情報の書き出しと、このツールで書き出したZIPの読み込みを行います
           </p>
         </div>
       </header>
 
-      <section className="notice mb-5 border-cyan-200 bg-cyan-50 text-cyan-900">
-        <Activity size={18} className="mt-0.5 flex-none text-cyan-700" />
-        <div className="grid min-w-0 gap-3 text-[12px] leading-6 sm:grid-cols-2">
-          <div>
-            <div className="font-black text-slate-900">書き出し</div>
-            <p>選択した図面、または全図面のアノテーションデータをZIPでダウンロードします。</p>
+      <section className="mb-5 rounded-2xl border border-slate-200 bg-slate-100/70 p-4 sm:p-5" aria-label="データ受け渡しの説明">
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div className="flex gap-3 rounded-xl bg-white p-4 ring-1 ring-slate-200">
+            <span className="flex h-11 w-11 flex-none items-center justify-center rounded-xl bg-emerald-100 text-emerald-700">
+              <Download size={20} />
+            </span>
+            <div>
+              <div className="text-sm font-semibold text-slate-950">書き出し</div>
+              <p className="mt-0.5 text-xs leading-5 text-slate-600">選択した図面、または全図面のアノテーションデータをZIPでダウンロードします。</p>
+            </div>
           </div>
-          <div>
-            <div className="font-black text-slate-900">読み込み</div>
-            <p>このツールで書き出したZIPから、含まれているアノテーションデータを復元します。</p>
+          <div className="flex gap-3 rounded-xl bg-white p-4 ring-1 ring-slate-200">
+            <span className="flex h-11 w-11 flex-none items-center justify-center rounded-xl bg-violet-100 text-violet-700">
+              <Upload size={20} />
+            </span>
+            <div>
+              <div className="text-sm font-semibold text-slate-950">読み込み</div>
+              <p className="mt-0.5 text-xs leading-5 text-slate-600">このツールで書き出したZIPから、含まれているアノテーションデータを復元します。</p>
+            </div>
           </div>
-          <p className="sm:col-span-2">
-            PDFや任意のZIPから自動でアノテーションを作成する機能ではありません。同じZIPを複数回取り込むと図面が重複します。インポート前に一覧を確認してください。
-          </p>
         </div>
+        <p className="mt-3 flex items-start gap-2 text-xs leading-5 text-amber-800">
+          <AlertTriangle size={15} className="mt-0.5 flex-none" aria-hidden="true" />
+          PDFや任意のZIPから自動でアノテーションを作成する機能ではありません。同じZIPを複数回取り込むと図面が重複します。インポート前に一覧を確認してください。
+        </p>
       </section>
 
       {error && <div className="notice mb-5 border-rose-200 bg-rose-50 text-rose-700" role="alert">{error}</div>}

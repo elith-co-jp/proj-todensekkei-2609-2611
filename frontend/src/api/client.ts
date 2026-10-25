@@ -109,6 +109,8 @@ export const api = {
 
   imageUrl: (id: number) => `${BASE}/api/projects/${id}/image`,
 
+  thumbnailUrl: (id: number) => `${BASE}/api/projects/${id}/thumbnail`,
+
   stats: () => req<Stats>('/api/stats'),
 
   exportProject: (id: number) =>
