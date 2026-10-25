@@ -228,15 +228,15 @@ export default function GuidePage() {
       <header className="page-header">
         <div>
           <div className="eyebrow">Field guide</div>
-          <h1 className="page-title">操作ガイド</h1>
+          <h1 className="page-title">操作<span className="title-accent">ガイド</span></h1>
           <p className="page-description">
             PDF登録からZIP出力まで、アノテーション作業の流れを順番に確認できます。
           </p>
         </div>
       </header>
 
-      <div className="notice mb-6 border-cyan-200 bg-cyan-50 text-cyan-800">
-        <Sparkles size={18} className="mt-0.5 flex-none" />
+      <div className="notice mb-6 border-slate-200 bg-slate-100/70 text-slate-700">
+        <Sparkles size={18} className="mt-0.5 flex-none text-blue-600" />
         <span>このページに実際の図面は含まれていません。表示している図形・名称・番号はすべて操作説明用です。</span>
       </div>
 

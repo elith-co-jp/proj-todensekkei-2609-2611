@@ -1,11 +1,15 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
+  ArrowRight,
   ArrowUpRight,
   Cable,
   CheckCircle2,
+  CircleDot,
   Download,
   FileStack,
+  LayoutGrid,
+  List,
   RefreshCw,
   Search,
   Shapes,
@@ -27,11 +31,62 @@ const STATUS_CLASS: Record<string, string> = {
   done: 'bg-emerald-100 text-emerald-700 ring-1 ring-inset ring-emerald-200',
 }
 
+const STATUS_DOT: Record<string, string> = {
+  draft: 'bg-slate-400',
+  review: 'bg-amber-500',
+  done: 'bg-emerald-500',
+}
+
+const STATUS_FILTERS = [
+  { key: 'all', label: 'すべて' },
+  { key: 'draft', label: STATUS_LABEL.draft },
+  { key: 'review', label: STATUS_LABEL.review },
+  { key: 'done', label: STATUS_LABEL.done },
+] as const
+
+type StatusFilter = (typeof STATUS_FILTERS)[number]['key']
+type ViewMode = 'grid' | 'list'
+
+const VIEW_STORAGE_KEY = 'todenyolo.workspace.view'
+
+const WORKFLOW_STEPS = ['登録', 'AI 解析', '確認・修正', '出力']
+
+function readViewMode(): ViewMode {
+  try {
+    return window.localStorage.getItem(VIEW_STORAGE_KEY) === 'list' ? 'list' : 'grid'
+  } catch {
+    return 'grid'
+  }
+}
+
+function DrawingThumbnail({ id }: { id: number }) {
+  const [failed, setFailed] = useState(false)
+  if (failed) {
+    return (
+      <div className="flex h-full w-full items-center justify-center text-slate-400">
+        <FileStack size={30} aria-hidden="true" />
+      </div>
+    )
+  }
+  return (
+    <img
+      src={api.thumbnailUrl(id)}
+      alt=""
+      loading="lazy"
+      decoding="async"
+      className="h-full w-full object-contain p-4 drop-shadow-[0_6px_14px_rgba(15,23,42,0.14)] transition duration-300 group-hover:scale-[1.03]"
+      onError={() => setFailed(true)}
+    />
+  )
+}
+
 export default function ProjectListPage() {
   const [rows, setRows] = useState<ProjectRow[]>([])
   const [stats, setStats] = useState<Stats | null>(null)
   const [q, setQ] = useState('')
   const [debouncedQuery, setDebouncedQuery] = useState('')
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
+  const [view, setView] = useState<ViewMode>(readViewMode)
   const [checked, setChecked] = useState<Set<number>>(new Set())
   const [busy, setBusy] = useState(false)
   const [loading, setLoading] = useState(true)
@@ -83,6 +138,26 @@ export default function ProjectListPage() {
     void load()
   }, [load])
 
+  const changeView = (next: ViewMode) => {
+    setView(next)
+    try {
+      window.localStorage.setItem(VIEW_STORAGE_KEY, next)
+    } catch {
+      // 保存できない環境では、この画面を開いている間だけ切り替える
+    }
+  }
+
+  const statusCounts = useMemo(() => {
+    const counts: Record<string, number> = { all: rows.length }
+    for (const row of rows) counts[row.status] = (counts[row.status] ?? 0) + 1
+    return counts
+  }, [rows])
+
+  const visibleRows = useMemo(
+    () => (statusFilter === 'all' ? rows : rows.filter((row) => row.status === statusFilter)),
+    [rows, statusFilter],
+  )
+
   const upload = async (files: FileList | null) => {
     if (!files || files.length === 0) return
     setBusy(true)
@@ -115,7 +190,7 @@ export default function ProjectListPage() {
     setChecked((previous) => {
       const next = new Set(previous)
       if (shift && anchorRef.current !== null) {
-        const ids = rows.map((row) => row.id)
+        const ids = visibleRows.map((row) => row.id)
         const start = ids.indexOf(anchorRef.current)
         const end = ids.indexOf(id)
         if (start >= 0 && end >= 0) {
@@ -217,12 +292,24 @@ export default function ProjectListPage() {
     }
   }
 
+  const completionRate = stats && stats.project_count > 0
+    ? Math.round(((stats.by_status.done ?? 0) / stats.project_count) * 100)
+    : 0
+
   const statsCards = stats
     ? [
-        { label: '登録図面', value: stats.project_count, unit: '枚', icon: FileStack, color: 'text-blue-700 bg-blue-50' },
-        { label: 'シンボル', value: stats.symbol_count, unit: '件', icon: Shapes, color: 'text-violet-700 bg-violet-50' },
-        { label: '配線', value: stats.connection_count, unit: '件', icon: Cable, color: 'text-amber-700 bg-amber-50' },
-        { label: '完了', value: stats.by_status.done ?? 0, unit: '枚', icon: CheckCircle2, color: 'text-emerald-700 bg-emerald-50' },
+        {
+          label: '登録図面',
+          value: stats.project_count,
+          unit: '枚',
+          icon: FileStack,
+          color: 'text-blue-700 bg-blue-50',
+          progress: null,
+          caption: `作業中 ${stats.by_status.draft ?? 0} ・ レビュー待ち ${stats.by_status.review ?? 0}`,
+        },
+        { label: 'シンボル', value: stats.symbol_count, unit: '件', icon: Shapes, color: 'text-violet-700 bg-violet-50', progress: null, caption: '全図面の合計' },
+        { label: '配線', value: stats.connection_count, unit: '件', icon: Cable, color: 'text-amber-700 bg-amber-50', progress: null, caption: '全図面の合計' },
+        { label: '完了', value: stats.by_status.done ?? 0, unit: '枚', icon: CheckCircle2, color: 'text-emerald-700 bg-emerald-50', progress: completionRate, caption: null },
       ]
     : []
 
@@ -247,7 +334,7 @@ export default function ProjectListPage() {
       <header className="page-header">
         <div>
           <div className="eyebrow">Annotation operations</div>
-          <h1 className="page-title">図面ワークスペース</h1>
+          <h1 className="page-title">図面<span className="title-accent">ワークスペース</span></h1>
           <p className="page-description">
             PDFをページ単位で管理し、作業状況を確認しながらアノテーションを進めます。
           </p>
@@ -273,32 +360,35 @@ export default function ProjectListPage() {
         </div>
       </header>
 
-      <section className="relative mb-6 overflow-hidden rounded-3xl border border-blue-100 bg-white p-6 shadow-[0_16px_40px_-32px_rgba(37,99,235,0.4)] sm:p-8">
-        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_92%_18%,rgba(59,130,246,0.09),transparent_22rem)]" />
-        <div className="relative grid gap-6 lg:grid-cols-[1fr_auto] lg:items-center">
-          <div>
-            <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-blue-600">
-              <Sparkles size={14} /> Page-by-page workflow
-            </div>
-            <h2 className="mt-3 text-xl font-semibold tracking-tight text-slate-950 sm:text-2xl">大きな図面も、1ページずつ迷わず処理</h2>
-            <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-500">
-              複数ページPDFは自動でPNGへ変換します。登録後は図面を開き、前後ページへ連続移動しながら作業できます。
-            </p>
+      <section className="info-banner mb-6" aria-label="作業の流れ">
+        <div className="flex items-center gap-4 xl:contents">
+          <span className="info-banner-icon">
+            <FileStack size={24} />
+          </span>
+          <div className="min-w-0 xl:flex-none">
+            <h2 className="text-lg font-semibold tracking-tight text-slate-950">1ページずつ迷わず処理</h2>
+            <p className="mt-0.5 text-xs text-slate-600">PDFはページごとに自動で分割</p>
           </div>
-          <button
-            type="button"
-            className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-blue-200 bg-blue-50 px-5 text-sm font-semibold text-blue-700 transition hover:border-blue-300 hover:bg-blue-100"
-            onClick={() => fileRef.current?.click()}
-            disabled={busy}
-          >
-            <Upload size={18} /> ファイルを選択 <ArrowUpRight size={16} />
-          </button>
         </div>
+        <span className="info-banner-divider" />
+        <ol className="flex min-w-0 flex-1 flex-wrap items-center gap-x-1.5 gap-y-2 text-xs text-slate-700">
+          {WORKFLOW_STEPS.map((step, index) => (
+            <li key={step} className="flex items-center gap-1.5">
+              <span className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border border-slate-200 bg-white py-1 pl-1 pr-2.5 font-semibold shadow-sm shadow-slate-900/[0.03]">
+                <span className="flex h-5 w-5 items-center justify-center rounded-full bg-blue-600 text-[10px] font-bold text-white">
+                  {index + 1}
+                </span>
+                {step}
+              </span>
+              {index < WORKFLOW_STEPS.length - 1 && <ArrowRight size={13} className="text-slate-400" aria-hidden="true" />}
+            </li>
+          ))}
+        </ol>
       </section>
 
       {statsCards.length > 0 && (
         <section className="mb-6 grid grid-cols-2 gap-3 lg:grid-cols-4" aria-label="作業状況">
-          {statsCards.map(({ label, value, unit, icon: Icon, color }) => (
+          {statsCards.map(({ label, value, unit, icon: Icon, color, progress, caption }) => (
             <div key={label} className="stat-card">
               <div className="flex items-start justify-between gap-3">
                 <div>
@@ -312,6 +402,22 @@ export default function ProjectListPage() {
                   <Icon size={19} />
                 </span>
               </div>
+              {caption && <div className="mt-3 text-[11px] font-medium text-slate-500">{caption}</div>}
+              {progress !== null && (
+                <div className="mt-3">
+                  <div
+                    className="h-1.5 overflow-hidden rounded-full bg-slate-100"
+                    role="progressbar"
+                    aria-label="完了率"
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    aria-valuenow={progress}
+                  >
+                    <div className="h-full rounded-full bg-emerald-500 transition-[width] duration-500" style={{ width: `${progress}%` }} />
+                  </div>
+                  <div className="mt-1.5 text-[11px] font-semibold text-emerald-700">完了率 {progress}%</div>
+                </div>
+              )}
             </div>
           ))}
         </section>
@@ -342,22 +448,11 @@ export default function ProjectListPage() {
       )}
 
       <section className="card overflow-hidden">
-        <div className="card-head flex-wrap">
-          <div className="min-w-0 flex-1 sm:flex-none">
+        <div className="flex flex-wrap items-center gap-2 border-b border-slate-100 px-4 pt-4 sm:px-5">
+          <div className="mr-auto min-w-0">
             <h2 className="text-base font-semibold text-slate-900">登録済みの図面</h2>
-            <p className="mt-0.5 text-[10px] text-slate-400">チェックはShiftキーで範囲選択できます</p>
+            <p className="mt-0.5 text-[11px] text-slate-500">チェックはShiftキーで範囲選択できます</p>
           </div>
-          <div className="hidden flex-1 lg:block" />
-          <label className="relative w-full sm:w-auto">
-            <span className="sr-only">図面を検索</span>
-            <Search size={15} className="pointer-events-none absolute left-3 top-3 text-slate-400" />
-            <input
-              className="field w-full !rounded-full pl-9 text-xs sm:w-72"
-              placeholder="ID・名称・シート番号で検索"
-              value={q}
-              onChange={(event) => setQ(event.target.value)}
-            />
-          </label>
           <button type="button" className="btn btn-sm" onClick={() => void inferChecked()} disabled={busy}>
             <Sparkles size={14} /> {checked.size ? `選択 ${checked.size} 件` : '全件'}に AI 解析
           </button>
@@ -375,8 +470,148 @@ export default function ProjectListPage() {
           >
             <Trash2 size={14} /> 削除
           </button>
+          <div className="segmented" role="group" aria-label="表示形式">
+            <button
+              type="button"
+              className="segmented-item !px-2.5"
+              aria-pressed={view === 'grid'}
+              aria-label="カード表示"
+              title="カード表示"
+              onClick={() => changeView('grid')}
+            >
+              <LayoutGrid size={15} />
+            </button>
+            <button
+              type="button"
+              className="segmented-item !px-2.5"
+              aria-pressed={view === 'list'}
+              aria-label="表で表示"
+              title="表で表示"
+              onClick={() => changeView('list')}
+            >
+              <List size={15} />
+            </button>
+          </div>
+          <div className="flex w-full flex-wrap items-center gap-2 pb-4 pt-1">
+            <div className="segmented" role="group" aria-label="状態で絞り込み">
+              {STATUS_FILTERS.map(({ key, label }) => (
+                <button
+                  key={key}
+                  type="button"
+                  className="segmented-item"
+                  aria-pressed={statusFilter === key}
+                  onClick={() => setStatusFilter(key)}
+                >
+                  {key !== 'all' && <span className={`h-2 w-2 rounded-full ${STATUS_DOT[key]}`} aria-hidden="true" />}
+                  {label}
+                  <span className="segmented-count">{statusCounts[key] ?? 0}</span>
+                </button>
+              ))}
+            </div>
+          <label className="relative w-full sm:w-auto sm:min-w-56 sm:flex-1">
+            <span className="sr-only">図面を検索</span>
+            <Search size={15} className="pointer-events-none absolute left-3 top-3 text-slate-400" />
+            <input
+              className="field w-full !rounded-full pl-9 text-xs"
+              placeholder="ID・名称・シート番号で検索"
+              value={q}
+              onChange={(event) => setQ(event.target.value)}
+            />
+          </label>
+          </div>
         </div>
 
+        {view === 'grid' && (
+          <div className="bg-slate-50/60 p-4 sm:p-5">
+            {visibleRows.length === 0 ? (
+              <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-slate-300 bg-white px-6 py-14 text-center">
+                <span className="flex h-14 w-14 items-center justify-center rounded-2xl bg-blue-50 text-blue-600">
+                  <FileStack size={26} aria-hidden="true" />
+                </span>
+                <p className="mt-4 text-sm font-semibold text-slate-800">
+                  {debouncedQuery || statusFilter !== 'all' ? '条件に一致する図面がありません。' : '図面がありません。PDFまたは画像を登録してください。'}
+                </p>
+                {!debouncedQuery && statusFilter === 'all' && (
+                  <button type="button" className="btn btn-primary mt-4" onClick={() => fileRef.current?.click()} disabled={busy}>
+                    <Upload size={16} /> PDF / 図面を登録
+                  </button>
+                )}
+              </div>
+            ) : (
+              <ul className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+                {visibleRows.map((row) => {
+                  const selected = checked.has(row.id)
+                  return (
+                    <li
+                      key={row.id}
+                      className={`group relative flex flex-col overflow-hidden rounded-2xl border bg-white transition duration-200 hover:-translate-y-0.5 hover:shadow-[0_18px_40px_-28px_rgba(15,23,42,0.45)] ${
+                        selected ? 'border-blue-400 ring-2 ring-blue-200' : 'border-slate-200 hover:border-slate-300'
+                      }`}
+                    >
+                      <Link
+                        to={`/projects/${row.id}`}
+                        tabIndex={-1}
+                        aria-hidden="true"
+                        className="relative block aspect-[4/3] overflow-hidden border-b border-slate-200 bg-slate-100"
+                      >
+                        <DrawingThumbnail id={row.id} />
+                      </Link>
+                      <label className="absolute left-3 top-3 flex h-9 w-9 cursor-pointer items-center justify-center rounded-xl bg-white/95 shadow-sm ring-1 ring-slate-200">
+                        <input
+                          type="checkbox"
+                          className="h-5 w-5 rounded border-slate-300 accent-blue-600"
+                          aria-label={`${row.name}を選択`}
+                          checked={selected}
+                          onChange={() => undefined}
+                          onClick={(event) => toggle(row.id, event.shiftKey)}
+                        />
+                      </label>
+                      <span className={`tag absolute right-3 top-3 shadow-sm ${STATUS_CLASS[row.status] ?? STATUS_CLASS.draft}`}>
+                        {STATUS_LABEL[row.status] ?? row.status}
+                      </span>
+                      <div className="flex flex-1 flex-col p-4">
+                        <div className="font-mono text-[11px] text-slate-500">
+                          #{row.id}
+                          {row.sheet_no && <> · シート {row.sheet_no}</>}
+                          {row.page_no && <> · {row.page_no} 頁</>}
+                        </div>
+                        <Link
+                          to={`/projects/${row.id}`}
+                          className="mt-1 line-clamp-2 break-words text-sm font-semibold leading-6 text-slate-900 transition hover:text-blue-700"
+                        >
+                          {row.name}
+                        </Link>
+                        <div className="mt-3 flex flex-wrap gap-1.5 text-[11px] font-semibold">
+                          <span className="inline-flex items-center gap-1 rounded-full bg-violet-50 px-2 py-1 text-violet-700" title="シンボル">
+                            <Shapes size={12} aria-hidden="true" /> シンボル {row.symbol_count}
+                            {row.prediction_count > 0 && <span className="text-blue-700" title="AI 推論の検出件数">+{row.prediction_count}</span>}
+                          </span>
+                          <span className="inline-flex items-center gap-1 rounded-full bg-sky-50 px-2 py-1 text-sky-700" title="端子">
+                            <CircleDot size={12} aria-hidden="true" /> 端子 {row.terminal_count}
+                          </span>
+                          <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-1 text-amber-700" title="配線">
+                            <Cable size={12} aria-hidden="true" /> 配線 {row.connection_count}
+                          </span>
+                        </div>
+                        <div className="mt-auto flex gap-2 pt-4">
+                          <Link to={`/projects/${row.id}/analysis`} className="btn btn-sm flex-1" aria-label={`${row.name}の解析結果`}>
+                            <Cable size={14} /> 解析結果
+                          </Link>
+                          <Link to={`/projects/${row.id}`} className="btn btn-sm btn-primary flex-1" aria-label={`${row.name}を編集`}>
+                            編集 <ArrowUpRight size={14} />
+                          </Link>
+                        </div>
+                      </div>
+                    </li>
+                  )
+                })}
+              </ul>
+            )}
+          </div>
+        )}
+
+        {view === 'list' && (
+        <>
         <div className="hidden overflow-x-auto md:block">
           <table className="w-full min-w-[840px]">
             <thead>
@@ -394,15 +629,15 @@ export default function ProjectListPage() {
               </tr>
             </thead>
             <tbody>
-              {rows.length === 0 && (
+              {visibleRows.length === 0 && (
                 <tr>
                   <td className="td py-12 text-center text-slate-500" colSpan={10}>
                     <FileStack size={28} className="mx-auto mb-3 text-blue-300" aria-hidden="true" />
-                    {debouncedQuery ? '条件に一致する図面がありません。' : '図面がありません。PDFまたは画像を登録してください。'}
+                    {debouncedQuery || statusFilter !== 'all' ? '条件に一致する図面がありません。' : '図面がありません。PDFまたは画像を登録してください。'}
                   </td>
                 </tr>
               )}
-              {rows.map((row) => (
+              {visibleRows.map((row) => (
                 <tr key={row.id} className="group transition hover:bg-blue-50/50">
                   <td className="td">
                     <input
@@ -456,12 +691,12 @@ export default function ProjectListPage() {
         </div>
 
         <div className="divide-y divide-slate-100 md:hidden">
-          {rows.length === 0 && (
+          {visibleRows.length === 0 && (
             <div className="px-5 py-12 text-center text-sm text-slate-400">
-              {debouncedQuery ? '条件に一致する図面がありません。' : '図面がありません。PDFまたは画像を登録してください。'}
+              {debouncedQuery || statusFilter !== 'all' ? '条件に一致する図面がありません。' : '図面がありません。PDFまたは画像を登録してください。'}
             </div>
           )}
-          {rows.map((row) => (
+          {visibleRows.map((row) => (
             <article key={row.id} className="p-4">
               <div className="flex items-start gap-3">
                 <input
@@ -502,6 +737,8 @@ export default function ProjectListPage() {
             </article>
           ))}
         </div>
+        </>
+        )}
       </section>
 
       </div>

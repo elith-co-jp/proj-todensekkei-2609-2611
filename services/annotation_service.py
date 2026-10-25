@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import io
+import os
 from pathlib import Path
 
 from PIL import Image
@@ -25,6 +26,7 @@ from services.blob_store import store_blob
 from services.geometry import sanitize_box
 
 MAX_IMAGE_BYTES = 64 * 1024 * 1024
+THUMBNAIL_MAX_SIDE = 640
 
 
 # --------------------------------------------------------------------------
@@ -51,6 +53,27 @@ def store_image_bytes(raw: bytes) -> tuple[str, int, int]:
 
 def image_path(sha256: str) -> Path:
     return IMAGE_DIR / f"{sha256}.png"
+
+
+def thumbnail_path(sha256: str) -> Path:
+    return IMAGE_DIR / "thumbs" / f"{sha256}_{THUMBNAIL_MAX_SIDE}.jpg"
+
+
+def ensure_thumbnail(sha256: str) -> Path:
+    """一覧表示用の縮小 JPEG を作成（作成済みなら再利用）してパスを返す。"""
+    target = thumbnail_path(sha256)
+    if target.exists():
+        return target
+    source = image_path(sha256)
+    with Image.open(source) as img:
+        img.thumbnail((THUMBNAIL_MAX_SIDE, THUMBNAIL_MAX_SIDE), Image.Resampling.LANCZOS)
+        if img.mode != "RGB":
+            img = img.convert("RGB")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        tmp = target.with_suffix(f".{os.getpid()}.tmp")
+        img.save(tmp, format="JPEG", quality=84, optimize=True)
+    os.replace(tmp, target)
+    return target
 
 
 # --------------------------------------------------------------------------

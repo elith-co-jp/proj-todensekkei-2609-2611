@@ -100,6 +100,45 @@ textarea {
     @apply mt-2 max-w-2xl text-sm leading-6 text-slate-500;
   }
 
+  /* 見出しの一部を青で強調する */
+  .title-accent {
+    @apply text-blue-600;
+    font-style: italic;
+    font-synthesis: style;
+  }
+
+  /* アイコン・説明・操作を横に並べる案内バナー */
+  .info-banner {
+    @apply flex flex-col gap-4 rounded-2xl border border-slate-200 bg-slate-100/70 p-4 sm:p-5
+           xl:flex-row xl:items-center xl:gap-6;
+  }
+
+  .info-banner-icon {
+    @apply flex h-14 w-14 flex-none items-center justify-center rounded-2xl bg-slate-950 text-white shadow-lg shadow-slate-900/20;
+  }
+
+  .info-banner-divider {
+    @apply hidden h-12 w-px flex-none bg-slate-300 xl:block;
+  }
+
+  /* 件数つきの絞り込みタブ */
+  .segmented {
+    @apply inline-flex max-w-full items-center gap-1 overflow-x-auto rounded-full border border-slate-200 bg-slate-100/80 p-1;
+  }
+
+  .segmented-item {
+    @apply inline-flex min-h-8 flex-none items-center gap-1 whitespace-nowrap rounded-full px-2 text-xs font-semibold
+           text-slate-600 transition hover:text-slate-950 sm:gap-1.5 sm:px-3;
+  }
+
+  .segmented-item[aria-pressed='true'] {
+    @apply bg-white text-slate-950 shadow-sm shadow-slate-900/10;
+  }
+
+  .segmented-count {
+    @apply font-mono text-[11px] font-medium text-slate-500;
+  }
+
   .btn {
     @apply inline-flex min-h-10 items-center justify-center gap-2 whitespace-nowrap rounded-xl border border-slate-200
            bg-white px-3.5 py-2 text-sm font-semibold text-slate-700 shadow-sm shadow-slate-900/[0.03]

@@ -17,7 +17,7 @@
 | フロントエンド | React 19 / TypeScript / Tailwind CSS 3 / Vite 6 / react-router 7 |
 | バックエンド | FastAPI / SQLAlchemy 2 / Pydantic 2 |
 | DB | PostgreSQL 17（Docker）／ SQLite（ローカル開発時の既定） |
-| 画像 | `data/images/<sha256>.png`（PNG 正規化・重複排除） |
+| 画像 | `data/images/<sha256>.png`（PNG 正規化・重複排除）、一覧用縮小画像 `data/images/thumbs/<sha256>_640.jpg` |
 
 Docker Compose は `frontend`（Nginx）、`backend`（FastAPI + Poppler）、`db`（PostgreSQL）の
 3サービスを起動する。ブラウザからの `/api` は frontend が backend へリバースプロキシする。
@@ -31,16 +31,18 @@ Docker Compose は `frontend`（Nginx）、`backend`（FastAPI + Poppler）、`d
 | 項目 | 内容 |
 |------|------|
 | 役割 | 図面の登録、進捗確認、一括出力・削除 |
-| 主な操作 | 「PDF / 図面を登録」で PDF または画像をアップロード（複数可）／PDF は全ページを自動分割／行クリックで編集画面へ／チェックボックスは Shift で範囲選択 |
-| 表示 | 登録図面数・シンボル数・配線数・完了数の KPI、図面ごとのシンボル／端子／配線件数と状態 |
-| 利用 API | `GET /api/projects` `GET /api/stats` `POST /api/projects` `POST /api/projects/bulk-delete` `POST /api/export` |
+| 主な操作 | 「PDF / 図面を登録」で PDF または画像をアップロード（複数可）／PDF は全ページを自動分割／名称またはサムネイルで編集画面へ／チェックボックスは Shift で範囲選択／状態タブ（すべて・作業中・レビュー待ち・完了）で絞り込み／カード表示と表表示の切り替え（ブラウザに保存） |
+| 表示 | 登録図面数・シンボル数・配線数・完了数と完了率の KPI、作業の流れ（登録→AI 解析→確認・修正→出力）、図面ごとのサムネイル・シンボル／端子／配線件数と状態 |
+| 利用 API | `GET /api/projects` `GET /api/projects/{id}/thumbnail` `GET /api/stats` `POST /api/projects` `POST /api/projects/bulk-delete` `POST /api/export` |
 
 一覧・データ受け渡し・ガイドで共通のサイドバーは展開／折りたたみ可能。編集画面は図面領域を
 最大化する専用フォーカスレイアウトとし、一覧へ戻る導線を編集ヘッダーに表示する。
 初回アクセス時は4ステップのツアーを表示し、完了後もサイドバーの
-「ツアーガイドを表示」から再表示できる。PCでは表、SPではカードを使い、ページ全体の横スクロールを避ける。
+「ツアーガイドを表示」から再表示できる。既定はサムネイルつきカード表示とし、表表示はPCでは表、SPではカードを使い、ページ全体の横スクロールを避ける。
 共通ナビゲーションと図面一覧は、[Best Designs on X](https://bestdesignsonx.com/) を参考に、
 明るい背景、控えめな境界線、広い余白、青いアクセントと明瞭な見出しで操作を整理する。
+ナビゲーションは項目ごとの色つきアイコンで見分け、案内はアイコン・説明を横に並べたグレーのバナーで示す。
+AI 改善サイクルの5段階は番号と線でつながった流れとして表示する。
 画像やロゴは流用しない。編集画面のキャンバスは作業領域を優先する。
 
 ### 3.2 アノテーションエディタ（`/projects/:id`）
@@ -132,6 +134,7 @@ ZIP を選択してインポートすると、`bundle.json` の有無で復元�
 | `DELETE` | `/api/projects/{id}` | 削除（画像・シンボル・配線を連鎖削除） |
 | `POST` | `/api/projects/bulk-delete` | `{ids}` |
 | `GET` | `/api/projects/{id}/image` | PNG を返す |
+| `GET` | `/api/projects/{id}/thumbnail` | 長辺 640px 以下の JPEG を返す（初回作成後は再利用） |
 
 ### 入出力
 

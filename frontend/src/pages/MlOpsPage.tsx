@@ -35,11 +35,11 @@ type Notice = { kind: 'success' | 'error'; title: string; body: string }
 const TRAINING_POLL_MS = 3000
 
 const CYCLE_STEPS = [
-  { icon: Zap, label: '1. 解析', desc: 'シンボル・配線・接続を検出' },
-  { icon: FileJson, label: '2. 結果表示', desc: '図面で確認・構造JSONを出力' },
-  { icon: Layers, label: '3. 修正', desc: 'エディタで誤検出・漏れを修正' },
-  { icon: Brain, label: '4. 学習', desc: '修正済みデータで YOLO を再学習' },
-  { icon: Scale, label: '5. 比較・採用', desc: '新旧モデルの精度を比較して採用可否を選択' },
+  { icon: Zap, label: '解析', desc: 'シンボル・配線・接続を検出', tone: 'bg-blue-100 text-blue-700' },
+  { icon: FileJson, label: '結果表示', desc: '図面で確認・構造JSONを出力', tone: 'bg-sky-100 text-sky-700' },
+  { icon: Layers, label: '修正', desc: 'エディタで誤検出・漏れを修正', tone: 'bg-violet-100 text-violet-700' },
+  { icon: Brain, label: '学習', desc: '修正済みデータで YOLO を再学習', tone: 'bg-amber-100 text-amber-700' },
+  { icon: Scale, label: '比較・採用', desc: '新旧モデルの精度を比較して採用可否を選択', tone: 'bg-emerald-100 text-emerald-700' },
 ]
 
 // 時間のかかる操作で画面全体に出すローディング表示（busy キー → メッセージ）
@@ -329,26 +329,37 @@ export default function MlOpsPage() {
       <header className="page-header">
         <div>
           <div className="eyebrow">AI improvement cycle</div>
-          <h1 className="page-title">AI 改善サイクル</h1>
+          <h1 className="page-title">AI <span className="title-accent">改善サイクル</span></h1>
           <p className="page-description">
             推論 → 結果確認 → エディタで修正 → データ蓄積 → YOLO 学習 → 精度比較・採用判定 のサイクルをまわします
           </p>
         </div>
       </header>
 
-      <section className="notice mb-5 border-cyan-200 bg-cyan-50 text-cyan-900">
-        <Brain size={18} className="mt-1 flex-none text-cyan-700" />
-        <div className="grid min-w-0 flex-1 gap-2 sm:grid-cols-5">
-          {CYCLE_STEPS.map((step) => (
-            <div key={step.label} className="text-[12px] leading-5">
-              <div className="flex items-center gap-1.5 font-black text-slate-900">
-                <step.icon size={13} className="text-cyan-700" />
-                {step.label}
+      <section className="mb-5 rounded-2xl border border-slate-200 bg-slate-100/70 p-4 sm:p-6" aria-label="AI 改善サイクルの流れ">
+        <ol className="grid gap-5 md:grid-cols-5 md:gap-0">
+          {CYCLE_STEPS.map((step, index) => (
+            <li key={step.label} className="relative flex gap-3 md:flex-col md:items-center md:px-2 md:text-center">
+              {index < CYCLE_STEPS.length - 1 && (
+                <span
+                  aria-hidden="true"
+                  className="absolute -bottom-4 left-5 top-12 w-px bg-slate-300 md:bottom-auto md:left-[calc(50%+1.75rem)] md:right-[calc(-50%+1.75rem)] md:top-5 md:h-px md:w-auto"
+                />
+              )}
+              <span className={`relative z-10 flex h-10 w-10 flex-none items-center justify-center rounded-2xl ring-4 ring-slate-100 ${step.tone}`}>
+                <step.icon size={18} />
+              </span>
+              <div className="min-w-0">
+                <div className="text-[10px] font-bold tracking-[0.14em] text-slate-500">STEP {index + 1}</div>
+                <div className="text-sm font-semibold text-slate-950">{step.label}</div>
+                <p className="mt-0.5 text-xs leading-5 text-slate-600 [text-wrap:pretty]">{step.desc}</p>
               </div>
-              <p className="mt-0.5">{step.desc}</p>
-            </div>
+            </li>
           ))}
-        </div>
+        </ol>
+        <p className="mt-4 border-t border-slate-200 pt-3 text-center text-xs text-slate-600">
+          採用したモデルで再び解析し、この流れをくり返して精度を上げます。
+        </p>
       </section>
 
       {status && !status.ultralytics && (
