@@ -71,3 +71,11 @@ def test_ring_arcs_read_as_digits_beside_pin_numbers_are_dropped():
 def test_different_pin_numbers_of_the_two_devices_are_kept():
     assert connector_numbers(terminal([("TB13", "42"), ("CN212", "10")])) == [
         {"device": "TB13", "number": "42"}, {"device": "CN212", "number": "10"}]
+
+
+def test_page_reading_supplies_the_second_row_the_symbol_reading_dropped():
+    symbol = terminal([("TB6", "46"), ("CN27", "14")])
+    page = [*symbol["text_items"], item("44", 200, 200, 216, 212), item("14", 300, 240, 318, 252)]
+    symbol["text_items"] = symbol["text_items"][:2]
+    assert connector_numbers(symbol) == [{"device": "TB6", "number": "46"}]
+    assert connector_numbers(symbol, page) == [{"device": "TB6", "number": "46"}, {"device": "CN27", "number": "14"}]

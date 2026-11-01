@@ -71,11 +71,26 @@ def device_name(text: str) -> str:
     return prefix + rest.replace("O", "0").replace("I", "1")
 
 
-def connector_numbers(symbol: dict[str, Any]) -> list[dict[str, str]]:
+def connector_numbers(symbol: dict[str, Any], page_items: list[dict[str, Any]] | None = None) -> list[dict[str, str]]:
+    """Device name and pin number per row. The page OCR replaces the crop OCR when it reads more rows
+    (the crop OCR drops the second row of a two-device terminal)."""
     dot = (symbol.get("dot_role") or {}).get("dot")
     box = symbol["bbox"]
     split_x = dot["center"][0] if dot else (box["x0"] + box["x1"]) / 2
-    fragments = _fragments(symbol)
+    pairs = _connector_pairs(_fragments(symbol), split_x)
+    if page_items:
+        inside = [
+            f for f in _box_fragments(page_items)
+            if box["x0"] - PAGE_PAD_PX <= f["x"] <= box["x1"] + PAGE_PAD_PX
+            and box["y0"] - PAGE_PAD_PX <= f["y"] <= box["y1"] + PAGE_PAD_PX
+        ]
+        from_page = _connector_pairs(inside, split_x)
+        if len(from_page) > len(pairs):
+            pairs = from_page
+    return _without_ring_arcs(pairs)
+
+
+def _connector_pairs(fragments: list[dict[str, Any]], split_x: float) -> list[dict[str, str]]:
     names = [{**f, "text": device_name(f["text"])} for f in fragments if f["x"] < split_x]
     names = [f for f in names if DEVICE.fullmatch(f["text"])]
     numbers = []
@@ -95,7 +110,7 @@ def connector_numbers(symbol: dict[str, Any]) -> list[dict[str, str]]:
     # A number with no device on its row is a wire number printed under the terminal label.
     if any(p["device"] for p in pairs):
         pairs = [p for p in pairs if p["device"]]
-    return _without_ring_arcs(pairs)
+    return pairs
 
 
 def _glued(longer: str, shorter: str) -> bool:
@@ -191,7 +206,7 @@ def attach_terminal_numbers(symbols: list[dict[str, Any]], page_items: list[dict
         if (symbol.get("dot_role") or {}).get("suppressed"):
             continue
         if symbol.get("class_name") == "connector":
-            pairs = connector_numbers(symbol)
+            pairs = connector_numbers(symbol, page_items)
             if not pairs:
                 continue
             symbol["terminal_numbers"] = pairs
