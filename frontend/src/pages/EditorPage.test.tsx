@@ -79,6 +79,8 @@ function row(id: number): ProjectRow {
     sheet_no: String(id),
     page_no: String(id),
     prediction_count: 0,
+    analysis_wire_count: null,
+    analysis_connection_count: null,
     revision: null,
     status: 'draft',
     assignee: null,

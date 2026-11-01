@@ -33,6 +33,8 @@ function projectRow(id: number, name: string, status = 'draft'): ProjectRow {
     connection_count: 0,
     terminal_count: 0,
     prediction_count: 0,
+    analysis_wire_count: null,
+    analysis_connection_count: null,
     updated_at: null,
   }
 }
