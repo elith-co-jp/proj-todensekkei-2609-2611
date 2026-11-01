@@ -78,9 +78,14 @@ def _read_name(name: Any) -> str | None:
     return None if not text or UNREAD_TERMINAL_NAME.fullmatch(text) else text
 
 
-def _class_of(class_name: str, dot_role: str | None) -> str:
-    """配線が 3 方向以上に分かれる黒丸は、コネクタとして検出されていても分岐点にする。"""
-    if class_name == "connector" and dot_role == "junction":
+def _class_of(symbol: dict[str, Any]) -> str:
+    """配線が 3 方向以上に分かれる黒丸は、コネクタとして検出されていても分岐点にする。
+
+    端子番号を読めた黒丸は、配線が分かれていても端子のまま（端子で分岐する描き方がある）。
+    """
+    class_name = symbol["class_name"]
+    role = (symbol.get("dot_role") or {}).get("role")
+    if class_name == "connector" and role == "junction" and not symbol.get("terminal_numbers"):
         return "junction"
     return class_name
 
@@ -102,7 +107,7 @@ def from_structure(structure: dict[str, Any], class_keys: Iterable[str]) -> AiCa
         if s.get("status") == "suppressed_text_zone":
             skipped["text_zone"] += 1
             continue
-        class_key = _class_of(s["class_name"], role.get("role"))
+        class_key = _class_of(s)
         if class_key not in known:
             continue
         box = s["bbox"]

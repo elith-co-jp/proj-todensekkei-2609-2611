@@ -187,6 +187,27 @@ def test_ends_of_coils_and_other_boxes_are_not_joined_inside_the_symbol(client):
     assert _ends(result["connections"]) == {("SYM-0003", "SYM-0003-T1", "SYM-0003", "SYM-0003-T2")}
 
 
+def test_branching_dot_with_a_read_terminal_number_stays_a_terminal(client):
+    pid = create_project(client, w=W, h=H)
+    dot = {"role": "junction", "dot": {"center": [110, 190]}, "suppressed": False}
+    structure = {
+        "image_size": {"width": W, "height": H},
+        "symbols": [
+            {"id": "read", "class_name": "connector", "label": "CN36 9", "dot_role": dot,
+             "terminal_numbers": [{"device": "CN36", "number": "9"}],
+             "bbox": {"x0": 90, "y0": 180, "x1": 130, "y1": 200}, "terminals": []},
+            {"id": "unread", "class_name": "connector", "dot_role": {**dot, "dot": {"center": [300, 190]}},
+             "bbox": {"x0": 290, "y0": 180, "x1": 310, "y1": 200}, "terminals": []},
+        ],
+        "from_to": {"connections": []},
+    }
+    with database.SessionLocal() as db:
+        db.add(StructurePrediction(project_id=pid, payload_json=json.dumps(structure)))
+        db.commit()
+
+    assert [s["class_key"] for s in _import(client, pid, [], [])["symbols"]] == ["connector", "junction"]
+
+
 def test_contact_with_one_found_end_gets_the_opposite_end_and_its_inner_link(client):
     pid = create_project(client, w=W, h=H)
     structure = {
