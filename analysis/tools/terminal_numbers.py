@@ -18,6 +18,8 @@ NUMBER = re.compile(r"\d{1,4}")
 FUSED_NUMBER = re.compile(r"(\d{1,4})[A-Z].*")
 DEVICE_PARTS = re.compile(r"(\d*[A-Z]+)([A-Z0-9]*)")
 CONTACT_CLASSES = {"contact_a", "contact_b"}
+# A contact's lower number is printed right after the left neighbour's label and is read fused with it ("(ER21271)6").
+CONTACT_NUMBER = re.compile(r"(?:.*\))?(\d{1,4})[.,]?")
 # False leaves terminal names as inferred (P1, P2).
 ENABLED = True
 
@@ -31,6 +33,8 @@ def _fragments(symbol: dict[str, Any]) -> list[dict[str, Any]]:
                 "x": (item["box"][0] + item["box"][2]) / 2,
                 "y": (item["box"][1] + item["box"][3]) / 2,
                 "h": item["box"][3] - item["box"][1],
+                "x0": item["box"][0],
+                "x1": item["box"][2],
             }
             for item in symbol["text_items"]
         ]
@@ -45,7 +49,7 @@ def _fragments(symbol: dict[str, Any]) -> list[dict[str, Any]]:
         text = re.sub(r"\s+", "", unicodedata.normalize("NFKC", str(fragment.get("text") or "")).upper())
         xs = [crop[0] + p[0] / sx for p in fragment["bbox"]]
         ys = [crop[1] + p[1] / sy for p in fragment["bbox"]]
-        out.append({"text": text, "x": sum(xs) / len(xs), "y": sum(ys) / len(ys), "h": max(ys) - min(ys)})
+        out.append({"text": text, "x": sum(xs) / len(xs), "y": sum(ys) / len(ys), "h": max(ys) - min(ys), "x0": min(xs), "x1": max(xs)})
     return out
 
 
@@ -88,9 +92,22 @@ def connector_numbers(symbol: dict[str, Any]) -> list[dict[str, str]]:
     return pairs
 
 
+def _contact_number_fragments(fragments: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    out = []
+    for f in fragments:
+        match = CONTACT_NUMBER.fullmatch(f["text"])
+        if not match:
+            continue
+        digits, x = match.group(1), f["x"]
+        if match.start(1) > 0:
+            x = f["x1"] - (f["x1"] - f["x0"]) * len(digits) / len(f["text"]) / 2
+        out.append({**f, "text": digits, "x": x})
+    return out
+
+
 def contact_numbers(symbol: dict[str, Any]) -> dict[str, str]:
     """Nearest number to each terminal of a contact, keyed by terminal ref."""
-    numbers = [f for f in _fragments(symbol) if NUMBER.fullmatch(f["text"])]
+    numbers = _contact_number_fragments(_fragments(symbol))
     out: dict[str, str] = {}
     used: set[int] = set()
     for terminal in symbol.get("terminals") or []:
