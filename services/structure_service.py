@@ -7,6 +7,7 @@ import unicodedata
 
 from sqlalchemy.orm import Session
 
+from analysis.relay_links import link_document_relay_rows
 from analysis.text_extraction import same_relay_device
 from database import DATA_DIR
 from models import AnnotationProject, MlModel, StructurePrediction
@@ -47,6 +48,8 @@ def get_structure(db: Session, project_id: int) -> dict | None:
 def document_structure(pages: list[dict]) -> dict:
     references = resolve_sheet_references(pages)
     relays, linked_relays = link_cross_sheet_relays(pages)
+    rows, linked_rows = link_document_relay_rows(
+        [(page_sheet_number(p), (p.get("source") or {}).get("project_id"), p) for p in pages])
     return {
         "schema_version": "todensekkei.document_structure.v1",
         "status": "partial" if any(p.get("status") == "partial" for p in pages) else "completed",
@@ -63,6 +66,8 @@ def document_structure(pages: list[dict]) -> dict:
             ),
             "cross_sheet_relay_count": relays,
             "linked_cross_sheet_relay_count": linked_relays,
+            "cross_sheet_relay_row_count": rows,
+            "linked_cross_sheet_relay_row_count": linked_rows,
         },
         "pages": pages,
     }

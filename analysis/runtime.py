@@ -15,6 +15,7 @@ from typing import Any
 from PIL import Image
 
 from analysis.label_llm import TEXT, reader_from_env
+from analysis.relay_links import link_relay_rows
 from analysis.text_extraction import extract_text_structure
 
 # The CLI tools use sibling imports. Keep that entry point intact; PyInstaller
@@ -129,7 +130,9 @@ def analyze_detections(
         junction_node_policy="all",
         junction_node_classes={"junction"}, junction_node_threshold=24.0, source_image=image,
     )
-    terminal_number_counts = attach_terminal_numbers(payload["symbols"])
+    terminal_number_counts = attach_terminal_numbers(payload["symbols"], page_items=text_result.get("texts"))
+    # リレー表の「本」の行を行列の位置の接点に結び付ける（#40 #44）。接点の種類を表に合わせて直すので from-to より先。
+    relay_row_counts = link_relay_rows(text_result, payload["symbols"], width, height) if text_result else None
     payload["from_to"] = build_direct_from_to(payload, source_image=image)
     for symbol in symbols:
         symbol.pop("text_items", None)
@@ -139,6 +142,8 @@ def analyze_detections(
         payload["dot_roles"] = dot_summary
     if terminal_number_counts is not None:
         payload["quality"]["terminal_numbers"] = terminal_number_counts
+    if relay_row_counts is not None:
+        payload["quality"]["relay_rows_by_position"] = relay_row_counts
     payload.update({
         "schema_version": "todensekkei.sequence_extraction.v1",
         "status": "partial" if warnings else "completed",

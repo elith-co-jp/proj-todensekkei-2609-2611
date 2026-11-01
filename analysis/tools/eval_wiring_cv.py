@@ -212,7 +212,47 @@ def structure_predictions(structure: dict[str, Any], pred: list[dict[str, Any]])
     return out
 
 
-def score_drawing(drawing: dict[str, Any], pred: list[dict[str, Any]], structure: dict[str, Any]) -> dict[str, Any]:
+def contact_number_outcomes(
+    contacts: list[dict[str, Any]], g_sym: list[dict[str, Any]], p_sym: list[dict[str, Any]],
+    matches: list[tuple[int, int, float]], symbols: dict[str, dict[str, Any]],
+) -> Counter:
+    """Each ground-truth contact end: its number read at that end, a wrong number, no number, or the contact undetected.
+
+    Predicted terminals are assigned to the nearest ground-truth end of the matched contact. An end whose truth is
+    null has no number printed; it counts as blank_ok when nothing is read there and blank_spurious otherwise.
+    """
+    gold_index = {g["ref"]: gi for gi, g in enumerate(g_sym)}
+    pred_of = {gi: p_sym[pi]["structure_id"] for gi, pi, _ in matches}
+    out: Counter = Counter()
+    for contact in contacts:
+        ends = contact["terminals"]
+        numbered = [e for e in ends if e["number"] is not None]
+        out.update(contacts=bool(numbered), ends=len(numbered), blank_ends=len(ends) - len(numbered))
+        symbol_id = pred_of.get(gold_index.get(contact["gold_ref"], -1))
+        if symbol_id is None:
+            out.update(ends_undetected=len(numbered), blank_undetected=len(ends) - len(numbered))
+            continue
+        read: list[set[str]] = [set() for _ in ends]
+        for terminal in symbols[symbol_id].get("terminals") or []:
+            name = str(terminal.get("name") or "")
+            if not name.isdigit():
+                continue
+            px, py = terminal["point"]
+            read[min(range(len(ends)), key=lambda i: (ends[i]["point"][0] - px) ** 2 + (ends[i]["point"][1] - py) ** 2)].add(name)
+        for end, names in zip(ends, read, strict=True):
+            if end["number"] is None:
+                out["blank_spurious" if names else "blank_ok"] += 1
+            else:
+                out["ends_correct" if end["number"] in names else "ends_wrong" if names else "ends_unread"] += 1
+        if numbered:
+            out["contacts_pair_correct"] += set().union(*read) == {e["number"] for e in numbered}
+    return out
+
+
+def score_drawing(
+    drawing: dict[str, Any], pred: list[dict[str, Any]], structure: dict[str, Any],
+    contacts: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     gold = gold_items(drawing)
     detector = score_symbols(gold, pred)
     active = structure_predictions(structure, pred)
@@ -248,6 +288,7 @@ def score_drawing(drawing: dict[str, Any], pred: list[dict[str, Any]], structure
         "per_class_after": {c: dict(v) for c, v in scored["per_class"].items()},
         "dot_roles": dict(roles),
         "terminal_numbers": dict(numbers),
+        "contact_numbers": dict(contact_number_outcomes(contacts or [], g_sym, p_sym, scored["matches"], symbols)),
     }
 
 
@@ -257,6 +298,7 @@ def aggregate(rows: list[dict[str, Any]]) -> dict[str, Any]:
     after: dict[str, Counter] = {c: Counter() for c in SCORED_CLASSES}
     roles: Counter = Counter()
     numbers: Counter = Counter()
+    contact_numbers: Counter = Counter()
     for r in rows:
         for k in tot:
             tot[k].update(r[k])
@@ -265,7 +307,9 @@ def aggregate(rows: list[dict[str, Any]]) -> dict[str, Any]:
             after[c].update(r["per_class_after"].get(c, {}))
         roles.update(r["dot_roles"])
         numbers.update(r["terminal_numbers"])
+        contact_numbers.update(r.get("contact_numbers", {}))
     agree = sum(n for k, n in roles.items() if k.split("->")[1] == ROLE_OF_CLASS[k.split("->")[0]])
+    ends, contacts = contact_numbers["ends"], contact_numbers["contacts"]
     return {
         "drawings": len(rows),
         "symbol_pairs": prf(tot["pairs"]["tp"], tot["pairs"]["fp"], tot["pairs"]["fn"]),
@@ -280,6 +324,13 @@ def aggregate(rows: list[dict[str, Any]]) -> dict[str, Any]:
             "numbers_agree": round(numbers["numbers_agree"] / numbers["scored"], 4) if numbers["scored"] else None,
             "pairs_scored": numbers["pairs_scored"],
             "pairs_agree": round(numbers["pairs_agree"] / numbers["pairs_scored"], 4) if numbers["pairs_scored"] else None,
+        },
+        "contact_terminal_numbers": {
+            "contacts": contacts, "ends": ends,
+            "end_accuracy": round(contact_numbers["ends_correct"] / ends, 4) if ends else None,
+            "pair_accuracy": round(contact_numbers["contacts_pair_correct"] / contacts, 4) if contacts else None,
+            **{k: contact_numbers[k] for k in ("ends_correct", "ends_wrong", "ends_unread", "ends_undetected", "contacts_pair_correct")},
+            **{k: contact_numbers[k] for k in ("blank_ends", "blank_ok", "blank_spurious", "blank_undetected") if contact_numbers["blank_ends"]},
         },
     }
 
@@ -297,13 +348,20 @@ def main() -> None:
                         help="ablation: set a module constant in every worker, e.g. filter_wire_decorations.DASHED_RULE_MIN_LENGTH=0")
     parser.add_argument("--rescore", action="store_true", help="score structures already in --work without rerunning analysis")
     parser.add_argument("--sheets", nargs="*", help="restrict to these sheets (debugging)")
+    parser.add_argument("--contact-gt", type=Path, nargs="*", default=[],
+                        help="contact terminal-number ground truth JSON ({contacts: [{sheet, gold_ref, terminals: [{point, number|null}]}]})")
     args = parser.parse_args()
 
     _keys, drawings = load_gold(args.gold)
+    # The split comes from all gold sheets so a --sheets subset keeps each sheet's tune/report side.
+    tune = set(sorted(d["sheet"] for d in drawings)[0::2])
     if args.sheets:
         drawings = [d for d in drawings if d["sheet"] in set(args.sheets)]
     sheets = [d["sheet"] for d in drawings]
-    tune = set(sorted(sheets)[0::2])
+    contacts_of: dict[str, list[dict[str, Any]]] = {}
+    for gt_path in args.contact_gt:
+        for contact in json.loads(gt_path.read_text(encoding="utf-8"))["contacts"]:
+            contacts_of.setdefault(contact["sheet"], []).append(contact)
     started = time.time()
     summary: dict[str, Any] = {}
     for condition in args.conditions:
@@ -324,7 +382,7 @@ def main() -> None:
             if d["sheet"] in errors or not path.exists():
                 errors.setdefault(d["sheet"], "structure missing")
                 continue
-            row = score_drawing(d, preds[d["sheet"]], json.loads(path.read_text(encoding="utf-8")))
+            row = score_drawing(d, preds[d["sheet"]], json.loads(path.read_text(encoding="utf-8")), contacts_of.get(d["sheet"]))
             rows.append(row)
         (out_dir / "rows.json").write_text(json.dumps(rows, ensure_ascii=False, indent=1), encoding="utf-8")
         summary[condition] = {
@@ -333,7 +391,7 @@ def main() -> None:
             "tune": aggregate([r for r in rows if r["sheet"] in tune]),
             "report": aggregate([r for r in rows if r["sheet"] not in tune]),
         }
-    summary["split"] = {"tune": sorted(tune), "report": sorted(set(sheets) - tune)}
+    summary["split"] = {"tune": sorted(tune & set(sheets)), "report": sorted(set(sheets) - tune)}
     summary["seconds"] = round(time.time() - started, 1)
     (args.work / "summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=1), encoding="utf-8")
     for condition in args.conditions:
@@ -351,6 +409,8 @@ def main() -> None:
                   f" | node_pairs f1={npairs['f1']} tp={npairs['tp']} fp={npairs['fp']} fn={npairs['fn']} | {cls}"
                   f" | dot_role acc={a['dot_role_accuracy']} n={a['dot_role_scored']}"
                   f" | terminal_numbers {a['terminal_numbers']}")
+            if args.contact_gt:
+                print(f"         contact_terminal_numbers {a['contact_terminal_numbers']}")
     print(f"seconds={summary['seconds']}")
 
 
