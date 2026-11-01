@@ -63,9 +63,10 @@ def _regular_dashes(support: np.ndarray, scale: float) -> bool:
     )
 
 
-# Dashed segments shorter than this are kept: on sequence diagrams short dashed
-# lines are real mechanical/electrical links, not sheet rules.
-DASHED_RULE_MIN_LENGTH = 400
+# Dashed segments shorter than this are kept as wires. Regular dashes of any length are
+# frame borders or mechanical links between a coil and its contacts; as wires they join
+# unrelated nets, so none are kept. 400 keeps short dashes as before.
+DASHED_RULE_MIN_LENGTH = 0
 
 
 def _is_dashed(binary: np.ndarray, line: LineSegment, scale: float) -> bool:

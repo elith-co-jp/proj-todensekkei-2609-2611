@@ -16,6 +16,9 @@ from build_e2e_demo_outputs import load_font, wire_points
 
 TARGET_PARENT_CLASSES = ("contact_a", "contact_b", "solenoid", "relay_coil")
 EXPLICIT_NODE_CLASSES = ("connector", "junction", "terminal", "power_bus")
+# Classes whose terminals sit where a wire stops inside the box (the + and - dots of a card),
+# not at fixed fractions of the box. Empty disables these ports.
+WIRE_END_PORT_CLASSES: frozenset[str] = frozenset({"other"})
 
 FONT_XS = load_font(12)
 FONT_SM = load_font(15)
@@ -178,6 +181,7 @@ def infer_ports_for_symbol(
     contact_max_wire_axes = int(config.get("contact_max_wire_axes", 0) or 0)
     contact_min_terminal_rel_x = config.get("contact_min_terminal_rel_x")
     contact_max_terminal_rel_x = config.get("contact_max_terminal_rel_x")
+    wire_end_ports = class_name in config.get("wire_end_port_classes", WIRE_END_PORT_CLASSES)
 
     candidates: list[dict[str, Any]] = []
     for wire in wires:
@@ -197,6 +201,7 @@ def infer_ports_for_symbol(
             overlap = min(span_end, y1 + margin_px) - max(span_start, y0 - margin_px)
             if overlap <= 0:
                 continue
+            inner_ends = [(clamp(axis, x0, x1), end) for end in (span_start, span_end) if y0 + margin_px <= end <= y1 - margin_px]
             if mode == "bbox_edge":
                 points = [(clamp(axis, x0, x1), y0), (clamp(axis, x0, x1), y1)]
             elif class_name in {"contact_a", "contact_b"} and contact_outer_terminal_margin_px > 0 and not four_port:
@@ -219,6 +224,7 @@ def infer_ports_for_symbol(
             overlap = min(span_end, x1 + margin_px) - max(span_start, x0 - margin_px)
             if overlap <= 0:
                 continue
+            inner_ends = [(end, clamp(axis, y0, y1)) for end in (span_start, span_end) if x0 + margin_px <= end <= x1 - margin_px]
             if mode == "bbox_edge":
                 points = [(x0, clamp(axis, y0, y1)), (x1, clamp(axis, y0, y1))]
             elif class_name in {"contact_a", "contact_b"} and contact_outer_terminal_margin_px > 0 and not four_port:
@@ -235,6 +241,8 @@ def infer_ports_for_symbol(
                     if not require_point_on_wire_span or span_start - margin_px <= x0 + ratio * width <= span_end + margin_px
                 ]
             side = "horizontal_axis"
+        if wire_end_ports:
+            points = [*points, *inner_ends]
 
         for point in points:
             ink_ratio = point_ink_ratio(source_image, point, ink_radius)
