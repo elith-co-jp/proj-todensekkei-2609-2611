@@ -68,6 +68,14 @@ def _regular_dashes(support: np.ndarray, scale: float) -> bool:
 # unrelated nets, so none are kept. 400 keeps short dashes as before.
 DASHED_RULE_MIN_LENGTH = 0
 
+# I/O cards are drawn as a solid rectangle around their input contacts. The wires to the inputs cross
+# the frame line without a dot, but each input's pin dot sits a few pixels from that crossing, so read
+# as a wire the frame line joined every input of the card into one net (DD-0007 §4.13). A horizontal
+# line inside an other box holding at least CARD_FRAME_MIN_CONTACTS contacts, with ink across at least
+# CARD_FRAME_MIN_INK of the box width, is the frame. 0 contacts disables the rule.
+CARD_FRAME_MIN_CONTACTS = 2
+CARD_FRAME_MIN_INK = 0.8
+
 
 def _is_dashed(binary: np.ndarray, line: LineSegment, scale: float) -> bool:
     start, end = line_span(line)
@@ -83,6 +91,39 @@ def _is_dashed(binary: np.ndarray, line: LineSegment, scale: float) -> bool:
     if any(float(vector.mean()) >= 0.9 for vector in vectors):
         return False
     return any(_regular_dashes(vector, scale) for vector in vectors)
+
+
+def _card_boxes(symbols: list[dict[str, Any]]) -> list[Box]:
+    if CARD_FRAME_MIN_CONTACTS <= 0:
+        return []
+    centers = [
+        ((s["bbox"]["x0"] + s["bbox"]["x1"]) / 2, (s["bbox"]["y0"] + s["bbox"]["y1"]) / 2)
+        for s in symbols
+        if (s.get("class_name") or s.get("type")) in {"contact_a", "contact_b"}
+    ]
+    cards = []
+    for s in symbols:
+        if (s.get("class_name") or s.get("type")) != "other":
+            continue
+        box = Box(**{key: round(value) for key, value in s["bbox"].items()})
+        if sum(box.x0 <= x <= box.x1 and box.y0 <= y <= box.y1 for x, y in centers) >= CARD_FRAME_MIN_CONTACTS:
+            cards.append(box)
+    return cards
+
+
+def _is_card_frame(binary: np.ndarray, line: LineSegment, cards: list[Box], scale: float) -> bool:
+    if line.orientation != "h":
+        return False
+    axis = (line.box.y0 + line.box.y1) // 2
+    margin = max(4, round(4 * scale))
+    for box in cards:
+        if not (box.y0 <= axis <= box.y1 and line.box.x0 >= box.x0 - margin and line.box.x1 <= box.x1 + margin):
+            continue
+        inset = round(0.05 * (box.x1 - box.x0))
+        support = support_vector_for_span(binary, "h", axis, box.x0 + inset, box.x1 - inset, half_width=1)
+        if support.size and float(support.mean()) >= CARD_FRAME_MIN_INK:
+            return True
+    return False
 
 
 def _horizontal_rules(binary: np.ndarray, scale: float) -> list[Rule]:
@@ -259,6 +300,7 @@ def filter_wire_decorations(
     except Exception:
         logging.getLogger(__name__).exception("Label rule OCR failed; keeping solid rules")
         rules, checked, ocr_failed = [], 0, True
+    cards = _card_boxes(symbols)
     kept = []
     removed = []
     trimmed = []
@@ -273,6 +315,11 @@ def filter_wire_decorations(
             start, end = span_start, span_end
             excluded_segments.append(
                 {"orientation": line.orientation, "axis": wire["axis"], "start": start, "end": end}
+            )
+        elif _is_card_frame(binary, line, cards, scale):
+            removed.append({"wire_id": wire["id"], "reason": "card_frame"})
+            excluded_segments.append(
+                {"orientation": "h", "axis": wire["axis"], "start": span_start, "end": span_end}
             )
         elif cuts := _rule_cuts(binary, line, rules, scale):
             parts = _cut_wire(wire, cuts, binary)

@@ -80,6 +80,36 @@ def test_solid_wire_just_inside_dashed_border_is_not_removed(detector):
     assert result["wires"] == original["wires"]
 
 
+def _io_card_image():
+    """An I/O card: a solid frame around two input contacts, their wires crossing the frame's top line."""
+    image = Image.new("RGB", (1000, 700), "white")
+    draw = ImageDraw.Draw(image)
+    draw.rectangle((100, 150, 600, 300), outline="black", width=2)
+    for x in (200, 450):
+        draw.line((x, 50, x, 200), fill="black", width=2)
+    return image
+
+
+def _contact(x):
+    return {"class_name": "contact_a", "confidence": 0.9, "bbox": {"x0": x - 10, "y0": 195, "x1": x + 40, "y1": 240}}
+
+
+def test_io_card_frame_line_is_not_a_wire_but_the_input_wires_are(detector):
+    image = _io_card_image()
+    box = {"class_name": "other", "confidence": 0.9, "bbox": {"x0": 90, "y0": 110, "x1": 610, "y1": 310}}
+    original = payload(wire("frame_top", "h", 200, 450, 150), wire("in_1", "v", 50, 200, 200), wire("in_2", "v", 50, 200, 450))
+    result = detector(original, image, [box, _contact(200), _contact(450)])
+    assert [w["id"] for w in result["wires"]] == ["in_1", "in_2"]
+    assert result["quality"]["wire_decoration_filter"]["removed"] == [{"wire_id": "frame_top", "reason": "card_frame"}]
+
+
+def test_line_inside_a_box_without_contacts_stays_a_wire(detector):
+    image = _io_card_image()
+    box = {"class_name": "other", "confidence": 0.9, "bbox": {"x0": 90, "y0": 110, "x1": 610, "y1": 310}}
+    original = payload(wire("frame_top", "h", 200, 450, 150))
+    assert [w["id"] for w in detector(original, image, [box])["wires"]] == ["frame_top"]
+
+
 def ruled_label():
     image = Image.new("RGB", (1000, 700), "white")
     draw = ImageDraw.Draw(image)
