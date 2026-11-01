@@ -189,6 +189,20 @@ def test_contact_box_covering_its_label_takes_ports_on_its_own_wire_only(monkeyp
     found = _contact_ports(draw_contact, monkeypatch, CONTACT_PREFERS_WIRES_INSIDE_BOX=False)
     assert "next" in {p["wire_id"] for p in found}
 
+
+def test_contact_drawn_as_two_open_circles_takes_a_port_on_each_wire(monkeypatch):
+    def draw_contact(draw):
+        draw.line((100, 20, 100, 58), fill="black", width=2)
+        draw.ellipse((97, 59, 103, 65), outline="black")
+        draw.ellipse((97, 95, 103, 101), outline="black")
+        draw.line((100, 102, 100, 150), fill="black", width=2)
+        return [_wire("above", 100, 20, 58), _wire("below", 100, 102, 150)]
+
+    found = _contact_ports(draw_contact, monkeypatch)
+    assert sorted((p["wire_id"], round(p["point"][1])) for p in found) == [("above", 58), ("below", 102)]
+    assert len(_contact_ports(draw_contact, monkeypatch, CONTACT_EDGE_FALLBACK=False)) < 2
+
+
 def test_wire_end_is_not_bridged_to_the_bus_through_a_coil():
     payload, records = vertical_and_horizontal(40, 60)
     coil = {"id": "c", "member_key": "C", "symbol_id": "C", "class_name": "relay_coil", "point": [160, 75],

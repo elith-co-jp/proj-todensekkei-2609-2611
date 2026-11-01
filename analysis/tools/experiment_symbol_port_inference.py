@@ -22,6 +22,10 @@ WIRE_END_PORT_CLASSES: frozenset[str] = frozenset({"other"})
 # A two-port contact sits on a wire that runs through its box; a wire passing just beside the box
 # (axis_padding_px allows it) belongs to the next contact when the box also covers the label.
 CONTACT_PREFERS_WIRES_INSIDE_BOX = True
+# Card input contacts are two open circles with a gap: the template points fall in the blank gap and
+# fail the ink check. Such a contact takes its ports at the box edges instead, only where a wire
+# reaches the edge; a point off the wire would attach to whatever node lies within reach.
+CONTACT_EDGE_FALLBACK = True
 
 FONT_XS = load_font(12)
 FONT_SM = load_font(15)
@@ -207,6 +211,8 @@ def infer_ports_for_symbol(
             inner_ends = [(clamp(axis, x0, x1), end) for end in (span_start, span_end) if y0 + margin_px <= end <= y1 - margin_px]
             if mode == "bbox_edge":
                 points = [(clamp(axis, x0, x1), y0), (clamp(axis, x0, x1), y1)]
+                if config.get("edge_on_span"):
+                    points = [p for p in points if span_start - margin_px <= p[1] <= span_end + margin_px]
             elif class_name in {"contact_a", "contact_b"} and contact_outer_terminal_margin_px > 0 and not four_port:
                 y_values = [y0 - contact_outer_terminal_margin_px, y0 + 0.32 * height, y0 + 0.68 * height, y1 + contact_outer_terminal_margin_px]
                 points = [
@@ -230,6 +236,8 @@ def infer_ports_for_symbol(
             inner_ends = [(end, clamp(axis, y0, y1)) for end in (span_start, span_end) if x0 + margin_px <= end <= x1 - margin_px]
             if mode == "bbox_edge":
                 points = [(x0, clamp(axis, y0, y1)), (x1, clamp(axis, y0, y1))]
+                if config.get("edge_on_span"):
+                    points = [p for p in points if span_start - margin_px <= p[0] <= span_end + margin_px]
             elif class_name in {"contact_a", "contact_b"} and contact_outer_terminal_margin_px > 0 and not four_port:
                 x_values = [x0 - contact_outer_terminal_margin_px, x0 + 0.32 * width, x0 + 0.68 * width, x1 + contact_outer_terminal_margin_px]
                 points = [
@@ -307,6 +315,8 @@ def infer_ports_for_symbol(
         previous = deduped.get(key)
         if previous is None or float(candidate["ink_ratio"]) > float(previous["ink_ratio"]):
             deduped[key] = candidate
+    if CONTACT_EDGE_FALLBACK and mode == "template" and class_name in {"contact_a", "contact_b"} and not four_port and len(deduped) < 2:
+        return infer_ports_for_symbol(symbol, wires, source_image, config={**config, "mode": "bbox_edge", "edge_on_span": True})
     return sorted(deduped.values(), key=lambda item: (str(item["wire_id"]), item["point"][1], item["point"][0]))
 
 
