@@ -22,6 +22,7 @@ if str(_TOOLS) not in sys.path:
 
 from analyze_pdf_structure import analyze_image
 from build_e2e_demo_outputs import build_final_output_from_analysis
+from dot_roles import annotate_dots
 from filter_wire_decorations import filter_wire_decorations, rapidocr_text_confirmation
 from run_yolo_e2e_pipeline import (
     DEFAULT_INFERRED_TERMINAL_CLASSES,
@@ -95,6 +96,9 @@ def analyze_detections(
     if payload["quality"]["wire_decoration_filter"]["label_rule_ocr_failed"]:
         warnings.append("罫線の文字確認に失敗したため、判定できない罫線は配線候補として残しています。")
 
+    # Dot roles (junction / terminal / review) and duplicate dot boxes, before wiring (#40).
+    dot_summary = annotate_dots(image, symbols)
+
     payload = enrich_symbols_and_graph(
         payload, symbols, terminal_wire_threshold=10.0, terminal_node_threshold=28.0,
         terminal_source="inferred", inferred_terminal_classes=DEFAULT_INFERRED_TERMINAL_CLASSES,
@@ -107,6 +111,8 @@ def analyze_detections(
         junction_node_classes={"junction"}, junction_node_threshold=24.0, source_image=image,
     )
     payload["from_to"] = build_direct_from_to(payload, source_image=image)
+    if dot_summary is not None:
+        payload["dot_roles"] = dot_summary
     payload.update({
         "schema_version": "todensekkei.sequence_extraction.v1",
         "status": "partial" if warnings else "completed",

@@ -98,3 +98,36 @@ def test_card_terminal_where_a_wire_stops_inside_the_box_becomes_a_port():
     assert any(p["wire_id"] == "minus" and abs(p["point"][1] - 185) <= 3 for p in ports)
     without = infer_ports_for_symbol(card, wires, image, config={**config, "wire_end_port_classes": set()})
     assert not any(p["wire_id"] == "minus" for p in without)
+
+def test_dot_roles_follow_the_ink():
+    import numpy as np
+    from PIL import Image, ImageDraw
+
+    from dot_roles import assign_dot_roles
+
+    image = Image.new("L", (400, 200), 255)
+    draw = ImageDraw.Draw(image)
+    draw.line((20, 100, 180, 100), fill=0, width=2)
+    draw.line((100, 100, 100, 190), fill=0, width=2)
+    draw.ellipse((96, 96, 104, 104), fill=0)
+    draw.line((300, 10, 300, 190), fill=0, width=2)
+    draw.ellipse((295, 95, 305, 105), fill=0)
+    for x in (250, 262, 274):
+        draw.rectangle((x, 92, x + 6, 108), outline=0, width=2)
+    for x in (318, 330):
+        draw.rectangle((x, 92, x + 6, 108), outline=0, width=2)
+    binary = (np.asarray(image) < 128).astype(np.uint8) * 255
+
+    def box(cx, cy, half):
+        return {"x0": cx - half, "y0": cy - half, "x1": cx + half, "y1": cy + half}
+
+    symbols = [
+        {"id": "t_join", "class_name": "junction", "bbox": box(100, 100, 7), "confidence": 0.9},
+        {"id": "t_join_again", "class_name": "junction", "bbox": box(102, 101, 7), "confidence": 0.5},
+        {"id": "terminal", "class_name": "junction", "bbox": box(300, 100, 7), "confidence": 0.9},
+    ]
+    assign_dot_roles(binary, symbols)
+    roles = {s["id"]: s["dot_role"] for s in symbols}
+    assert roles["t_join"]["role"] == "junction" and not roles["t_join"]["suppressed"]
+    assert roles["t_join_again"]["suppressed"] and roles["t_join_again"]["duplicate_of"] == "t_join"
+    assert roles["terminal"]["role"] == "terminal"

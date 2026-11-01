@@ -33,10 +33,11 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from analyze_annotation_graph import endpoint_key  # noqa: E402
-from holdout_cv import evaluate, gold_items, load_gold, prf, run_structure, score_symbols, to_box  # noqa: E402
+from holdout_cv import gold_items, gold_pairs, load_gold, predicted_pairs, prf, run_structure, score_symbols, to_box  # noqa: E402
 
 NODE_CLASSES = {"connector", "junction", "terminal", "power_bus"}
 SCORED_CLASSES = ("junction", "connector")
+ROLE_OF_CLASS = {"junction": "junction", "connector": "terminal"}
 
 
 def oracle_predictions(drawing: dict[str, Any]) -> list[dict[str, Any]]:
@@ -185,52 +186,62 @@ def predicted_node_pairs(drawing: dict[str, Any], structure: dict[str, Any], pre
 
 
 def structure_predictions(structure: dict[str, Any], pred: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Detections as the structure payload reports them (class and box may be revised there)."""
+    """Detections as the structure payload reports them: suppressed duplicates dropped, structure ids attached."""
     symbols = [p for p in pred if p["kind"] == "symbol"]
     out = [p for p in pred if p["kind"] != "symbol"]
     for p, s in zip(symbols, structure.get("symbols", []), strict=True):
-        revised = s.get("dot_role") or {}
-        if revised.get("suppressed"):
+        if (s.get("dot_role") or {}).get("suppressed"):
             continue
-        out.append({**p, "class_name": s.get("class_name") or p["class_name"], "bbox": revised.get("bbox_f") or p["bbox"],
-                    "label": s.get("label") or ""})
+        out.append({**p, "label": s.get("label") or "", "structure_id": s["id"], "dot_role": (s.get("dot_role") or {}).get("role")})
     return out
 
 
 def score_drawing(drawing: dict[str, Any], pred: list[dict[str, Any]], structure: dict[str, Any]) -> dict[str, Any]:
-    symbols_in_order = [p for p in pred if p["kind"] == "symbol"]
-    labelled = [{**p, "label": s.get("label") or ""} for p, s in zip(symbols_in_order, structure.get("symbols", []), strict=True)]
-    pred_l = [p for p in pred if p["kind"] != "symbol"] + labelled
-    row = evaluate(drawing, pred_l, structure)
     gold = gold_items(drawing)
-    scored = score_symbols(gold, pred_l)
-    g_sym = scored["g_sym"]
-    sym_ids = [s["id"] for s in structure.get("symbols", [])]
-    pred_to_gold = {sym_ids[pi]: g_sym[gi]["ref"] for gi, pi, _ in scored["matches"] if pi < len(sym_ids)}
-    gp = gold_node_pairs(drawing, {g["ref"] for g in g_sym})
-    pp = predicted_node_pairs(drawing, structure, pred_to_gold)
-    row["node_pairs"] = {"tp": len(gp & pp), "fp": len(pp - gp), "fn": len(gp - pp)}
-    after = score_symbols(gold, structure_predictions(structure, pred_l))
-    row["per_class_after"] = {c: dict(v) for c, v in after["per_class"].items()}
-    return row
+    detector = score_symbols(gold, pred)
+    active = structure_predictions(structure, pred)
+    scored = score_symbols(gold, active)
+    g_sym, p_sym = scored["g_sym"], scored["p_sym"]
+    pred_to_gold = {p_sym[pi]["structure_id"]: g_sym[gi]["ref"] for gi, pi, _ in scored["matches"]}
+    refs = {g["ref"] for g in g_sym}
+    gp, pp = gold_pairs(drawing, refs), predicted_pairs(structure, pred_to_gold)
+    gn, pn = gold_node_pairs(drawing, refs), predicted_node_pairs(drawing, structure, pred_to_gold)
+    roles = Counter(
+        f"{g_sym[gi]['class_name']}->{p_sym[pi]['dot_role']}" for gi, pi, _ in scored["matches"]
+        if g_sym[gi]["class_name"] in ROLE_OF_CLASS and p_sym[pi].get("dot_role")
+    )
+    return {
+        "sheet": drawing["sheet"],
+        "pairs": {"tp": len(gp & pp), "fp": len(pp - gp), "fn": len(gp - pp)},
+        "node_pairs": {"tp": len(gn & pn), "fp": len(pn - gn), "fn": len(gn - pn)},
+        "per_class": {c: dict(v) for c, v in detector["per_class"].items()},
+        "per_class_after": {c: dict(v) for c, v in scored["per_class"].items()},
+        "dot_roles": dict(roles),
+    }
 
 
 def aggregate(rows: list[dict[str, Any]]) -> dict[str, Any]:
     tot = {k: Counter() for k in ("pairs", "node_pairs")}
     before: dict[str, Counter] = {c: Counter() for c in SCORED_CLASSES}
     after: dict[str, Counter] = {c: Counter() for c in SCORED_CLASSES}
+    roles: Counter = Counter()
     for r in rows:
         for k in tot:
             tot[k].update(r[k])
         for c in SCORED_CLASSES:
             before[c].update(r["per_class"].get(c, {}))
             after[c].update(r["per_class_after"].get(c, {}))
+        roles.update(r["dot_roles"])
+    agree = sum(n for k, n in roles.items() if k.split("->")[1] == ROLE_OF_CLASS[k.split("->")[0]])
     return {
         "drawings": len(rows),
         "symbol_pairs": prf(tot["pairs"]["tp"], tot["pairs"]["fp"], tot["pairs"]["fn"]),
         "node_pairs": prf(tot["node_pairs"]["tp"], tot["node_pairs"]["fp"], tot["node_pairs"]["fn"]),
         "class_f1_detector": {c: prf(v["tp"], v["fp"], v["fn"]) for c, v in before.items()},
         "class_f1_structure": {c: prf(v["tp"], v["fp"], v["fn"]) for c, v in after.items()},
+        "dot_role_accuracy": round(agree / sum(roles.values()), 4) if roles else None,
+        "dot_role_scored": sum(roles.values()),
+        "dot_role_confusion": dict(roles.most_common()),
     }
 
 
@@ -298,7 +309,8 @@ def main() -> None:
             )
             sp, npairs = a["symbol_pairs"], a["node_pairs"]
             print(f"  {part:6s} drawings={a['drawings']} symbol_pairs f1={sp['f1']} tp={sp['tp']} fp={sp['fp']} fn={sp['fn']}"
-                  f" | node_pairs f1={npairs['f1']} tp={npairs['tp']} fp={npairs['fp']} fn={npairs['fn']} | {cls}")
+                  f" | node_pairs f1={npairs['f1']} tp={npairs['tp']} fp={npairs['fp']} fn={npairs['fn']} | {cls}"
+                  f" | dot_role acc={a['dot_role_accuracy']} n={a['dot_role_scored']}")
     print(f"seconds={summary['seconds']}")
 
 

@@ -1109,6 +1109,10 @@ def enrich_symbols_and_graph(
     symbol_wire_links: list[dict[str, Any]] = []
     symbol_terminal_links: list[dict[str, Any]] = []
     for symbol in symbols:
+        if (symbol.get("dot_role") or {}).get("suppressed"):
+            symbol.update(terminals=[], nearby_node_ids=[], terminal_wire_ids=[], terminal_links=[],
+                          touching_wire_ids=[], nearby_label_ids=[])
+            continue
         bbox = symbol["bbox"]
         center = tuple(symbol["center"])
         terminal_points = terminal_points_for_symbol(
