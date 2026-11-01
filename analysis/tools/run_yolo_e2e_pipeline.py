@@ -74,7 +74,9 @@ DIRECT_TERMINAL_GAP_BRIDGE_MAX = 240.0
 DIRECT_WIRE_GAP_BRIDGE_MAX = 80.0
 DIRECT_GAP_BRIDGE_ALIGN_THRESHOLD = 28.0
 DIRECT_WIRE_GAP_TERMINAL_ANCHOR_THRESHOLD = 18.0
-DIRECT_TERMINAL_TERMINAL_BRIDGE_MAX = 140.0
+# Two junction dots are joined only through a detected wire: a bridge between aligned dots chained
+# the separate staggered wires of one column group into a single net (ER21277).
+DIRECT_TERMINAL_TERMINAL_BRIDGE_MAX = 0.0
 DIRECT_ENDPOINT_BRIDGE_MAX = 60.0
 # Join a wire end to a nearby perpendicular wire only past that end, never back over its own span.
 DIRECT_WIRE_GAP_BRIDGE_OUTWARD_ONLY = True
