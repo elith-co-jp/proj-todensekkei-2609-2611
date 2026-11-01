@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act, cleanup, fireEvent, render, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMemoryRouter, RouterProvider } from 'react-router-dom'
 
@@ -17,6 +17,7 @@ const apiMocks = vi.hoisted(() => ({
   listClasses: vi.fn(),
   listProjects: vi.fn(),
   saveAnnotations: vi.fn(),
+  suggestSheetNumber: vi.fn(),
   updateMeta: vi.fn(),
 }))
 
@@ -856,5 +857,47 @@ describe('EditorPage 学習への反映', () => {
         'AI 検出 SYM-0001 を削除しました。図面を『完了』にして学習すると、この位置は『シンボルではない』例として学習されます。',
       ),
     ).toBeTruthy()
+  })
+})
+
+describe('EditorPage シート番号の読取', () => {
+  it('AI で読み取った候補を押すとシート番号に入力して自動保存する', async () => {
+    apiMocks.suggestSheetNumber.mockResolvedValue({
+      candidates: [
+        { text: 'EA1203', score: 0.92, region: 'title_block' },
+        { text: 'EA1208', score: 0.41, region: 'margin' },
+      ],
+    })
+    const { findByRole, getByRole } = renderEditor()
+    fireEvent.click(await findByRole('tab', { name: '図面情報' }))
+
+    fireEvent.click(getByRole('button', { name: 'AIで読取' }))
+    const chip = await findByRole('button', { name: /^EA1203/ })
+    expect(within(chip).getByText('92%')).toBeTruthy()
+    expect(getByRole('button', { name: /^EA1208/ })).toBeTruthy()
+    expect(apiMocks.suggestSheetNumber).toHaveBeenCalledWith(1)
+
+    fireEvent.click(chip)
+    expect((getByRole('textbox', { name: 'シート番号' }) as HTMLInputElement).value).toBe('EA1203')
+    expect(chip.getAttribute('aria-pressed')).toBe('true')
+    await waitFor(() =>
+      expect(apiMocks.updateMeta).toHaveBeenCalledWith(1, expect.objectContaining({ sheet_no: 'EA1203' })),
+    )
+  })
+
+  it('候補が無いときは手入力を促し、読み取れないときは理由を示す', async () => {
+    apiMocks.suggestSheetNumber
+      .mockResolvedValueOnce({ candidates: [] })
+      .mockRejectedValueOnce(new Error('文字認識（OCR）を利用できません'))
+    const { findByRole, findByText, getByRole, queryByText } = renderEditor()
+    fireEvent.click(await findByRole('tab', { name: '図面情報' }))
+
+    fireEvent.click(getByRole('button', { name: 'AIで読取' }))
+    expect(await findByText('候補が見つかりませんでした。手入力してください。')).toBeTruthy()
+
+    fireEvent.click(await findByRole('button', { name: 'AIで読取' }))
+    expect(await findByText('シート番号を読み取れませんでした: 文字認識（OCR）を利用できません')).toBeTruthy()
+    expect(queryByText('候補が見つかりませんでした。手入力してください。')).toBeNull()
+    expect(apiMocks.updateMeta).not.toHaveBeenCalled()
   })
 })
