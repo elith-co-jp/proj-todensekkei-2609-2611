@@ -97,7 +97,7 @@ def analyze_detections(
     if payload["quality"]["wire_decoration_filter"]["label_rule_ocr_failed"]:
         warnings.append("罫線の文字確認に失敗したため、判定できない罫線は配線候補として残しています。")
 
-    # Dot roles (junction / terminal / review) and duplicate dot boxes, before wiring (#40).
+    # Before wiring: enrich_symbols_and_graph skips the duplicate dot boxes marked here.
     dot_summary = annotate_dots(image, symbols)
 
     payload = enrich_symbols_and_graph(
@@ -111,7 +111,7 @@ def analyze_detections(
         junction_node_policy="all",
         junction_node_classes={"junction"}, junction_node_threshold=24.0, source_image=image,
     )
-    terminal_number_counts = attach_terminal_numbers(payload["symbols"])  # terminal numbers on terminals (#40)
+    terminal_number_counts = attach_terminal_numbers(payload["symbols"])
     payload["from_to"] = build_direct_from_to(payload, source_image=image)
     if dot_summary is not None:
         payload["dot_roles"] = dot_summary

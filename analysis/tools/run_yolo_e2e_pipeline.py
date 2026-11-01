@@ -6,6 +6,7 @@ import json
 import os
 import re
 from collections import Counter, defaultdict
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -1646,7 +1647,7 @@ def build_direct_terminal_records(
     return records, terminal_by_key
 
 
-def blank_run_measure(source_image: Image.Image) -> Any:
+def blank_run_measure(source_image: Image.Image) -> Callable[[tuple[float, float], tuple[float, float]], int]:
     binary = make_binary_mask(source_image)
     scale = source_image.width / 1755
 
