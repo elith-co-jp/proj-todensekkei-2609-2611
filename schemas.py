@@ -33,6 +33,7 @@ class TerminalPayload(BaseModel):
     name: str = Field(min_length=1, max_length=50)
     tx: float
     ty: float
+    origin: SymbolOrigin = "manual"
 
 
 class SymbolPayload(BaseModel):
@@ -59,6 +60,7 @@ class ConnectionPayload(BaseModel):
     kind: ConnectionKind = "wire"
     external_ref: str | None = None
     note: str | None = None
+    origin: SymbolOrigin = "manual"
 
 
 class AnnotationUpdatePayload(BaseModel):

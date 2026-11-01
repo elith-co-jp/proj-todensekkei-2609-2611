@@ -406,6 +406,7 @@ def _restore_project_from_bundle(db: Session, proj: dict, images: dict[str, byte
                 name=str(t.get("name") or ""),
                 tx=float(t.get("tx") or 0.0),
                 ty=float(t.get("ty") or 0.0),
+                origin=t.get("origin") or "manual",
             )
             db.add(term)
             db.flush()
@@ -430,6 +431,7 @@ def _restore_project_from_bundle(db: Session, proj: dict, images: dict[str, byte
                 kind=c.get("kind") or "wire",
                 external_ref=c.get("external_ref"),
                 note=c.get("note"),
+                origin=c.get("origin") or "manual",
             )
         )
     return p
