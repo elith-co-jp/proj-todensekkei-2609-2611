@@ -9,7 +9,7 @@ from __future__ import annotations
 import re
 import unicodedata
 from collections import Counter
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from typing import Any, Literal, TypedDict
 
 from PIL import Image
@@ -23,6 +23,8 @@ class TextItem(TypedDict):
 
 Box = tuple[float, float, float, float]
 RegionType = Literal["drawing_area", "title_block", "relay_table", "panel", "loc"]
+# 記号の画像と枠を受け取り、読んだ器具番号を返す（読めなければ None）。
+LabelReader = Callable[[Image.Image, Any], "str | None"]
 
 SHEET_REF = r"[A-Z]{1,3}\d{5}(?:-\d{1,2})?"
 TERMINAL_CLASSES = {"relay_coil", "contact_a", "contact_b", "solenoid", "lamp", "push_button", "diode"}
@@ -62,7 +64,9 @@ def erase_dots(image: Image.Image) -> Image.Image:
 
 
 CROP_OCR_CLASSES = {"connector", "contact_a", "contact_b", "relay_coil"}
-CROP_OCR_VERSION = "crop4x-pad8-dotring"
+# 拡大 OCR の結果を端子番号の読取（terminal_numbers）にも渡す記号。
+TERMINAL_NUMBER_CLASSES = {"connector", "contact_a", "contact_b"}
+CROP_OCR_VERSION = "crop4x-pad8"
 CROP_PADDING_PX = 8
 CROP_SCALE = 4
 
@@ -72,13 +76,14 @@ def read_crop_text(image: Image.Image, box: Any, reader: Any) -> list[TextItem]:
 
     コネクタ・接点の名前と番号は 10 px 前後の小さな文字で、ページ全体の 2 倍読みでは
     枠の端の 1 文字や B と 3 を取り違える。記号ごとに拡大して読む。
+    ページ全体の読みと違って黒丸は消さない。消すと黒丸のすぐ横の細い 1 も消え、端子番号 13 が 3 になる。
     """
     import numpy as np
 
     x0, y0, x1, y1 = _as_box(box)
     left, top = max(0, int(x0) - CROP_PADDING_PX), max(0, int(y0) - CROP_PADDING_PX)
     right, bottom = min(image.width, int(x1) + CROP_PADDING_PX), min(image.height, int(y1) + CROP_PADDING_PX)
-    crop = erase_dots(image.crop((left, top, right, bottom)))
+    crop = image.crop((left, top, right, bottom))
     crop = crop.resize((crop.width * CROP_SCALE, crop.height * CROP_SCALE), Image.Resampling.LANCZOS)
     results, _ = reader(np.asarray(crop), use_cls=False)
     items: list[TextItem] = []
@@ -293,7 +298,26 @@ def symbol_label(items: list[TextItem], box: Any, class_name: str, lexicon: Coun
         tokens = [t for t in tokens if len(t) > 1]
     if lexicon is not None:
         tokens = [correct_token(t, lexicon) for t in tokens]
+    if class_name in RELAY_REF_CLASSES:
+        tokens = [repair_device_token(t) for t in tokens]
     return " ".join(tokens)
+
+
+_FUNCTION_NUMBER_D = re.compile(r"(\d{2})[0O](-\d{1,2})")
+_LEADING_ZERO_CODE = re.compile(r"[0O](\d{3})")
+
+
+def repair_device_token(token: str) -> str:
+    """接点・コイルの器具番号で、小さな D を 0 と読んだ語を直す（従来のラベル規則 evaluate_label_word_rules から移した）。
+
+    - 器具番号の番号は 2 桁までなので、830-1 は 83D-1。
+    - 電線番号・端子番号は 0 で始まらないので、0010 は D010。
+    """
+    if match := _FUNCTION_NUMBER_D.fullmatch(token):
+        return f"{match.group(1)}D{match.group(2)}"
+    if match := _LEADING_ZERO_CODE.fullmatch(token):
+        return f"D{match.group(1)}"
+    return token
 
 
 def best_label(crop_label: str, page_label: str, lexicon: Counter) -> str:
@@ -302,6 +326,53 @@ def best_label(crop_label: str, page_label: str, lexicon: Counter) -> str:
     if lexicon.get(device_token(crop_label), 0) < 2 <= lexicon.get(device_token(page_label), 0):
         return page_label
     return crop_label
+
+
+# 器具番号の形: 2 桁以下の番号＋英字（33HB、83D-1、20V0。英字の O を 0 と読んだ 430F も含む）か、英字＋数字（D010、HV2323、CN27）。
+_DEVICE_SHAPE = re.compile(r"\d{1,2}0?[A-Z][A-Z0-9]*(?:-\d{1,2})?|[A-Z]{1,4}\d{0,4}[A-Z]?(?:-\d{1,2})?")
+
+
+def doubtful_label(label: str) -> bool:
+    """接点・コイルのラベルが器具番号の形をしていない。
+
+    小さな文字の D・O を 0 と読む（830-1、0010）、隣の線を 1 と読む（143E）などの読み違いがここに入る。
+    3 桁以上の数字で始まるラベルは、器具番号の英字を数字と読んだものとみなす。
+    """
+    tokens = normalize(label).split()
+    if not tokens or (tokens[0].isdigit() and len(tokens[0]) >= 3):
+        return True
+    return _DEVICE_SHAPE.fullmatch(device_token(label).split("(")[0]) is None
+
+
+def reread_label(image: Image.Image, box: Any, class_name: str, label: str, reader: LabelReader | None) -> str | None:
+    """接点・コイルの OCR ラベルが器具番号の形でないとき、別の読み手（ローカル LLM）に読み直させる。
+
+    読み直した結果も器具番号の形をしているときだけ、その結果を返す。それ以外は None。
+    """
+    if reader is None or class_name not in RELAY_REF_CLASSES or not doubtful_label(label):
+        return None
+    answer = normalize(reader(image, box) or "")
+    return answer if answer and not doubtful_label(answer) else None
+
+
+def reread_texts(image: Image.Image, texts: list[dict[str, Any]], reader: LabelReader | None) -> int:
+    """日本語の名称・注記（リレー表・表題欄の外）を別の読み手（ローカル LLM）に読み直させる。
+
+    OCR は日本語を簡体字に寄せて読み違える（盤→盐、記→记）。読み直した結果の最初の日本語の行に置き換え、
+    元の読みは ocr_text に残す。戻り値は置き換えた件数。
+    """
+    if reader is None:
+        return 0
+    count = 0
+    for text in texts:
+        if text["kind"] not in ("name", "note") or text["zone"]:
+            continue
+        lines = [" ".join(line.split()) for line in (reader(image, text["box"]) or "").splitlines()]
+        answer = next((line for line in lines if _has_cjk(line)), None)
+        if answer:
+            text["ocr_text"], text["text"], text["source"] = text["text"], answer, "llm"
+            count += 1
+    return count
 
 
 def sheet_number_candidates(items: list[TextItem], width: int, height: int) -> list[dict[str, Any]]:
@@ -586,11 +657,13 @@ def link_relay_table(rows: list[dict[str, str]], symbols: list[dict[str, Any]]) 
 
 
 def extract_text_structure(
-    image: Image.Image, symbols: list[dict[str, Any]], regions: list[dict[str, Any]], reader: Any
+    image: Image.Image, symbols: list[dict[str, Any]], regions: list[dict[str, Any]], reader: Any,
+    label_reader: LabelReader | None = None, text_reader: LabelReader | None = None,
 ) -> dict[str, Any]:
     """構造 JSON に入れる文字の結果を作り、各記号のラベルを書き込む。
 
     ページ全体の OCR は 1 回だけ。コネクタ・接点・コイルは枠ごとの拡大 OCR も使う。
+    label_reader があれば器具番号の形でない接点・コイルのラベルを、text_reader があれば日本語の名称・注記を読み直す。
     """
     width, height = image.size
     items = read_page_text(image, reader)
@@ -601,17 +674,26 @@ def extract_text_structure(
         label = symbol_label(items, symbol["bbox"], class_name, lexicon)
         if class_name in CROP_OCR_CLASSES:
             crop_items = read_crop_text(image, symbol["bbox"], reader)
-            symbol["text_items"] = crop_items
             crop = symbol_label(crop_items, symbol["bbox"], class_name, lexicon)
             label = best_label(crop, label, lexicon)
+            if class_name in TERMINAL_NUMBER_CLASSES:
+                # terminal_numbers は語の位置で器具名（黒丸の左）と番号（右）を分けるので、OCR の行を語に割って渡す。
+                x0, y0, x1, y1 = _as_box(symbol["bbox"])
+                pad = CROP_PADDING_PX
+                symbol["text_items"] = words_in_box(crop_items, (x0 - pad, y0 - pad, x1 + pad, y1 + pad))
+        reread = reread_label(image, symbol["bbox"], class_name, label, label_reader)
+        if reread is not None:
+            symbol["ocr_label"], symbol["label_source"], label = label, "llm", reread
         symbol["label"] = label
         symbol["label_candidate"] = {"text": label, "match_text": label, "tokens": [], "rejected_tokens": []}
         zone = zone_of(symbol["bbox"], zones)
         if zone:
             symbol["text_zone"] = zone
     rows = parse_relay_table(items, width, height)
+    texts = classify_texts(items, symbols, zones)
+    reread_texts(image, texts, text_reader)
     return {
-        "texts": classify_texts(items, symbols, zones),
+        "texts": texts,
         "relay_table": {"rows": rows, "links": link_relay_table(rows, symbols)},
         "sheet_references": sheet_references(items, symbols),
         "sheet_number_candidates": sheet_number_candidates(items, width, height),

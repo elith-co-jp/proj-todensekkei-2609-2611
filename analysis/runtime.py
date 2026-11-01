@@ -14,6 +14,7 @@ from typing import Any
 
 from PIL import Image
 
+from analysis.label_llm import TEXT, reader_from_env
 from analysis.text_extraction import extract_text_structure
 
 # The CLI tools use sibling imports. Keep that entry point intact; PyInstaller
@@ -94,7 +95,9 @@ def analyze_detections(
         if warning:
             warnings.append("ラベル読み取りを実行できませんでした。OCRの実行環境を確認してください。")
         elif reader is not None:
-            text_result = extract_text_structure(image, symbols, region_boxes, reader)
+            text_result = extract_text_structure(
+                image, symbols, region_boxes, reader, reader_from_env(), reader_from_env(TEXT),
+            )
     except Exception:  # OCR failure must not discard successfully detected wires.
         logging.getLogger(__name__).exception("Symbol label OCR failed")
         engine, text_result = "none", {}
@@ -158,7 +161,11 @@ def analyze_detections(
     payload["quality"].update({
         "symbol_count": len(symbols),
         "from_to_connection_count": payload["from_to"]["connection_count"],
-        "symbol_label_ocr": {"engine": engine, "count": sum(1 for s in symbols if s.get("label")) if text_result else 0},
+        "symbol_label_ocr": {
+            "engine": engine, "count": sum(1 for s in symbols if s.get("label")) if text_result else 0,
+            "llm_reread_count": sum(1 for s in symbols if s.get("label_source") == "llm"),
+            "llm_text_reread_count": sum(1 for t in text_result.get("texts", []) if t.get("source") == "llm"),
+        },
         "text_zone_suppressed_count": len(symbols) - len(wired_symbols),
         "terminal_source": "inferred", "annotation_assistance": False,
     })

@@ -138,3 +138,52 @@ def test_texts_are_classified_and_japanese_names_attach_to_symbols():
         ("destination", None), ("device_number", "symbol_001"), ("number", None),
         ("name", "symbol_002"), ("note", None), ("relay_terminals", None),
     ]
+
+
+def test_contact_labels_repair_d_read_as_zero():
+    items = [item("830-1", 300, 400, 340, 412), item("ESD", 300, 414, 330, 426),
+             item("0010", 400, 400, 432, 412), item("B834", 400, 414, 432, 426)]
+    assert tx.symbol_label(items, box(295, 395, 345, 430), "contact_a") == "83D-1 ESD"
+    assert tx.symbol_label(items, box(395, 395, 437, 430), "contact_a") == "D010 B834"
+    # コネクタの番号（610 など）は直さない
+    assert tx.symbol_label([item("0610", 300, 400, 340, 412)], box(295, 395, 345, 430), "connector") == "0610"
+
+
+def test_contact_labels_that_are_not_device_numbers_are_reread():
+    asked = []
+
+    def reader(image, symbol_box):
+        asked.append(symbol_box)
+        return "83D-1 ESD (ER21271)"
+
+    image, b = Image.new("RGB", (40, 40), "white"), box(5, 5, 30, 30)
+    # D を 0 と読んだ番号・端子番号がくっついた番号だけを読み直す
+    assert tx.reread_label(image, b, "contact_a", "830-1 ESD (ER21271)", reader) == "83D-1 ESD (ER21271)"
+    assert tx.reread_label(image, b, "relay_coil", "0010 B834", reader) == "83D-1 ESD (ER21271)"
+    assert tx.reread_label(image, b, "contact_a", "33HB FV2306", reader) is None
+    assert tx.reread_label(image, b, "connector", "0010", reader) is None
+    assert len(asked) == 2
+
+
+def test_reread_answer_that_is_not_a_device_number_keeps_the_ocr_label():
+    image, b = Image.new("RGB", (40, 40), "white"), box(5, 5, 30, 30)
+    assert tx.reread_label(image, b, "contact_a", "143E AMESD", lambda *_: "?") is None
+    assert tx.reread_label(image, b, "contact_a", "143E AMESD", lambda *_: None) is None
+
+
+def test_japanese_names_outside_tables_are_reread():
+    texts = [
+        {"text": "腻路檬域灯制御盐", "kind": "name", "symbol_id": "symbol_001", "zone": None, "box": [0, 0, 80, 12]},
+        {"text": "端子", "kind": "note", "symbol_id": None, "zone": "relay_table", "box": [0, 20, 20, 32]},
+        {"text": "常", "kind": "name", "symbol_id": "symbol_002", "zone": None, "box": [0, 40, 12, 52]},
+    ]
+    answers = iter(["航路標識灯制御盤", "C1"])
+    assert tx.reread_texts(Image.new("RGB", (100, 60), "white"), texts, lambda *_: next(answers)) == 1
+    assert [(t["text"], t.get("ocr_text")) for t in texts] == [("航路標識灯制御盤", "腻路檬域灯制御盐"), ("端子", None), ("常", None)]
+
+
+def test_unreachable_label_llm_returns_no_answer():
+    from analysis.label_llm import make_reader
+
+    read = make_reader("http://127.0.0.1:9", "any-model", timeout=1.0)
+    assert read(Image.new("RGB", (40, 40), "white"), box(5, 5, 30, 30)) is None

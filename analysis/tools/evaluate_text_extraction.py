@@ -17,6 +17,7 @@ import json
 import re
 import sys
 import tempfile
+import unicodedata
 from collections import Counter, defaultdict
 from collections.abc import Callable
 from pathlib import Path
@@ -78,6 +79,31 @@ class Ocr:
         return [[{**i, "box": tuple(i["box"])} for i in cached[k]] for k in keys]
 
 
+class LlmLabels:
+    """ローカル LLM の読み直し結果を図面ごとにキャッシュする（同じ枠・同じモデル・同じ指示・同じ余白なら再利用）。"""
+
+    def __init__(self, cache: Path, url: str, model: str) -> None:
+        from analysis import label_llm
+
+        self.cache, self.url, self.model, self.llm = cache, url, model, label_llm
+
+    def reader_for(self, png: bytes, task: tuple[str, int] | None = None) -> tx.LabelReader:
+        task = task or self.llm.DEVICE
+        read_llm = self.llm.make_reader(self.url, self.model, task, timeout=180.0)
+        tag = hashlib.sha256(f"{self.model}|{task[0]}|{task[1]}|{self.llm.CROP_SCALE}".encode()).hexdigest()[:8]
+        path = self.cache / f"{hashlib.sha256(png).hexdigest()[:16]}_llm-{tag}.json"
+        cached: dict[str, str | None] = json.loads(path.read_text()) if path.exists() else {}
+
+        def read(image: Image.Image, box: Any) -> str | None:
+            key = ",".join(str(round(v)) for v in (box.values() if isinstance(box, dict) else box))
+            if key not in cached:
+                cached[key] = read_llm(image, box)
+                path.write_text(json.dumps(cached, ensure_ascii=False))
+            return cached[key]
+
+        return read
+
+
 def runtime_labels(ocr: Ocr, png: bytes, gold: list[dict[str, Any]]) -> list[str]:
     """現行ランタイムと同じ読み方（connector・contact_a だけ、記号ごとに切り出して OCR）。"""
     path = ocr.cache / f"{hashlib.sha256(png).hexdigest()[:16]}_runtime_labelmap.json"
@@ -99,8 +125,9 @@ def runtime_labels(ocr: Ocr, png: bytes, gold: list[dict[str, Any]]) -> list[str
     return labels
 
 
-def eval_labels(drawings: list[dict[str, Any]], ocr: Ocr, baseline: bool) -> dict[str, Any]:
+def eval_labels(drawings: list[dict[str, Any]], ocr: Ocr, baseline: bool, llm: LlmLabels | None = None) -> dict[str, Any]:
     stats: dict[str, Counter] = defaultdict(Counter)
+    reread = Counter()
     misses: list[str] = []
     for d in drawings:
         gold = [g for g in gold_items(d) if g["label"]]
@@ -111,18 +138,25 @@ def eval_labels(drawings: list[dict[str, Any]], ocr: Ocr, baseline: bool) -> dic
             lexicon = tx.page_lexicon(items)
             crop_gold = [g for g in gold if g["class_name"] in tx.CROP_OCR_CLASSES]
             crop_items = dict(zip(map(id, crop_gold), ocr.crops(d["image"], [g["bbox"] for g in crop_gold]), strict=True))
+            if llm is not None:
+                image, reader = Image.open(io.BytesIO(d["image"])).convert("RGB"), llm.reader_for(d["image"])
             preds = []
             for g in gold:
                 page_label = tx.symbol_label(items, g["bbox"], g["class_name"], lexicon)
                 if id(g) in crop_items:
                     crop_label = tx.symbol_label(crop_items[id(g)], g["bbox"], g["class_name"], lexicon)
-                    preds.append(tx.best_label(crop_label, page_label, lexicon))
-                else:
-                    preds.append(page_label)
+                    page_label = tx.best_label(crop_label, page_label, lexicon)
+                second = tx.reread_label(image, g["bbox"], g["class_name"], page_label, reader) if llm else None
+                if second is not None:
+                    before = _device_ok(page_label, g["label"])
+                    after = _device_ok(second, g["label"])
+                    reread.update(n=1, fixed=int(after and not before), broke=int(before and not after))
+                    page_label = second
+                preds.append(page_label)
         for g, pred in zip(gold, preds, strict=True):
             group = g["kind"]
             key = f"{group}:{g['class_name']}"
-            device_ok = tx.match_key(tx.device_token(pred)) == tx.match_key(tx.device_token(g["label"]))
+            device_ok = _device_ok(pred, g["label"])
             strict_ok = tx.device_token(pred) == tx.device_token(g["label"])
             full_ok = norm_label(pred) == norm_label(g["label"])
             for k in (key, f"{group}:ALL"):
@@ -135,7 +169,55 @@ def eval_labels(drawings: list[dict[str, Any]], ocr: Ocr, baseline: bool) -> dic
                 "device_acc_strict": round(c["strict"] / c["n"], 4), "full_acc": round(c["full"] / c["n"], 4)}
 
     return {"scored": stats["symbol:ALL"]["n"], "errors": 0, "by_group": {k: rate(v) for k, v in sorted(stats.items())},
-            "device_misses": misses}
+            "llm_reread": dict(reread), "device_misses": misses}
+
+
+def _device_ok(pred: str, gold: str) -> bool:
+    return tx.match_key(tx.device_token(pred)) == tx.match_key(tx.device_token(gold))
+
+
+_REF_LABEL = re.compile(rf"{tx.SHEET_REF}(?:へ|より)")
+
+
+def _japanese(text: str) -> str:
+    return "".join(c for c in tx.normalize(text) if unicodedata.east_asian_width(c) in "WF" and c not in "へより（）")
+
+
+def eval_names(drawings: list[dict[str, Any]], ocr: Ocr, llm: LlmLabels | None) -> dict[str, Any]:
+    """日本語の装置名・信号名称・注記（#43）。正解ラベルの日本語部分を、記号なら結び付いた名称、
+    大枠なら枠の中の名称・注記と比べる。完全一致と文字の一致率（正解の文字のうち読めた割合）を出す。"""
+    stats: dict[str, Counter] = defaultdict(Counter)
+    misses: list[str] = []
+    for d in drawings:
+        all_gold = gold_items(d)
+        wanted = [(g, _japanese(g["label"])) for g in all_gold if g["label"] and not _REF_LABEL.search(tx.normalize(g["label"]).replace(" ", ""))]
+        wanted = [(g, w) for g, w in wanted if w]
+        if not wanted:
+            continue
+        items = ocr.page(d["image"])
+        width, height = int(d["project"]["image_width"]), int(d["project"]["image_height"])
+        symbols = [{"id": g["ref"], "bbox": g["bbox"]} for g in all_gold if g["kind"] == "symbol"]
+        texts = tx.classify_texts(items, symbols, tx.text_zones(items, width, height))
+        if llm is not None:
+            image = Image.open(io.BytesIO(d["image"])).convert("RGB")
+            tx.reread_texts(image, texts, llm.reader_for(d["image"], llm.llm.TEXT))
+        for g, want in wanted:
+            if g["kind"] == "symbol":
+                got = "".join(_japanese(t["text"]) for t in texts if t["kind"] == "name" and t["symbol_id"] == g["ref"])
+            else:
+                box = tx._as_box(g["bbox"])
+                got = "".join(_japanese(t["text"]) for t in texts
+                              if t["kind"] in ("name", "note") and tx._inside(tx._center(tuple(t["box"])), box, 20))
+            found = sum((Counter(want) & Counter(got)).values())
+            stats[g["kind"]].update(n=1, exact=int(want in got), chars=len(want), found=found)
+            if want not in got:
+                misses.append(f"{d['sheet']} {g['kind']} gold={want!r} pred={got[:40]!r}")
+    return {
+        "scored": sum(c["n"] for c in stats.values()), "errors": 0,
+        "by_kind": {k: {"n": c["n"], "exact": round(c["exact"] / c["n"], 4), "char_recall": round(c["found"] / c["chars"], 4)}
+                    for k, c in sorted(stats.items())},
+        "misses": misses,
+    }
 
 
 def sheet_service_top1(png: bytes, cache: Path) -> str:
@@ -358,13 +440,15 @@ def main() -> None:
     parser.add_argument("--gold", type=Path, nargs="+", required=True)
     parser.add_argument("--cache", type=Path, required=True, help="OCR 結果のキャッシュ置き場")
     parser.add_argument("--split", choices=["tune", "report", "all"], default="all")
-    parser.add_argument("--metrics", default="labels,relay,refs,sheet,text_fp,regions")
+    parser.add_argument("--metrics", default="labels,names,relay,refs,sheet,text_fp,regions")
     parser.add_argument("--unseen-pages", type=Path, help="正解のない未学習図面の PNG（シート番号だけ測る）")
     parser.add_argument("--sheet-gt", type=Path, help="未学習図面のシート番号の正解 JSON")
     parser.add_argument("--relay-gt", type=Path, help="リレー表の行の正解 JSON（<SHEET>.json）の置き場")
     parser.add_argument("--cv-preds", type=Path, help="交差検証の検出結果（fold*/pred/<SHEET>.json）")
     parser.add_argument("--baseline", action="store_true", help="現行の製品と同じ処理で測る")
     parser.add_argument("--details", action="store_true", help="外れた項目の一覧も出す")
+    parser.add_argument("--label-llm", help="器具番号の形でないラベルを読み直すローカル LLM の URL（Ollama 互換）")
+    parser.add_argument("--label-llm-model", default="qwen3.6:35b-a3b-mtp-q4_K_M")
     args = parser.parse_args()
 
     _, drawings = load_gold(args.gold)
@@ -378,8 +462,11 @@ def main() -> None:
     preds_for = lambda sheet: preds.get(sheet, [])  # noqa: E731
     metrics = set(args.metrics.split(","))
     out: dict[str, Any] = {"split": args.split, "drawings": len(drawings), "baseline": args.baseline}
+    llm = LlmLabels(args.cache, args.label_llm, args.label_llm_model) if args.label_llm else None
     if "labels" in metrics:
-        out["labels"] = eval_labels(drawings, ocr, args.baseline)
+        out["labels"] = eval_labels(drawings, ocr, args.baseline, llm)
+    if "names" in metrics and not args.baseline:
+        out["names"] = eval_names(drawings, ocr, llm)
     if "relay" in metrics:
         out["relay"] = eval_relay(drawings, ocr, args.relay_gt, args.baseline)
     if "refs" in metrics:
