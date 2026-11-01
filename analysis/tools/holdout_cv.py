@@ -279,7 +279,7 @@ def train_fold(recipe: dict[str, Any], data_yaml: Path, out: Path) -> Path:
     YOLO(recipe["model"]).train(
         data=str(data_yaml), epochs=recipe["epochs"], imgsz=recipe["imgsz"], batch=recipe["batch"],
         seed=recipe["seed"], deterministic=True, val=False, plots=False, project=str(out), name="train",
-        exist_ok=True, verbose=False, **recipe.get("train_args", {}),
+        exist_ok=True, verbose=False, workers=recipe.get("workers", 2), **recipe.get("train_args", {}),
     )
     return weights
 
