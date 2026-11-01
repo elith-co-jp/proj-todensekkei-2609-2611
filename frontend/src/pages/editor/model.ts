@@ -137,7 +137,6 @@ export type SymbolSort = (typeof SYMBOL_SORTS)[number][0]
 /* 位置順の1行の高さ（ページ高さ比）。中心が少しずれただけの同じ段の記号を左から読む順に並べる */
 const POSITION_ROW_HEIGHT = 0.02
 
-/** クラスマスタでの並び位置。マスタにない種別は末尾にまとめる */
 export function classRank(classOrder: readonly string[], key: string) {
   const index = classOrder.indexOf(key)
   return index < 0 ? classOrder.length : index

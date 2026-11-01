@@ -510,7 +510,6 @@ export default function EditorPage() {
     setTab('symbols')
   }
 
-  /* 一覧から選んだシンボルが画面外なら、倍率は変えずに中央へ寄せる */
   const revealSymbol = (ref: string) => {
     setSelectedRef(ref)
     const s = symbolByRef.get(ref)
