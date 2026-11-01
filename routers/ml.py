@@ -34,6 +34,7 @@ from services.model_service import (
     serialize_model,
     store_model_bytes,
 )
+from services.review_service import project_review_summary
 from services.structure_service import document_structure, get_structure
 from services.training_service import running_training, serialize_run, start_training
 
@@ -225,6 +226,12 @@ def project_predictions(project_id: int, db: Session = Depends(get_db)):
     """結果表示（JSON 出力）：この図面の最新推論結果。"""
     project = get_project_or_404(db, project_id)
     return predictions_payload(db, project)
+
+
+@router.get("/projects/{project_id}/review-summary")
+def review_summary(project_id: int, db: Session = Depends(get_db)):
+    """AI 検出を人がどう確認したか（採用・種別修正・削除・手動追加）と次回学習への反映。"""
+    return project_review_summary(db, get_project_or_404(db, project_id))
 
 
 # ---------------------------------------------------------------- 学習
