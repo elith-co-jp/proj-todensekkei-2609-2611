@@ -3,14 +3,19 @@ import { useEffect, useState } from 'react'
 import type { ProjectDetail } from '../../types'
 import { buildMetaForm } from './model'
 import type { MetaForm, SaveStatus } from './model'
+import { ReviewSummaryCard } from './ReviewSummaryCard'
 
 export function MetaPanel({
   project,
+  visible,
   saveStatus,
+  annotationSaveStatus,
   onQueueSave,
 }: {
   project: ProjectDetail
+  visible: boolean
   saveStatus: SaveStatus
+  annotationSaveStatus: SaveStatus
   onQueueSave: (projectId: number, payload: MetaForm, immediate?: boolean) => void
 }) {
   const initialForm = buildMetaForm(project)
@@ -35,6 +40,11 @@ export function MetaPanel({
 
   return (
     <div className="thin-scroll flex-1 space-y-3 overflow-auto p-4">
+      <ReviewSummaryCard
+        projectId={project.id}
+        visible={visible}
+        serverSynced={saveStatus === 'saved' && annotationSaveStatus === 'saved'}
+      />
       {renderField('名称', 'name')}
       {renderField('シート番号', 'sheet_no')}
       <div className="grid grid-cols-2 gap-3">

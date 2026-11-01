@@ -4,7 +4,7 @@ import { act, cleanup, fireEvent, render, waitFor } from '@testing-library/react
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMemoryRouter, RouterProvider } from 'react-router-dom'
 
-import type { ProjectDetail, ProjectRow, SymbolClass } from '../types'
+import type { ProjectDetail, ProjectRow, ReviewSummary, SymbolClass } from '../types'
 import { clearPersistedProjectSave } from '../utils/workspace'
 import EditorPage from './EditorPage'
 
@@ -12,6 +12,7 @@ const apiMocks = vi.hoisted(() => ({
   exportProject: vi.fn(),
   getProject: vi.fn(),
   getPredictions: vi.fn(),
+  getReviewSummary: vi.fn(),
   imageUrl: vi.fn((id: number) => `/api/projects/${id}/image`),
   listClasses: vi.fn(),
   listProjects: vi.fn(),
@@ -22,6 +23,19 @@ const apiMocks = vi.hoisted(() => ({
 vi.mock('../api/client', () => ({ api: apiMocks }))
 
 const scrollIntoView = vi.fn()
+
+const reviewSummary: ReviewSummary = {
+  project_id: 1,
+  status: 'draft',
+  in_next_training: false,
+  ai_detection_count: 12,
+  region_excluded_count: 2,
+  imported: true,
+  kept: 7,
+  relabeled: 2,
+  deleted: 3,
+  manual_added: 4,
+}
 
 const symbolClass: SymbolClass = {
   id: 1,
@@ -149,6 +163,7 @@ beforeEach(() => {
   apiMocks.saveAnnotations.mockResolvedValue({ symbol_count: 2, connection_count: 0, skipped: [] })
   apiMocks.updateMeta.mockResolvedValue({ id: 1, status: 'draft' })
   apiMocks.exportProject.mockResolvedValue({ name: 'anonymous.zip', size: 10 })
+  apiMocks.getReviewSummary.mockResolvedValue(reviewSummary)
 })
 
 afterEach(() => {
@@ -783,5 +798,63 @@ describe('EditorPage 選択の連動', () => {
     expect(centered.scale).toBe(zoomed.scale)
     expect(centered.x + 0.3 * 1000 * centered.scale).toBeCloseTo(500)
     expect(centered.y + 0.4 * 800 * centered.scale).toBeCloseTo(400)
+  })
+})
+
+describe('EditorPage 学習への反映', () => {
+  it('図面情報タブで確認状況を示し、状態を完了にして保存すると学習に含まれる表示へ更新する', async () => {
+    apiMocks.getReviewSummary
+      .mockResolvedValueOnce(reviewSummary)
+      .mockResolvedValue({ ...reviewSummary, status: 'done', in_next_training: true })
+    const { findByRole, findByText, getByRole, getByText } = renderEditor()
+    fireEvent.click(await findByRole('tab', { name: '図面情報' }))
+
+    expect(await findByText(/^状態を『完了』にすると次回の学習に含まれます。/)).toBeTruthy()
+    expect(getByText('AI検出 12 → 採用 7・種別修正 2・削除 3・手動追加 4')).toBeTruthy()
+    expect(getByText('領域枠 2 件はシンボル対象外として除外')).toBeTruthy()
+
+    fireEvent.change(getByRole('combobox', { name: '状態' }), { target: { value: 'done' } })
+    await waitFor(() => expect(apiMocks.updateMeta).toHaveBeenCalledTimes(1))
+
+    expect(
+      await findByText(
+        'この図面は次回の学習に含まれます。削除したAI検出（3件）の位置は『シンボルではない（背景）』として学習され、同じ誤検出が出にくくなります。',
+      ),
+    ).toBeTruthy()
+    expect(apiMocks.getReviewSummary).toHaveBeenLastCalledWith(1)
+  })
+
+  it('AI 検出を取り込む前はその旨を示し、「更新」で最新の集計を取り直す', async () => {
+    apiMocks.getReviewSummary
+      .mockResolvedValueOnce({ ...reviewSummary, imported: false, kept: 0, relabeled: 0, deleted: 0 })
+      .mockResolvedValue(reviewSummary)
+    const { findByRole, findByText, getByRole, queryByText } = renderEditor()
+    fireEvent.click(await findByRole('tab', { name: '図面情報' }))
+
+    expect(await findByText('AI 検出はまだ取り込まれていません。')).toBeTruthy()
+    expect(queryByText(/→ 採用/)).toBeNull()
+
+    fireEvent.click(getByRole('button', { name: '更新' }))
+    expect(await findByText('AI検出 12 → 採用 7・種別修正 2・削除 3・手動追加 4')).toBeTruthy()
+  })
+
+  it('AI 検出のシンボルを削除したときだけ、背景として学習されることを通知する', async () => {
+    apiMocks.getProject.mockImplementation(async (id: number) => {
+      const p = project(id)
+      p.symbols[0] = { ...p.symbols[0], origin: 'inference', confidence: 0.8 }
+      return p
+    })
+    const { findByRole, findByText, getByRole, queryByText } = renderEditor()
+    await findByRole('region', { name: '図面アノテーションキャンバス' })
+
+    fireEvent.click(getByRole('button', { name: 'SYM-0002を削除' }))
+    expect(queryByText(/を削除しました/)).toBeNull()
+
+    fireEvent.click(getByRole('button', { name: 'SYM-0001を削除' }))
+    expect(
+      await findByText(
+        'AI 検出 SYM-0001 を削除しました。図面を『完了』にして学習すると、この位置は『シンボルではない』例として学習されます。',
+      ),
+    ).toBeTruthy()
   })
 })

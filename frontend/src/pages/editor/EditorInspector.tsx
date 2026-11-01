@@ -31,6 +31,7 @@ export function EditorInspector({
   onSelectConnection,
   project,
   metaSaveStatus,
+  annotationSaveStatus,
   onQueueMetaSave,
 }: {
   inspectorRef: React.RefObject<HTMLElement | null>
@@ -57,6 +58,7 @@ export function EditorInspector({
   onSelectConnection: (index: number) => void
   project: ProjectDetail
   metaSaveStatus: SaveStatus
+  annotationSaveStatus: SaveStatus
   onQueueMetaSave: (projectId: number, payload: MetaForm, immediate?: boolean) => void
 }) {
   const symbolListRef = useRef<HTMLDivElement | null>(null)
@@ -429,7 +431,9 @@ export function EditorInspector({
           <MetaPanel
             key={project.id}
             project={project}
+            visible={tab === 'meta'}
             saveStatus={metaSaveStatus}
+            annotationSaveStatus={annotationSaveStatus}
             onQueueSave={onQueueMetaSave}
           />
         </div>

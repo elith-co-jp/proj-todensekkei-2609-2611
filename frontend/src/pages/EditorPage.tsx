@@ -537,6 +537,7 @@ export default function EditorPage() {
   }
 
   const deleteSymbol = (ref: string) => {
+    const removed = symbolByRef.get(ref)
     pushHistory()
     setSymbols((prev) => prev.filter((s) => s.ref !== ref))
     setConnections((prev) => prev.filter((c) => c.from_symbol_ref !== ref && c.to_symbol_ref !== ref))
@@ -547,6 +548,11 @@ export default function EditorPage() {
       next.delete(ref)
       return next
     })
+    if (removed?.origin === 'inference') {
+      setNotice(
+        `AI 検出 ${ref} を削除しました。図面を『完了』にして学習すると、この位置は『シンボルではない』例として学習されます。`,
+      )
+    }
   }
 
   /* AI 推論結果を編集対象のシンボルとして取り込む（破線表示・人が修正して蓄積）*/
@@ -1321,6 +1327,7 @@ export default function EditorPage() {
             onSelectConnection={setSelectedConn}
             project={project}
             metaSaveStatus={metaSaveStatus}
+            annotationSaveStatus={saveStatus}
             onQueueMetaSave={queueMetaSave}
           />
         )}
