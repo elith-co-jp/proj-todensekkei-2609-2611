@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
@@ -16,6 +17,7 @@ from models import (
     AnnotationSymbol,
     Connection,
     Prediction,
+    StructurePrediction,
     SymbolClass,
     SymbolTerminal,
 )
@@ -176,8 +178,15 @@ def list_projects(q: str | None = Query(default=None), db: Session = Depends(get
         .group_by(AnnotationSymbol.project_id)
         .all()
     )
+    analysis_counts = {}
+    for project_id, payload_json in db.query(
+        StructurePrediction.project_id, StructurePrediction.payload_json
+    ):
+        payload = json.loads(payload_json)
+        analysis_counts[project_id] = (len(payload["wires"]), payload["from_to"]["connection_count"])
     out = []
     for p in query.order_by(AnnotationProject.id.desc()).all():
+        analysis_wire_count, analysis_connection_count = analysis_counts.get(p.id, (None, None))
         out.append(
             {
                 "id": p.id,
@@ -193,6 +202,8 @@ def list_projects(q: str | None = Query(default=None), db: Session = Depends(get
                 "connection_count": connection_counts.get(p.id, 0),
                 "terminal_count": terminal_counts.get(p.id, 0),
                 "prediction_count": prediction_counts.get(p.id, 0),
+                "analysis_wire_count": analysis_wire_count,
+                "analysis_connection_count": analysis_connection_count,
                 "updated_at": p.updated_at.isoformat() if p.updated_at else None,
             }
         )
