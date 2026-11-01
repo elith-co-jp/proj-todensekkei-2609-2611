@@ -23,10 +23,11 @@ _TOOLS = Path(__file__).resolve().parent / "tools"
 if str(_TOOLS) not in sys.path:
     sys.path.append(str(_TOOLS))
 
-from analyze_pdf_structure import analyze_image
+from analyze_pdf_structure import analyze_image, make_binary_mask
 from build_e2e_demo_outputs import build_final_output_from_analysis
 from dot_roles import annotate_dots
 from filter_wire_decorations import filter_wire_decorations, rapidocr_text_confirmation
+from revision_clouds import detect_clouds, erase_clouds
 from run_yolo_e2e_pipeline import (
     DEFAULT_INFERRED_TERMINAL_CLASSES,
     DEFAULT_WIRE_TEXT_MASK,
@@ -72,6 +73,12 @@ def analyze_detections(
             "status": "detected_by_yolo",
         })
 
+    # --- 雲マーク（#41）: 雲マークの線を消した画像で配線を読み、文字は元の画像で読む。記号の枠の中は消さない。
+    # 雲マークは regions[] に出す。
+    clouds = detect_clouds(make_binary_mask(image))
+    page_image, image = image, erase_clouds(image, clouds, [s["bbox"] for s in symbols])
+    # --- ここまで雲マーク
+
     work_dir.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="analysis-", dir=work_dir) as tmp:
         analyze_image(
@@ -96,7 +103,7 @@ def analyze_detections(
             warnings.append("ラベル読み取りを実行できませんでした。OCRの実行環境を確認してください。")
         elif reader is not None:
             text_result = extract_text_structure(
-                image, symbols, region_boxes, reader, reader_from_env(), reader_from_env(TEXT),
+                page_image, symbols, region_boxes, reader, reader_from_env(), reader_from_env(TEXT),
             )
     except Exception:  # OCR failure must not discard successfully detected wires.
         logging.getLogger(__name__).exception("Symbol label OCR failed")
@@ -135,6 +142,7 @@ def analyze_detections(
         symbol.pop("text_items", None)
     payload["symbols"] = symbols
     payload.update(text_result)
+    payload["regions"] = [*(payload["regions"] if isinstance(payload.get("regions"), list) else []), *clouds.regions]
     if dot_summary is not None:
         payload["dot_roles"] = dot_summary
     if terminal_number_counts is not None:
