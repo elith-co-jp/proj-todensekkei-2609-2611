@@ -18,6 +18,7 @@ import {
 } from 'lucide-react'
 
 import { api } from '../api/client'
+import { DEFAULT_DETECTION_CONF } from '../api/defaults'
 import { LoadingOverlay } from '../components/LoadingOverlay'
 import type {
   EvalScope,
@@ -107,7 +108,7 @@ export default function MlOpsPage() {
   const [busy, setBusy] = useState<string | null>(null)
 
   // 推論パラメータ
-  const [conf, setConf] = useState(0.25)
+  const [conf, setConf] = useState(DEFAULT_DETECTION_CONF)
   const [ids, setIds] = useState<Set<number>>(new Set())
   const [inferenceResult, setInferenceResult] = useState<InferenceRunResponse | null>(null)
   const [importResult, setImportResult] = useState<InferenceImportResult | null>(null)

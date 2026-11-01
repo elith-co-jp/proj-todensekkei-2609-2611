@@ -125,6 +125,23 @@ def runtime_labels(ocr: Ocr, png: bytes, gold: list[dict[str, Any]]) -> list[str
     return labels
 
 
+def read_labels(d: dict[str, Any], boxes: list[dict[str, Any]], ocr: Ocr, llm: LlmLabels | None) -> list[tuple[str, str | None]]:
+    """製品と同じ読み方で、枠（class_name, bbox）ごとに（OCR のラベル, LLM の読み直し）を返す。"""
+    items = ocr.page(d["image"])
+    lexicon = tx.page_lexicon(items)
+    crop_boxes = [b for b in boxes if b["class_name"] in tx.CROP_OCR_CLASSES]
+    crops = dict(zip(map(id, crop_boxes), ocr.crops(d["image"], [b["bbox"] for b in crop_boxes]), strict=True))
+    if llm is not None:
+        image, reader = Image.open(io.BytesIO(d["image"])).convert("RGB"), llm.reader_for(d["image"])
+    out: list[tuple[str, str | None]] = []
+    for b in boxes:
+        label = tx.symbol_label(items, b["bbox"], b["class_name"], lexicon)
+        if id(b) in crops:
+            label = tx.best_label(tx.symbol_label(crops[id(b)], b["bbox"], b["class_name"], lexicon), label, lexicon)
+        out.append((label, tx.reread_label(image, b["bbox"], b["class_name"], label, reader) if llm else None))
+    return out
+
+
 def eval_labels(drawings: list[dict[str, Any]], ocr: Ocr, baseline: bool, llm: LlmLabels | None = None) -> dict[str, Any]:
     stats: dict[str, Counter] = defaultdict(Counter)
     reread = Counter()
@@ -134,25 +151,14 @@ def eval_labels(drawings: list[dict[str, Any]], ocr: Ocr, baseline: bool, llm: L
         if baseline:
             preds = runtime_labels(ocr, d["image"], gold)
         else:
-            items = ocr.page(d["image"])
-            lexicon = tx.page_lexicon(items)
-            crop_gold = [g for g in gold if g["class_name"] in tx.CROP_OCR_CLASSES]
-            crop_items = dict(zip(map(id, crop_gold), ocr.crops(d["image"], [g["bbox"] for g in crop_gold]), strict=True))
-            if llm is not None:
-                image, reader = Image.open(io.BytesIO(d["image"])).convert("RGB"), llm.reader_for(d["image"])
             preds = []
-            for g in gold:
-                page_label = tx.symbol_label(items, g["bbox"], g["class_name"], lexicon)
-                if id(g) in crop_items:
-                    crop_label = tx.symbol_label(crop_items[id(g)], g["bbox"], g["class_name"], lexicon)
-                    page_label = tx.best_label(crop_label, page_label, lexicon)
-                second = tx.reread_label(image, g["bbox"], g["class_name"], page_label, reader) if llm else None
+            for g, (label, second) in zip(gold, read_labels(d, gold, ocr, llm), strict=True):
                 if second is not None:
-                    before = _device_ok(page_label, g["label"])
+                    before = _device_ok(label, g["label"])
                     after = _device_ok(second, g["label"])
                     reread.update(n=1, fixed=int(after and not before), broke=int(before and not after))
-                    page_label = second
-                preds.append(page_label)
+                    label = second
+                preds.append(label)
         for g, pred in zip(gold, preds, strict=True):
             group = g["kind"]
             key = f"{group}:{g['class_name']}"

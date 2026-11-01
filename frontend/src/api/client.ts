@@ -15,6 +15,8 @@ import type {
   TrainingRun,
 } from '../types'
 
+import { DEFAULT_DETECTION_CONF } from './defaults'
+
 const BASE = import.meta.env.VITE_API_BASE ?? ''
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
@@ -167,14 +169,14 @@ export const api = {
 
   modelDownloadUrl: (id: number) => `${BASE}/api/ml/models/${id}/download`,
 
-  runInference: (projectIds: number[], conf?: number) =>
+  runInference: (projectIds: number[], conf = DEFAULT_DETECTION_CONF) =>
     req<InferenceRunResponse>('/api/ml/inference/run', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ project_ids: projectIds, conf: conf ?? 0.25 }),
+      body: JSON.stringify({ project_ids: projectIds, conf }),
     }),
 
-  runAnalysis: (projectIds: number[], conf = 0.25) =>
+  runAnalysis: (projectIds: number[], conf = DEFAULT_DETECTION_CONF) =>
     req<InferenceRunResponse>('/api/ml/analysis/run', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

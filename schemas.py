@@ -87,11 +87,15 @@ class YoloExportRequest(BaseModel):
 
 
 # ---------- AI 改善サイクル（推論・学習） ----------
+# 検出の確信度のしきい値の既定値。図面単位の交差検証で F1 が最も高かった値（DD-0007）。
+DEFAULT_DETECTION_CONF = 0.5
+
+
 class InferenceRunRequest(BaseModel):
     """対象プロジェクトへ active モデルで推論を実行する。"""
 
     project_ids: list[int] = []  # 空 = 全プロジェクト
-    conf: float = Field(default=0.25, ge=0.0, le=1.0)
+    conf: float = Field(default=DEFAULT_DETECTION_CONF, ge=0.0, le=1.0)
 
 
 class TrainingRunRequest(BaseModel):
