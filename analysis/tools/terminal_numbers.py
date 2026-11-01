@@ -116,17 +116,19 @@ def contact_numbers(symbol: dict[str, Any]) -> dict[str, str]:
     terminals = symbol.get("terminals") or []
     words = [f["x"] for f in fragments if re.search("[A-Z]", f["text"])]
     label_x = sum(words) / len(words) if words else None
+    pairs = sorted(
+        (abs(f["y"] - ty) + 0.5 * abs(f["x"] - tx), ti, fi)
+        for ti, (tx, ty) in enumerate(t["point"] for t in terminals)
+        for fi, f in enumerate(numbers)
+        if label_x is None or (f["x"] < tx) == (label_x > tx)
+    )
     out: dict[str, str] = {}
     used: set[int] = set()
-    for terminal in terminals:
-        tx, ty = terminal["point"]
-        ranked = sorted(
-            (abs(f["y"] - ty) + 0.5 * abs(f["x"] - tx), i) for i, f in enumerate(numbers)
-            if i not in used and (label_x is None or (f["x"] < tx) == (label_x > tx))
-        )
-        if ranked and ranked[0][0] <= 30:
-            used.add(ranked[0][1])
-            out[str(terminal.get("ref"))] = numbers[ranked[0][1]]["text"]
+    for distance, ti, fi in pairs:
+        ref = str(terminals[ti].get("ref"))
+        if distance <= 30 and ref not in out and fi not in used:
+            used.add(fi)
+            out[ref] = numbers[fi]["text"]
     return out
 
 
