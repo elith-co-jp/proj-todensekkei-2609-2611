@@ -31,6 +31,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from holdout_cv import gold_items, load_gold, norm_label, prf, score_symbols, to_box  # noqa: E402
 
+from analysis import name_ocr  # noqa: E402
 from analysis import text_extraction as tx  # noqa: E402
 
 
@@ -227,7 +228,7 @@ def eval_others(drawings: list[dict[str, Any]], ocr: Ocr) -> dict[str, Any]:
             "confusion": {f"{a}->{b}": v for (a, b), v in sorted(confusion.items())}, "misses": misses}
 
 
-def eval_names(drawings: list[dict[str, Any]], ocr: Ocr, llm: LlmLabels | None) -> dict[str, Any]:
+def eval_names(drawings: list[dict[str, Any]], ocr: Ocr, llm: LlmLabels | None, use_name_ocr: bool = True) -> dict[str, Any]:
     """日本語の装置名・信号名称・注記（#43）。正解ラベルの日本語部分を、記号なら結び付いた名称、
     大枠なら枠の中の名称・注記と比べる。完全一致と文字の一致率（正解の文字のうち読めた割合）を出す。"""
     stats: dict[str, Counter] = defaultdict(Counter)
@@ -242,9 +243,11 @@ def eval_names(drawings: list[dict[str, Any]], ocr: Ocr, llm: LlmLabels | None) 
         width, height = int(d["project"]["image_width"]), int(d["project"]["image_height"])
         symbols = [{"id": g["ref"], "bbox": g["bbox"]} for g in all_gold if g["kind"] == "symbol"]
         texts = tx.classify_texts(items, symbols, tx.text_zones(items, width, height))
-        if llm is not None:
+        # 製品と同じ: ローカル LLM があればそれで、なければ同梱の日本語対応 OCR で読み直す（--no-name-ocr で読み直さない）。
+        reader = llm.reader_for(d["image"], llm.llm.TEXT) if llm is not None else (name_ocr.default_reader() if use_name_ocr else None)
+        if reader is not None:
             image = Image.open(io.BytesIO(d["image"])).convert("RGB")
-            tx.reread_texts(image, texts, llm.reader_for(d["image"], llm.llm.TEXT))
+            tx.reread_texts(image, texts, reader)
         for g, want in wanted:
             if g["kind"] == "symbol":
                 got = "".join(_japanese(t["text"]) for t in texts if t["kind"] == "name" and t["symbol_id"] == g["ref"])
@@ -503,6 +506,7 @@ def main() -> None:
     parser.add_argument("--label-llm", help="器具番号の形でないラベルを読み直すローカル LLM の URL（Ollama 互換）")
     parser.add_argument("--label-llm-model", default="qwen3.6:35b-a3b-mtp-q4_K_M")
     parser.add_argument("--rec-model", type=Path, help="文字認識モデル（onnx）を既定から差し替えて測る")
+    parser.add_argument("--no-name-ocr", action="store_true", help="日本語の名称・注記を読み直さずに測る（変更前の値）")
     args = parser.parse_args()
 
     _, drawings = load_gold(args.gold)
@@ -522,7 +526,7 @@ def main() -> None:
     if "others" in metrics and not args.baseline:
         out["others"] = eval_others(drawings, ocr)
     if "names" in metrics and not args.baseline:
-        out["names"] = eval_names(drawings, ocr, llm)
+        out["names"] = eval_names(drawings, ocr, llm, not args.no_name_ocr)
     if "relay" in metrics:
         out["relay"] = eval_relay(drawings, ocr, args.relay_gt, args.baseline)
     if "refs" in metrics:

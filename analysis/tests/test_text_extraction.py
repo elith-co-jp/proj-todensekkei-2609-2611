@@ -187,6 +187,14 @@ def test_reread_answer_that_is_not_a_device_number_keeps_the_ocr_label():
     assert tx.reread_label(image, b, "contact_a", "143E AMESD", lambda *_: None) is None
 
 
+def test_name_ocr_is_skipped_when_the_model_file_is_missing(monkeypatch, tmp_path):
+    from analysis import name_ocr
+
+    monkeypatch.setenv("NAME_OCR_MODEL", str(tmp_path / "missing.onnx"))
+    monkeypatch.setattr("runtime.resource_base", lambda: tmp_path)
+    assert name_ocr.model_path() is None
+
+
 def test_japanese_names_outside_tables_are_reread():
     texts = [
         {"text": "腻路檬域灯制御盐", "kind": "name", "symbol_id": "symbol_001", "zone": None, "box": [0, 0, 80, 12]},
@@ -196,6 +204,9 @@ def test_japanese_names_outside_tables_are_reread():
     answers = iter(["航路標識灯制御盤", "C1"])
     assert tx.reread_texts(Image.new("RGB", (100, 60), "white"), texts, lambda *_: next(answers)) == 1
     assert [(t["text"], t.get("ocr_text")) for t in texts] == [("航路標識灯制御盤", "腻路檬域灯制御盐"), ("端子", None), ("常", None)]
+    assert texts[0]["source"] == "llm"
+    tx.reread_texts(Image.new("RGB", (100, 60), "white"), texts[2:], lambda *_: "異常", "name_ocr")
+    assert (texts[2]["text"], texts[2]["source"]) == ("異常", "name_ocr")
 
 
 def test_unreachable_label_llm_returns_no_answer():

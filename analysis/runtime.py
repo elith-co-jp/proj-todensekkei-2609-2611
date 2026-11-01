@@ -15,6 +15,7 @@ from typing import Any
 from PIL import Image
 
 from analysis.label_llm import TEXT, reader_from_env
+from analysis.name_ocr import default_reader as name_ocr_reader
 from analysis.relay_links import link_relay_rows
 from analysis.text_extraction import extract_text_structure
 
@@ -96,8 +97,11 @@ def analyze_detections(
         if warning:
             warnings.append("ラベル読み取りを実行できませんでした。OCRの実行環境を確認してください。")
         elif reader is not None:
+            text_llm = reader_from_env(TEXT)
             text_result = extract_text_structure(
-                image, symbols, region_boxes, reader, reader_from_env(), reader_from_env(TEXT),
+                # 日本語の名称・注記は、ローカル LLM が設定されていればそれで、なければ同梱の日本語対応 OCR で読み直す。
+                image, symbols, region_boxes, reader, reader_from_env(), text_llm or name_ocr_reader(),
+                text_source="llm" if text_llm else "name_ocr",
             )
     except Exception:  # OCR failure must not discard successfully detected wires.
         logging.getLogger(__name__).exception("Symbol label OCR failed")
@@ -170,6 +174,7 @@ def analyze_detections(
             "engine": engine, "count": sum(1 for s in symbols if s.get("label")) if text_result else 0,
             "llm_reread_count": sum(1 for s in symbols if s.get("label_source") == "llm"),
             "llm_text_reread_count": sum(1 for t in text_result.get("texts", []) if t.get("source") == "llm"),
+            "name_ocr_reread_count": sum(1 for t in text_result.get("texts", []) if t.get("source") == "name_ocr"),
         },
         "text_zone_suppressed_count": len(symbols) - len(wired_symbols),
         "terminal_source": "inferred", "annotation_assistance": False,

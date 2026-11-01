@@ -25,6 +25,10 @@ base_model = spec_dir / ".build-assets" / "yolov8n.pt"
 if not base_model.is_file():
     raise FileNotFoundError("Run python scripts/fetch_base_model.py before packaging")
 datas.append((str(base_model), "models"))
+name_ocr_model = spec_dir / ".build-assets" / "ch_PP-OCRv5_rec_mobile.onnx"
+if not name_ocr_model.is_file():
+    raise FileNotFoundError("Run python scripts/fetch_base_model.py before packaging")
+datas.append((str(name_ocr_model), "models"))
 initial_model = spec_dir / "assets" / "models" / "yolo11n_all_symbols_best.pt"
 if not initial_model.is_file():
     raise FileNotFoundError("assets/models/yolo11n_all_symbols_best.pt is missing")

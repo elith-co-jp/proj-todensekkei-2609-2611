@@ -356,8 +356,8 @@ def reread_label(image: Image.Image, box: Any, class_name: str, label: str, read
     return answer if answer and not doubtful_label(answer) else None
 
 
-def reread_texts(image: Image.Image, texts: list[dict[str, Any]], reader: LabelReader | None) -> int:
-    """日本語の名称・注記（リレー表・表題欄の外）を別の読み手（ローカル LLM）に読み直させる。
+def reread_texts(image: Image.Image, texts: list[dict[str, Any]], reader: LabelReader | None, source: str = "llm") -> int:
+    """日本語の名称・注記（リレー表・表題欄の外）を別の読み手（ローカル LLM か日本語対応 OCR）に読み直させる。
 
     OCR は日本語を簡体字に寄せて読み違える（盤→盐、記→记）。読み直した結果の最初の日本語の行に置き換え、
     元の読みは ocr_text に残す。戻り値は置き換えた件数。
@@ -371,7 +371,7 @@ def reread_texts(image: Image.Image, texts: list[dict[str, Any]], reader: LabelR
         lines = [" ".join(line.split()).strip("$*#`") for line in (reader(image, text["box"]) or "").splitlines()]
         answer = next((line for line in lines if _has_cjk(line)), None)
         if answer:
-            text["ocr_text"], text["text"], text["source"] = text["text"], answer, "llm"
+            text["ocr_text"], text["text"], text["source"] = text["text"], answer, source
             count += 1
     return count
 
@@ -694,7 +694,7 @@ def link_relay_table(rows: list[dict[str, str]], symbols: list[dict[str, Any]]) 
 
 def extract_text_structure(
     image: Image.Image, symbols: list[dict[str, Any]], regions: list[dict[str, Any]], reader: Any,
-    label_reader: LabelReader | None = None, text_reader: LabelReader | None = None,
+    label_reader: LabelReader | None = None, text_reader: LabelReader | None = None, text_source: str = "llm",
 ) -> dict[str, Any]:
     """構造 JSON に入れる文字の結果を作り、各記号のラベルを書き込む。
 
@@ -729,7 +729,7 @@ def extract_text_structure(
             symbol["text_zone"] = zone
     rows = parse_relay_table(items, width, height)
     texts = classify_texts(items, symbols, zones)
-    reread_texts(image, texts, text_reader)
+    reread_texts(image, texts, text_reader, text_source)
     return {
         "texts": texts,
         "relay_table": {"rows": rows, "links": link_relay_table(rows, symbols)},
