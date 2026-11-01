@@ -310,10 +310,13 @@ def eval_relay(drawings: list[dict[str, Any]], ocr: Ocr, relay_gt: Path | None, 
     rows_c = Counter()
     gt_drawings = 0
     misses: list[str] = []
+    # 別シートのコイルを指す接点は、書き出し時に参照先の図面のリレー表で照合する（#44 #45）。
+    rows_by_sheet: dict[str, list[dict[str, str]]] = {}
     for d in drawings:
-        with Image.open(io.BytesIO(d["image"])) as im:
-            width, height = im.size
-        rows = [] if baseline else tx.parse_relay_table(ocr.page(d["image"]), width, height)
+        width, height = int(d["project"]["image_width"]), int(d["project"]["image_height"])
+        rows_by_sheet[d["sheet"]] = [] if baseline else tx.parse_relay_table(ocr.page(d["image"]), width, height)
+    for d in drawings:
+        rows = rows_by_sheet[d["sheet"]]
         gt_path = relay_gt / f"{d['sheet']}.json" if relay_gt else None
         gt_rows = json.loads(gt_path.read_text())["rows"] if gt_path and gt_path.exists() else None
         devices = _devices(rows)
@@ -323,10 +326,16 @@ def eval_relay(drawings: list[dict[str, Any]], ocr: Ocr, relay_gt: Path | None, 
                 continue
             key = relay_key(g["label"])
             found = _found(key, devices)
-            group = "cross_sheet_label" if re.search(tx.SHEET_REF, tx.normalize(g["label"])) else "on_sheet_label"
+            target = re.search(tx.SHEET_REF, tx.normalize(g["label"]).replace(" ", ""))
+            group = "cross_sheet_label" if target else "on_sheet_label"
             role = "coil" if g["class_name"] == "relay_coil" else "contact"
             for k in ("all", group, role):
                 link.update({f"{k}_n": 1, f"{k}_found": int(found)})
+            if not target:
+                link.update(document_n=1, document_found=int(found))
+            elif target.group(0) in rows_by_sheet:
+                cross = _found(key, _devices(rows_by_sheet[target.group(0)]))
+                link.update(document_n=1, document_found=int(cross), cross_sheet_in_set_n=1, cross_sheet_in_set_found=int(cross))
             if gt_devices is not None:
                 for k in ("gt_drawings_parsed", f"gt_drawings_parsed_{role}"):
                     link.update({f"{k}_n": 1, f"{k}_found": int(found)})
@@ -346,7 +355,7 @@ def eval_relay(drawings: list[dict[str, Any]], ocr: Ocr, relay_gt: Path | None, 
     return {
         "scored": link["all_n"], "errors": 0,
         "link": {k: {"n": link[f"{k}_n"], "found": link[f"{k}_found"], "rate": rate(k)}
-                 for k in ("all", "on_sheet_label", "cross_sheet_label", "coil", "contact",
+                 for k in ("all", "on_sheet_label", "cross_sheet_label", "cross_sheet_in_set", "document", "coil", "contact",
                            "gt_drawings_parsed", "gt_drawings_ceiling", "gt_drawings_parsed_coil", "gt_drawings_ceiling_coil",
                            "gt_drawings_parsed_contact", "gt_drawings_ceiling_contact")},
         "rows": {"drawings": gt_drawings, **prf(rows_c["tp"], rows_c["fp"], rows_c["fn"])},

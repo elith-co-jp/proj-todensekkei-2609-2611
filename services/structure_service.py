@@ -7,6 +7,7 @@ import unicodedata
 
 from sqlalchemy.orm import Session
 
+from analysis.text_extraction import same_relay_device
 from database import DATA_DIR
 from models import AnnotationProject, MlModel, StructurePrediction
 from services.annotation_service import image_path
@@ -45,6 +46,7 @@ def get_structure(db: Session, project_id: int) -> dict | None:
 
 def document_structure(pages: list[dict]) -> dict:
     references = resolve_sheet_references(pages)
+    relays, linked_relays = link_cross_sheet_relays(pages)
     return {
         "schema_version": "todensekkei.document_structure.v1",
         "status": "partial" if any(p.get("status") == "partial" for p in pages) else "completed",
@@ -59,6 +61,8 @@ def document_structure(pages: list[dict]) -> dict:
             "resolved_sheet_reference_count": sum(
                 1 for p in pages for r in p.get("sheet_references", []) if r["target_project_id"] is not None
             ),
+            "cross_sheet_relay_count": relays,
+            "linked_cross_sheet_relay_count": linked_relays,
         },
         "pages": pages,
     }
@@ -92,3 +96,31 @@ def resolve_sheet_references(pages: list[dict]) -> int:
             ref["target_project_id"] = index.get(target, index.get(target.split("-")[0]))
             count += 1
     return count
+
+
+def link_cross_sheet_relays(pages: list[dict]) -> tuple[int, int]:
+    """接点・コイルのラベルにあるシート番号（コイルのあるシート）の図面で、同じ器具番号のコイルとリレー表の行を探す。
+
+    参照先の図面も書き出しているとき、記号に relay_link（参照先の図面 ID、コイルの記号 ID、リレー表の行番号）を付ける。
+    戻り値は（別シートを参照する接点・コイルの件数, コイルか行が見つかった件数）。
+    """
+    by_project = {(page.get("source") or {}).get("project_id"): page for page in pages}
+    total = linked = 0
+    for page in pages:
+        symbols = {symbol.get("id"): symbol for symbol in page.get("symbols", [])}
+        for ref in page.get("sheet_references") or []:
+            symbol = symbols.get(ref.get("symbol_id")) if ref.get("kind") == "relay" else None
+            if symbol is None:
+                continue
+            total += 1
+            target = by_project.get(ref["target_project_id"]) if ref["target_project_id"] is not None else None
+            if target is None:
+                continue
+            label = symbol.get("label") or ""
+            coils = [s["id"] for s in target.get("symbols", [])
+                     if s.get("class_name") == "relay_coil" and same_relay_device(s.get("label") or "", label)]
+            rows = [i for i, row in enumerate((target.get("relay_table") or {}).get("rows", []))
+                    if same_relay_device(label, row["device"])]
+            symbol["relay_link"] = {"project_id": ref["target_project_id"], "coil_symbol_ids": coils, "relay_table_rows": rows}
+            linked += bool(coils or rows)
+    return total, linked

@@ -83,6 +83,33 @@ def test_export_links_sheet_references_to_the_exported_drawings(client):
     assert (exported["summary"]["sheet_reference_count"], exported["summary"]["resolved_sheet_reference_count"]) == (3, 2)
 
 
+def test_export_links_contacts_to_the_coil_and_relay_table_on_the_referenced_drawing(client):
+    contact_page, coil_page = create_project(client), create_project(client, "second.png")
+    contact = {"id": "symbol_001", "class_name": "contact_a", "label": "33HB HV305 (ER21236)"}
+    other = {"id": "symbol_002", "class_name": "contact_a", "label": "43U AMESD (ER29999)"}
+    refs = [
+        {"target_sheet": "ER21236", "kind": "relay", "symbol_id": "symbol_001", "text": "(ER21236)"},
+        {"target_sheet": "ER29999", "kind": "relay", "symbol_id": "symbol_002", "text": "(ER29999)"},
+    ]
+    coils = [{"id": "symbol_007", "class_name": "relay_coil", "label": "33HB HV305"},
+             {"id": "symbol_008", "class_name": "relay_coil", "label": "33LA HV305"}]
+    rows = [{"device": "33LA HV305", "terminal": "5-9-1"}, {"device": "33HB HV305", "terminal": "5-9-1"}]
+    with database.SessionLocal() as db:
+        db.add(StructurePrediction(project_id=contact_page, payload_json=json.dumps(
+            {**_result(contact_page), "symbols": [contact, other], "sheet_references": refs})))
+        db.add(StructurePrediction(project_id=coil_page, payload_json=json.dumps({
+            **_result(coil_page), "symbols": coils, "relay_table": {"rows": rows, "links": []},
+            "sheet_number_candidates": [{"text": "ER21236", "score": 0.99}],
+        })))
+        db.commit()
+
+    exported = client.post("/api/ml/analysis/export", json={"project_ids": [contact_page, coil_page]}).json()
+    linked, unresolved = exported["pages"][0]["symbols"]
+    assert linked["relay_link"] == {"project_id": coil_page, "coil_symbol_ids": ["symbol_007"], "relay_table_rows": [1]}
+    assert "relay_link" not in unresolved
+    assert (exported["summary"]["cross_sheet_relay_count"], exported["summary"]["linked_cross_sheet_relay_count"]) == (2, 1)
+
+
 def test_integrated_run_preserves_annotations_and_uses_detector_names(client, monkeypatch):
     from services import structure_service
 

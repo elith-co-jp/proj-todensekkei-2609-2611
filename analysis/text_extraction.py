@@ -395,19 +395,22 @@ def sheet_references(items: list[TextItem], symbols: list[dict[str, Any]]) -> li
     """括弧つき・「へ」「より」つきのシート番号を参照として返す。
 
     接点・コイルの枠の内側にあるものはそのリレーのコイルがあるシート（kind="relay"）、
-    それ以外は配線の行先・来先（kind="wire"）とする。
+    それ以外は配線の行先・来先（kind="wire"）とする。relay には枠の記号の symbol_id を付ける。
     """
-    relay_boxes = [_as_box(s["bbox"]) for s in symbols if s.get("class_name") in RELAY_REF_CLASSES]
+    relays = [(s.get("id"), _as_box(s["bbox"])) for s in symbols if s.get("class_name") in RELAY_REF_CLASSES]
     refs = []
     for item in items:
         compact = normalize(item["text"]).replace(" ", "")
         for match in _REF_PATTERN.finditer(compact):
             center = _center(item["box"])
-            kind = "relay" if any(_inside(center, b) for b in relay_boxes) else "wire"
-            refs.append({
-                "target_sheet": match.group(1) or match.group(2), "kind": kind,
+            owner = next((relay for relay in relays if _inside(center, relay[1])), None)
+            ref = {
+                "target_sheet": match.group(1) or match.group(2), "kind": "relay" if owner else "wire",
                 "text": item["text"], "box": [round(v, 1) for v in item["box"]],
-            })
+            }
+            if owner:
+                ref["symbol_id"] = owner[0]
+            refs.append(ref)
     return refs
 
 
@@ -632,6 +635,12 @@ def _relay_key(label: str) -> tuple[str, ...]:
     return tuple(match_key(t) for t in text.split()[:2])
 
 
+def same_relay_device(label: str, device: str) -> bool:
+    """記号のラベルがリレー表の器具番号（33HB FV2306）と同じ器具か。2 語目はラベルにあるときだけ比べる。"""
+    key, other = _relay_key(device), _relay_key(label)
+    return bool(key) and other[:1] == key[:1] and (len(other) < 2 or other[1:2] == key[1:2])
+
+
 def link_relay_table(rows: list[dict[str, str]], symbols: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """リレー表の器具番号ごとに、同じ図面のリレーコイル・接点を器具番号で照合する。
 
@@ -642,10 +651,8 @@ def link_relay_table(rows: list[dict[str, str]], symbols: list[dict[str, Any]]) 
         devices.setdefault(row["device"], []).append(index)
     links = []
     for device, row_indexes in devices.items():
-        key = _relay_key(device)
-        matched = [s for s in symbols if s.get("class_name") in RELAY_REF_CLASSES and key
-                   and _relay_key(s.get("label", ""))[:1] == key[:1]
-                   and (len(_relay_key(s.get("label", ""))) < 2 or _relay_key(s.get("label", ""))[1:2] == key[1:2])]
+        matched = [s for s in symbols
+                   if s.get("class_name") in RELAY_REF_CLASSES and same_relay_device(s.get("label", ""), device)]
         coils = [s["id"] for s in matched if s["class_name"] == "relay_coil"]
         contacts = [s["id"] for s in matched if s["class_name"] != "relay_coil"]
         on_sheet = sum(1 for i in row_indexes if rows[i]["sheet"] == "本")
