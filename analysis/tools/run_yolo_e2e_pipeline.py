@@ -74,13 +74,20 @@ DIRECT_TERMINAL_GAP_BRIDGE_MAX = 240.0
 DIRECT_WIRE_GAP_BRIDGE_MAX = 80.0
 DIRECT_GAP_BRIDGE_ALIGN_THRESHOLD = 28.0
 DIRECT_WIRE_GAP_TERMINAL_ANCHOR_THRESHOLD = 18.0
-DIRECT_TERMINAL_TERMINAL_BRIDGE_MAX = 140.0
+# Two junction dots are joined only through a detected wire: a bridge between aligned dots chained
+# the separate staggered wires of one column group into a single net (ER21277).
+DIRECT_TERMINAL_TERMINAL_BRIDGE_MAX = 0.0
 DIRECT_ENDPOINT_BRIDGE_MAX = 60.0
 # Join a wire end to a nearby perpendicular wire only past that end, never back over its own span.
 DIRECT_WIRE_GAP_BRIDGE_OUTWARD_ONLY = True
 # Longest run of blank pixels (at 150 dpi) a wire-gap bridge may cross. Markers on a wire stay
 # under about 38 px; the space between a card's + and - dots is over 50 px. 0 disables the check.
 DIRECT_WIRE_GAP_BRIDGE_MAX_BLANK = 45.0
+# The same limit for a terminal joined to the end of a collinear wire up to DIRECT_TERMINAL_GAP_BRIDGE_MAX away.
+DIRECT_TERMINAL_GAP_BRIDGE_MAX_BLANK = 45.0
+# A missing wire never runs through the middle of a coil: such a bridge would short it.
+DIRECT_GAP_BRIDGE_DEVICE_CLASSES = {"relay_coil", "solenoid"}
+BOX_PORTS_SKIP_COIL_INTERIOR = True
 # Classes whose electrical port is wherever a wire meets the box; when such a
 # symbol has no terminal link, attach it to every wire touching its bbox.
 TOUCHING_WIRE_FALLBACK_CLASSES = {"connector", "junction", "power_bus", "terminal"}
@@ -1109,6 +1116,11 @@ def enrich_symbols_and_graph(
     symbol_node_links: list[dict[str, Any]] = []
     symbol_wire_links: list[dict[str, Any]] = []
     symbol_terminal_links: list[dict[str, Any]] = []
+    # A wire end inside a coil or solenoid belongs to that device, never to a box drawn around it.
+    coil_boxes = [
+        s["bbox"] for s in symbols
+        if str(s.get("class_name") or "") in DIRECT_GAP_BRIDGE_DEVICE_CLASSES and not (s.get("dot_role") or {}).get("suppressed")
+    ] if BOX_PORTS_SKIP_COIL_INTERIOR else []
     for symbol in symbols:
         if (symbol.get("dot_role") or {}).get("suppressed"):
             symbol.update(terminals=[], nearby_node_ids=[], terminal_wire_ids=[], terminal_links=[],
@@ -1124,6 +1136,11 @@ def enrich_symbols_and_graph(
             inferred_terminal_classes=inferred_terminal_classes,
             inferred_terminal_config=inferred_terminal_config,
         )
+        if coil_boxes and symbol.get("class_name") == "other":
+            terminal_points = [
+                t for t in terminal_points
+                if not any(b["x0"] <= t["point"][0] <= b["x1"] and b["y0"] <= t["point"][1] <= b["y1"] for b in coil_boxes)
+            ]
         symbol["terminals"] = [
             {
                 "ref": terminal.get("terminal_ref"),
@@ -1668,7 +1685,9 @@ def blank_run_measure(source_image: Image.Image) -> Callable[[tuple[float, float
     return longest_blank
 
 
-def build_direct_from_to(payload: dict[str, Any], source_image: Image.Image | None = None) -> dict[str, Any]:
+def build_direct_from_to(
+    payload: dict[str, Any], source_image: Image.Image | None = None, trace: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     terminal_records, terminal_by_key = build_direct_terminal_records(payload)
     bridge_stats: Counter[str] = Counter()
     blank_run = blank_run_measure(source_image) if source_image is not None and DIRECT_WIRE_GAP_BRIDGE_MAX_BLANK > 0 else None
@@ -1693,6 +1712,9 @@ def build_direct_from_to(payload: dict[str, Any], source_image: Image.Image | No
         wire_gap_bridge_outward_only=DIRECT_WIRE_GAP_BRIDGE_OUTWARD_ONLY,
         gap_blank_run=blank_run,
         wire_gap_bridge_max_blank=DIRECT_WIRE_GAP_BRIDGE_MAX_BLANK,
+        terminal_gap_bridge_max_blank=DIRECT_TERMINAL_GAP_BRIDGE_MAX_BLANK,
+        gap_bridge_device_classes=set(DIRECT_GAP_BRIDGE_DEVICE_CLASSES),
+        trace=trace,
     )
     valid_pairs = sorted(
         pair for pair in pairs if pair[0] in terminal_by_key and pair[1] in terminal_by_key
@@ -1750,6 +1772,7 @@ def build_direct_from_to(payload: dict[str, Any], source_image: Image.Image | No
             "terminal_terminal_bridge_max": DIRECT_TERMINAL_TERMINAL_BRIDGE_MAX,
             "wire_gap_bridge_outward_only": DIRECT_WIRE_GAP_BRIDGE_OUTWARD_ONLY,
             "wire_gap_bridge_max_blank": DIRECT_WIRE_GAP_BRIDGE_MAX_BLANK if blank_run is not None else 0.0,
+            "terminal_gap_bridge_max_blank": DIRECT_TERMINAL_GAP_BRIDGE_MAX_BLANK if blank_run is not None else 0.0,
             "bridge_stats": dict(sorted(bridge_stats.items())),
         },
     }
