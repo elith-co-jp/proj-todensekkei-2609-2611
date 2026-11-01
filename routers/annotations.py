@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
@@ -40,8 +41,10 @@ from services.annotation_service import (
 )
 from services.export_service import import_zip, write_export_zip
 from services.pdf_service import render_pdf_pages
+from services.sheet_number_service import suggest_sheet_numbers
 
 router = APIRouter(prefix="/api", tags=["annotation"])
+_logger = logging.getLogger(__name__)
 
 
 def _stamp() -> str:
@@ -224,6 +227,23 @@ def update_meta(project_id: int, payload: ProjectMetaPayload, db: Session = Depe
             setattr(p, field, value)
     db.commit()
     return {"id": p.id, "status": p.status}
+
+
+@router.post("/projects/{project_id}/sheet-number/suggest")
+def suggest_sheet_number(project_id: int, db: Session = Depends(get_db)):
+    """図面下部の文字を読み取り、シート番号の候補を返す。sheet_no は書き換えない。"""
+    p = get_project_or_404(db, project_id)
+    path = image_path(p.images[0].sha256) if p.images else None
+    if path is None or not path.exists():
+        raise HTTPException(400, "図面画像が登録されていないため、シート番号を読み取れません")
+    try:
+        candidates = suggest_sheet_numbers(path)
+    except RuntimeError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except Exception as exc:
+        _logger.exception("Sheet number OCR failed")
+        raise HTTPException(500, "シート番号の読み取りに失敗しました。手入力してください。") from exc
+    return {"candidates": candidates}
 
 
 @router.put("/projects/{project_id}/annotations")
