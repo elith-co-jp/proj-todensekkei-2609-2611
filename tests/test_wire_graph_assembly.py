@@ -73,3 +73,28 @@ def test_wire_crossing_a_line_without_a_dot_is_not_joined_to_it_from_its_far_end
     assert build_predicted_graph_pairs(payload, records, **OPTIONS, wire_gap_bridge_outward_only=False) == {("A", "B")}
     assert build_predicted_graph_pairs(payload, records, **OPTIONS, wire_gap_bridge_outward_only=True) == set()
 
+
+def test_card_terminal_where_a_wire_stops_inside_the_box_becomes_a_port():
+    from PIL import Image, ImageDraw
+
+    from experiment_symbol_port_inference import infer_ports_for_symbol
+    from run_yolo_e2e_pipeline import port_inference_config
+
+    image = Image.new("RGB", (300, 300), "white")
+    draw = ImageDraw.Draw(image)
+    draw.rectangle((50, 50, 250, 200), outline="black")
+    draw.line((100, 20, 100, 70), fill="black", width=2)
+    draw.ellipse((96, 66, 104, 74), fill="black")
+    draw.line((100, 185, 100, 290), fill="black", width=2)
+    draw.ellipse((96, 181, 104, 189), fill="black")
+    card = {"id": "card", "class_name": "other", "bbox": {"x0": 50, "y0": 50, "x1": 250, "y1": 200}}
+    wires = [
+        {"id": "plus", "orientation": "v", "polyline": [[100, 20], [100, 70]], "confidence": 0.9, "visible_coverage": 0.9},
+        {"id": "minus", "orientation": "v", "polyline": [[100, 185], [100, 290]], "confidence": 0.9, "visible_coverage": 0.9},
+    ]
+    config = port_inference_config("template_confident_relaxed_span_ink02")
+
+    ports = infer_ports_for_symbol(card, wires, image, config=config)
+    assert any(p["wire_id"] == "minus" and abs(p["point"][1] - 185) <= 3 for p in ports)
+    without = infer_ports_for_symbol(card, wires, image, config={**config, "wire_end_port_classes": set()})
+    assert not any(p["wire_id"] == "minus" for p in without)
