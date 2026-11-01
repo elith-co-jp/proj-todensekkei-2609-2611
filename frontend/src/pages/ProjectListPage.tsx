@@ -547,14 +547,14 @@ export default function ProjectListPage() {
             />
           </label>
           </div>
-          <p className="flex w-full flex-wrap items-center gap-x-4 gap-y-1 pb-3 text-[11px] leading-5 text-slate-500">
-            <span className="inline-flex items-center gap-1.5">
-              <span className="rounded-full bg-violet-50 px-2 py-0.5 font-semibold text-violet-700">保存済み</span>
-              = {SAVED_MEANING}
+          <p className="flex w-full flex-wrap gap-x-4 gap-y-1.5 pb-3 text-[11px] leading-5 text-slate-500">
+            <span className="flex min-w-0 items-start gap-1.5">
+              <span className="flex-none whitespace-nowrap rounded-full bg-violet-50 px-2 font-semibold text-violet-700">保存済み</span>
+              <span>= {SAVED_MEANING}</span>
             </span>
-            <span className="inline-flex flex-wrap items-center gap-1.5">
-              <span className={`${AI_CHIP_CLASS} font-semibold`}>AI</span>
-              = {AI_MEANING}
+            <span className="flex min-w-0 items-start gap-1.5">
+              <span className={`${AI_CHIP_CLASS} flex-none font-semibold`}>AI</span>
+              <span>= {AI_MEANING}</span>
             </span>
           </p>
         </div>
