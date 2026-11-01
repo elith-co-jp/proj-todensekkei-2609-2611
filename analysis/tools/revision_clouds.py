@@ -23,8 +23,10 @@ BAND_RADIUS = 2
 EXTEND = 20
 # Longer than a cloud side. Only continuous ink is kept on it: a wire covered by a cloud edge.
 UNDER_EDGE = 601
-# Symbols up to this size keep their ink; larger boxes (cards, panels) may contain a whole cloud.
+# Symbols up to this size keep the ink in the middle of their box. A cloud may pass through the
+# box margin, and larger boxes (cards, panels) may contain a whole cloud.
 PROTECT_MAX_SIDE = 120
+PROTECT_MARGIN = 0.15
 
 
 class Clouds(NamedTuple):
@@ -138,15 +140,18 @@ def detect_clouds(binary: np.ndarray) -> Clouds:
 
 
 def erase_clouds(image: Image.Image, clouds: Clouds, symbol_boxes: list[dict[str, float]]) -> Image.Image:
-    """The page with cloud strokes painted white, for wiring. Ink inside symbol boxes stays."""
+    """The page with cloud strokes painted white, for wiring. Ink in the middle of symbol boxes stays."""
     if not clouds.regions:
         return image
     erase = clouds.erase.copy()
     scale = max(0.5, image.width / 1755)
     for box in symbol_boxes:
-        x0, y0, x1, y1 = (int(round(box[k])) for k in ("x0", "y0", "x1", "y1"))
-        if max(x1 - x0, y1 - y0) <= PROTECT_MAX_SIDE * scale:
-            erase[max(0, y0):max(0, y1), max(0, x0):max(0, x1)] = False
+        w, h = box["x1"] - box["x0"], box["y1"] - box["y0"]
+        if max(w, h) > PROTECT_MAX_SIDE * scale:
+            continue
+        x0, x1 = (max(0, round(v)) for v in (box["x0"] + PROTECT_MARGIN * w, box["x1"] - PROTECT_MARGIN * w))
+        y0, y1 = (max(0, round(v)) for v in (box["y0"] + PROTECT_MARGIN * h, box["y1"] - PROTECT_MARGIN * h))
+        erase[y0:y1, x0:x1] = False
     pixels = np.array(image)
     pixels[erase] = 255
     return Image.fromarray(pixels)
