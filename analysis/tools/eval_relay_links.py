@@ -44,8 +44,13 @@ def ocr_row_index(rows: list[dict[str, str]], truth: dict[str, Any]) -> int | No
     return (exact or same or [None])[0]
 
 
-def gold_of(drawing: dict[str, Any], pred: list[dict[str, Any]], structure: dict[str, Any], class_of: dict[str, str]) -> dict:
-    """構造 JSON の記号 ID から正解データの記号の ref へ（種類を問わず IoU 0.5 で対応）。"""
+def gold_of(
+    drawing: dict[str, Any], pred: list[dict[str, Any]], structure: dict[str, Any], class_of: dict[str, str],
+) -> tuple[dict[str, Any], dict[str, str]]:
+    """採点結果と、構造 JSON の記号 ID から正解データの記号の ref への対応（同じ種類で IoU 0.5）。
+
+    class_of で記号の種類を差し替えて採点する（表の種類を当てる前の種類など）。
+    """
     active = [{**p, "class_name": class_of.get(p["structure_id"], p["class_name"])} if p["kind"] == "symbol" else p
               for p in structure_predictions(structure, pred)]
     scored = score_symbols(gold_items(drawing), active)
@@ -54,9 +59,7 @@ def gold_of(drawing: dict[str, Any], pred: list[dict[str, Any]], structure: dict
 
 def class_counts(drawing, pred, structure, class_of) -> Counter:
     """接点 a/b の種類の正解（種類を問わず対応した組のうち）と contact_b の検出の TP/FP/FN。"""
-    active = [{**p, "class_name": class_of.get(p["structure_id"], p["class_name"])} if p["kind"] == "symbol" else p
-              for p in structure_predictions(structure, pred)]
-    scored = score_symbols(gold_items(drawing), active)
+    scored, _ = gold_of(drawing, pred, structure, class_of)
     out = Counter()
     g_sym, p_sym = scored["g_sym"], scored["p_sym"]
     for gi, pi, _ in match(g_sym, p_sym, class_aware=False):
