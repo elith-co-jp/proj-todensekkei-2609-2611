@@ -1,4 +1,4 @@
-import { Cable, CircleDot, Eye, EyeOff, Sparkles, Square } from 'lucide-react'
+import { Cable, CircleDot, Eye, EyeOff, Sparkles, Square, Tag } from 'lucide-react'
 
 import { layerStateOf } from './model'
 import type { LayerState } from './model'
@@ -15,27 +15,33 @@ export type ClassLayerRow = {
 export function LayerPanel({
   connectionCount,
   terminalCount,
+  labelCount,
   inferenceRefs,
   hiddenInferenceCount,
   classLayerRows,
   showConnections,
   showTerminals,
+  showLabels,
   allLayersVisible,
   onToggleConnections,
   onToggleTerminals,
+  onToggleLabels,
   onSetSymbolGroupHidden,
   onReset,
 }: {
   connectionCount: number
   terminalCount: number
+  labelCount: number
   inferenceRefs: string[]
   hiddenInferenceCount: number
   classLayerRows: ClassLayerRow[]
   showConnections: boolean
   showTerminals: boolean
+  showLabels: boolean
   allLayersVisible: boolean
   onToggleConnections: () => void
   onToggleTerminals: () => void
+  onToggleLabels: () => void
   onSetSymbolGroupHidden: (refs: string[], hidden: boolean) => void
   onReset: () => void
 }) {
@@ -91,6 +97,14 @@ export function LayerPanel({
           count={terminalCount}
           state={showTerminals ? 'on' : 'off'}
           onToggle={onToggleTerminals}
+        />
+        <LayerRow
+          icon={Tag}
+          color="#475569"
+          label="ラベル（TAG）"
+          count={labelCount}
+          state={showLabels ? 'on' : 'off'}
+          onToggle={onToggleLabels}
         />
         {inferenceRefs.length > 0 && (
           <LayerRow

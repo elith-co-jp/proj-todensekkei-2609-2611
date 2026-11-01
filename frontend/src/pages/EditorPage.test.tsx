@@ -572,6 +572,24 @@ describe('EditorPage レイヤー表示', () => {
     expect(container.querySelectorAll('svg rect[stroke="#0891b2"]')).toHaveLength(3)
   })
 
+  it('ラベル（TAG）レイヤーは枠と別に消せて、選択中のシンボルだけタグを残す', async () => {
+    const { container, findByRole, getByRole, getByTitle } = renderEditor()
+    await findByRole('region', { name: '図面アノテーションキャンバス' })
+    const tags = () => Array.from(container.querySelectorAll('svg text')).map((t) => t.textContent)
+    expect(tags()).toEqual(['SYM-0001', 'SYM-0002'])
+
+    fireEvent.click(getByRole('button', { name: 'ラベル（TAG）を非表示' }))
+    expect(tags()).toEqual([])
+    expect(container.querySelectorAll('svg rect[stroke="#0891b2"]')).toHaveLength(2)
+    expect(getByTitle('表示をオフにしたアノテーション 1 件')).toBeTruthy()
+
+    fireEvent.click(getByRole('button', { name: /^SYM-0002リレー$/ }))
+    expect(tags()).toEqual(['SYM-0002'])
+
+    fireEvent.click(getByRole('button', { name: 'すべて表示' }))
+    expect(tags()).toEqual(['SYM-0001', 'SYM-0002'])
+  })
+
   it('パネルボタンの Enter では新しいシンボルが追加されない', async () => {
     const { container, findByRole, getByRole } = renderEditor()
     await findByRole('region', { name: '図面アノテーションキャンバス' })

@@ -93,6 +93,7 @@ export default function EditorPage() {
   const [hiddenSymbols, setHiddenSymbols] = useState<ReadonlySet<string>>(() => new Set())
   const [showTerminals, setShowTerminals] = useState(true)
   const [showConnections, setShowConnections] = useState(true)
+  const [showLabels, setShowLabels] = useState(true)
   const [layersOpen, setLayersOpen] = useState(() =>
     typeof window === 'undefined' ? true : window.matchMedia('(min-width: 1024px)').matches,
   )
@@ -716,6 +717,7 @@ export default function EditorPage() {
     setSelectedRef(null)
     setShowTerminals(true)
     setShowConnections(true)
+    setShowLabels(true)
   }
 
   /* ------------------------------------------------------------------ ポインター（マウス／ペン／タッチ） */
@@ -1085,10 +1087,10 @@ export default function EditorPage() {
         refs: members.map((s) => s.ref),
       }
     })
-  const allLayersVisible = hiddenSymbols.size === 0 && showTerminals && showConnections
-  /* バッジは「表示をオフにした要素の数」（隠したシンボル + 端子/配線レイヤー） */
+  const allLayersVisible = hiddenSymbols.size === 0 && showTerminals && showConnections && showLabels
+  /* バッジは「表示をオフにした要素の数」（隠したシンボル + 端子/配線/ラベルレイヤー） */
   const hiddenAnnotationCount =
-    hiddenSymbols.size + (showTerminals ? 0 : 1) + (showConnections ? 0 : 1)
+    hiddenSymbols.size + (showTerminals ? 0 : 1) + (showConnections ? 0 : 1) + (showLabels ? 0 : 1)
 
   const draftRect =
     drag.kind === 'draw'
@@ -1219,14 +1221,17 @@ export default function EditorPage() {
             <LayerPanel
               connectionCount={connections.length}
               terminalCount={terminalCount}
+              labelCount={symbols.length}
               inferenceRefs={inferenceRefs}
               hiddenInferenceCount={hiddenInferenceCount}
               classLayerRows={classLayerRows}
               showConnections={showConnections}
               showTerminals={showTerminals}
+              showLabels={showLabels}
               allLayersVisible={allLayersVisible}
               onToggleConnections={() => setShowConnections((value) => !value)}
               onToggleTerminals={() => setShowTerminals((value) => !value)}
+              onToggleLabels={() => setShowLabels((value) => !value)}
               onSetSymbolGroupHidden={setSymbolGroupHidden}
               onReset={resetLayers}
             />
@@ -1249,6 +1254,7 @@ export default function EditorPage() {
               zoom={zoom}
               showConnections={showConnections}
               showTerminals={showTerminals}
+              showLabels={showLabels}
               connections={connections}
               nodePos={nodePos}
               selectedConn={selectedConn}
