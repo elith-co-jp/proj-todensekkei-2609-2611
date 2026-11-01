@@ -13,6 +13,13 @@ annotation people entered by hand in the same editor.
   Misses and false hits are split by cause (fn_reasons / fp_reasons).
 - net_pairs: the same judged connections as electrical nets. Pairs of gold terminals that share a net in
   the import against pairs that share a gold net, so a different route through the same net still counts.
+- wire_nodes: the same question per wire, linear in the number of wires. A node is a set of terminals joined
+  by wires; links between two terminals of one symbol (a contact's two ends) do not join nodes. A gold wire
+  is recalled when the import puts its two terminals in one node; an imported wire is right when gold puts its
+  two terminals in one node. Two gold habits are reported apart. Terminals placed on a region-sized box
+  (where wires cross the dashed frame of a 2RAXP panel) split one wire into two; the conv recall contracts
+  them like wire bends, so contact - frame terminal - dot counts as the one wire contact - dot. Wires drawn
+  straight through a symbol gold leaves unwired (relay coils) are left out of the conv recall.
 - connector names: gold connectors whose label carries pin numbers (eval_wiring_cv.gold_terminal_numbers)
   against the imported terminal name of the matched symbol, read as DEVICE-NUMBER tokens.
 - rerun: importing again into the imported result must add nothing.
@@ -29,7 +36,7 @@ import itertools
 import json
 import sys
 from collections import Counter
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Any
 
@@ -43,7 +50,6 @@ from holdout_cv import gold_items, is_wire_bend, load_gold, match, prf, score_sy
 
 from services.ai_candidates import from_structure, plan_import  # noqa: E402
 from services.detection_rules import detection_kind  # noqa: E402
-
 
 def apply_plan(symbols: list[dict], connections: list[dict], plan: Any) -> tuple[list[dict], list[dict]]:
     """The editor's merge (frontend mergeAiImport): new terminals on existing symbols, then new symbols and connections."""
@@ -122,6 +128,80 @@ def name_pairs(name: str) -> tuple[list[str], list[tuple[str, str]]]:
     return numbers, pairs
 
 
+def _crosses(p: tuple[float, float], q: tuple[float, float], box: dict[str, float], inset: float = 2.0) -> bool:
+    steps = max(2, int(max(abs(q[0] - p[0]), abs(q[1] - p[1])) / 2))
+    for i in range(1, steps):
+        x, y = p[0] + (q[0] - p[0]) * i / steps, p[1] + (q[1] - p[1]) * i / steps
+        if box["x0"] + inset < x < box["x1"] - inset and box["y0"] + inset < y < box["y1"] - inset:
+            return True
+    return False
+
+
+def _contract(edges: set[frozenset[str]], through: set[str]) -> set[frozenset[str]]:
+    """Drop the keys in through and join their neighbours directly, as gold_edges does for wire bends."""
+    neighbours: dict[str, set[str]] = {}
+    for edge in edges:
+        a, b = tuple(edge)
+        neighbours.setdefault(a, set()).add(b)
+        neighbours.setdefault(b, set()).add(a)
+    for key in through:
+        around = neighbours.pop(key, set()) - {key}
+        for n in around:
+            neighbours[n].discard(key)
+            neighbours[n].update(around - {n})
+    return {frozenset((a, b)) for a, ns in neighbours.items() for b in ns if a != b}
+
+
+def wire_nodes(
+    project: dict[str, Any], edges: set[frozenset[str]], symbols: list[dict], connections: list[dict],
+    key_of: Callable[[str, str | None], str | None], width: int, height: int,
+) -> dict[str, Counter]:
+    """Per-wire electrical agreement (module docstring: wire_nodes). key_of maps an imported terminal to a gold key."""
+    gold_pos = {endpoint_key(s["ref"], t["ref"]): (t["tx"] * width, t["ty"] * height)
+                for s in project["symbols"] for t in (s.get("terminals") or [])}
+    wired = {parse_member(k)[0] for e in edges for k in e}
+    unwired_boxes = [to_box(s["cx"], s["cy"], s["w"], s["h"], width, height) for s in project["symbols"]
+                     if s["ref"] not in wired and not is_wire_bend(s) and detection_kind(s["w"], s["h"]) == "symbol"]
+    region_refs = {s["ref"] for s in project["symbols"] if detection_kind(s["w"], s["h"]) == "region"}
+    gold_wires = {e for e in edges if len({parse_member(k)[0] for k in e}) == 2}
+    region_keys = {k for e in gold_wires for k in e if parse_member(k)[0] in region_refs}
+    conv_wires = _contract(gold_wires, region_keys)
+    gold_node = gold_nets(gold_wires)
+    ai_wires = [c for c in connections if c["from_symbol_ref"] != c["to_symbol_ref"]]
+    ai_node = gold_nets({frozenset((endpoint_key(c["from_symbol_ref"], c["from_terminal_ref"]),
+                                    endpoint_key(c["to_symbol_ref"], c["to_terminal_ref"]))) for c in ai_wires})
+    ai_of_gold: dict[str, set[str]] = {}
+    for s in symbols:
+        for t in s["terminals"]:
+            key = key_of(s["ref"], t["ref"])
+            if key is not None:
+                root = ai_node.get(endpoint_key(s["ref"], t["ref"]))
+                ai_of_gold.setdefault(key, set()).add(root or endpoint_key(s["ref"], t["ref"]))
+    out = {"recall": Counter(), "precision": Counter()}
+
+    def recalled(edge: frozenset[str]) -> bool:
+        a, b = tuple(edge)
+        return bool(ai_of_gold.get(a, set()) & ai_of_gold.get(b, set()))
+
+    for edge in gold_wires:
+        out["recall"].update({"gold": 1, "hit": int(recalled(edge)),
+                              "gold_region_terminal": int(bool(edge & region_keys))})
+    for edge in conv_wires:
+        a, b = sorted(edge)
+        if a in gold_pos and b in gold_pos and any(_crosses(gold_pos[a], gold_pos[b], box) for box in unwired_boxes):
+            out["recall"]["conv_through_unwired"] += 1
+            continue
+        out["recall"].update({"conv_gold": 1, "conv_hit": int(recalled(edge))})
+    for c in ai_wires:
+        a, b = key_of(c["from_symbol_ref"], c["from_terminal_ref"]), key_of(c["to_symbol_ref"], c["to_terminal_ref"])
+        if a is None or b is None or not {parse_member(a)[0], parse_member(b)[0]} <= wired:
+            out["precision"]["not_judged"] += 1
+            continue
+        right = a == b or (gold_node.get(a) is not None and gold_node.get(a) == gold_node.get(b))
+        out["precision"].update({"judged": 1, "right": int(right)})
+    return out
+
+
 def score_drawing(drawing: dict[str, Any], structure: dict[str, Any], class_keys: list[str]) -> dict[str, Any]:
     project = drawing["project"]
     width, height = int(project["image_width"]), int(project["image_height"])
@@ -195,6 +275,7 @@ def score_drawing(drawing: dict[str, Any], structure: dict[str, Any], class_keys
         else:
             fn["route"] += 1
     gold_net_pairs, import_net_pairs = net_pairs(edges), net_pairs(joined)
+    nodes = wire_nodes(project, edges, symbols, connections, gold_key, width, height)
     names: Counter = Counter()
     by_ref = {s["ref"]: s for s in symbols}
     for g in g_sym:
@@ -218,6 +299,7 @@ def score_drawing(drawing: dict[str, Any], structure: dict[str, Any], class_keys
         "connections": {"tp": len(hit), "fp": sum(fp.values()), "fn": len(edges - hit)},
         "net_pairs": {"tp": len(gold_net_pairs & import_net_pairs), "fp": len(import_net_pairs - gold_net_pairs),
                       "fn": len(gold_net_pairs - import_net_pairs)},
+        "wire_nodes": {k: dict(v) for k, v in nodes.items()},
         "not_judged": not_judged,
         "fp_reasons": dict(fp),
         "fn_reasons": dict(fn),
@@ -242,9 +324,13 @@ def aggregate(rows: list[dict[str, Any]]) -> dict[str, Any]:
     skipped: Counter = Counter()
     fp: Counter = Counter()
     fn: Counter = Counter()
+    rec: Counter = Counter()
+    pre: Counter = Counter()
     for r in rows:
         tot.update(r["connections"])
         nets.update(r["net_pairs"])
+        rec.update(r["wire_nodes"]["recall"])
+        pre.update(r["wire_nodes"]["precision"])
         det.update(r["detection"])
         names.update(r["names"])
         imported.update(r["imported"])
@@ -258,11 +344,21 @@ def aggregate(rows: list[dict[str, Any]]) -> dict[str, Any]:
     def rate(n: int, d: int) -> float | None:
         return round(n / d, 4) if d else None
 
+    wire_nodes_summary = {
+        "recall": rate(rec["hit"], rec["gold"]), "precision": rate(pre["right"], pre["judged"]),
+        "gold_wires": rec["gold"], "judged_imported": pre["judged"], "not_judged_imported": pre["not_judged"],
+        "wrong_imported": pre["judged"] - pre["right"],
+        "gold_wires_on_region_terminals": rec["gold_region_terminal"],
+        "conv_recall": rate(rec["conv_hit"], rec["conv_gold"]), "conv_gold_wires": rec["conv_gold"],
+        "conv_through_unwired": rec["conv_through_unwired"],
+    }
+
     return {
         "drawings": len(rows),
         "connections": prf(tot["tp"], tot["fp"], tot["fn"]),
         "gold_connections": tot["tp"] + tot["fn"],
         "net_pairs": prf(nets["tp"], nets["fp"], nets["fn"]),
+        "wire_nodes": wire_nodes_summary,
         "not_judged": sum(r["not_judged"] for r in rows),
         "fp_reasons": dict(fp.most_common()),
         "fn_reasons": dict(fn.most_common()),
@@ -315,6 +411,7 @@ def main() -> None:
         print(f"  {part:6s} drawings={a['drawings']} connections f1={c['f1']} p={c['precision']} r={c['recall']}"
               f" tp={c['tp']} fp={c['fp']} fn={c['fn']} gold={a['gold_connections']} not_judged={a['not_judged']}"
               f" | net_pairs f1={net['f1']} p={net['precision']} r={net['recall']} tp={net['tp']} fp={net['fp']} fn={net['fn']}"
+              f"\n         wire_nodes {a['wire_nodes']}"
               f" | names numbers={n['numbers_agree']} pairs={n['pairs_agree']} scored={n['scored']}/{n['gold']}"
               f" | symbols f1={a['symbol_detection']['f1']} class={a['class_agreement']['agree']}"
               f" label={a['label_agreement']['agree']}"
