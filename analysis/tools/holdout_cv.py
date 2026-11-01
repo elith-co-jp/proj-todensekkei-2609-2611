@@ -407,6 +407,7 @@ def main() -> None:
     parser.add_argument("--extra-labels", type=Path, help="directory of <fold>/<name>.png + .txt pseudo labels per fold")
     parser.add_argument("--rescore", action="store_true", help="score the saved predictions under --work without training")
     parser.add_argument("--strict-iou", action="store_true", help="match dots by box IoU too (the pre-2026-11 rule)")
+    parser.add_argument("--train-all", action="store_true", help="train one model on every drawing with the recipe (no scoring)")
     args = parser.parse_args()
 
     recipe = {**DEFAULT_RECIPE, **(json.loads(args.recipe.read_text()) if args.recipe else {})}
@@ -416,6 +417,11 @@ def main() -> None:
     CLASS_KEYS, drawings = load_gold(args.gold)
     if args.rescore:
         rescore(args, drawings)
+        return
+    if args.train_all:
+        data_yaml = write_fold_dataset(args.work / "all" / "dataset", drawings, {d["sheet"] for d in drawings}, [])
+        weights = train_fold(recipe, data_yaml, args.work / "all")
+        print(json.dumps({"weights": str(weights), "drawings": len(drawings), "recipe": recipe}, ensure_ascii=False))
         return
     by_sheet = {d["sheet"]: d for d in drawings}
     folds = folds_of(drawings, args.folds)

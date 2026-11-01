@@ -41,6 +41,12 @@ DEFAULT_BASE_MODEL = "yolov8n.pt"
 _LOG_TAIL_LIMIT = 4000
 HOLDOUT_MIN_DRAWINGS = 5
 HOLDOUT_RATIO = 0.2
+# 図面は向き・色が決まっていて、記号の大きさもほぼ一定。図面単位の交差検証（DD-0007）では
+# 反転・色の揺らぎを止め、拡大縮小を ±20% に抑えた設定が未学習の図面で最も良かった。
+DRAWING_AUGMENTATION = {
+    "mosaic": 1.0, "translate": 0.1, "scale": 0.2, "fliplr": 0.0, "flipud": 0.0,
+    "degrees": 0.0, "hsv_h": 0.0, "hsv_s": 0.0, "hsv_v": 0.0, "copy_paste": 0.0, "erasing": 0.4,
+}
 
 
 def default_base_model() -> str:
@@ -273,6 +279,7 @@ def _run_training(run_id: int, holdout: bool) -> None:
                 "project": str(run_dir),
                 "name": "train",
                 "exist_ok": True,
+                **DRAWING_AUGMENTATION,
             }
             if is_frozen():
                 # Windows の凍結 exe から DataLoader の子プロセスを起動しない。
