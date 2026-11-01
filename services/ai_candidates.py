@@ -23,7 +23,9 @@ POINT_CLASSES = frozenset({"junction", "power_bus"})
 INTERNAL_LINK_CLASSES = frozenset({"contact_a", "contact_b", "solenoid"})
 MATCH_IOU = 0.5
 POINT_MATCH_PX = 12.0
-TERMINAL_MATCH_PX = 10.0
+# 人が置いた端子から、この距離までの AI の端子は同じ端子とみなす。接点の両端は約 17 px 離れているので、
+# 最も近い端子に寄せれば両端を取り違えない。
+TERMINAL_MATCH_PX = 20.0
 # 端子番号を読めなかった端子の仮の名前。エディタでは手入力と同じ連番にする。
 UNREAD_TERMINAL_NAME = re.compile(r"P\d+")
 
@@ -199,7 +201,7 @@ def _greedy(pairs: Iterable[tuple[float, int, int]]) -> dict[int, int]:
 
 
 def _terminal_matches(a: AiSymbol, existing: dict[str, Any], width: int, height: int) -> dict[int, str]:
-    """AI の端子と、既存シンボルの近い端子の対応。黒丸どうしは、既存の端子のうち最も近いものに寄せる。"""
+    """AI の端子ごとに、既存シンボルの最も近い端子。黒丸どうしは距離によらず寄せる。"""
     current = existing.get("terminals") or []
     if not current or not a.terminals:
         return {}
@@ -207,15 +209,13 @@ def _terminal_matches(a: AiSymbol, existing: dict[str, Any], width: int, height:
     def distance(t: AiTerminal, e: dict[str, Any]) -> float:
         return math.hypot((t.tx - e["tx"]) * width, (t.ty - e["ty"]) * height)
 
-    if a.class_key in NODE_CLASSES and existing["class_key"] in NODE_CLASSES:
-        return {0: min(current, key=lambda e: distance(a.terminals[0], e))["ref"]}
-    pairs = [
-        (-d, i, j)
-        for i, t in enumerate(a.terminals)
-        for j, e in enumerate(current)
-        if (d := distance(t, e)) <= TERMINAL_MATCH_PX
-    ]
-    return {i: current[j]["ref"] for i, j in _greedy(pairs).items()}
+    both_dots = a.class_key in NODE_CLASSES and existing["class_key"] in NODE_CLASSES
+    out = {}
+    for i, t in enumerate(a.terminals):
+        nearest = min(current, key=lambda e: distance(t, e))
+        if both_dots or distance(t, nearest) <= TERMINAL_MATCH_PX:
+            out[i] = nearest["ref"]
+    return out
 
 
 def _free_ref(make: Callable[[int], str], start: int, used: set[str]) -> str:

@@ -227,6 +227,19 @@ def test_contact_with_one_found_end_gets_the_opposite_end_and_its_inner_link(cli
     assert _ends(result["connections"]) == {("SYM-0001", "SYM-0001-T1", "SYM-0001", "SYM-0001-T2")}
 
 
+def test_terminals_placed_by_hand_near_the_ai_ends_are_used_instead_of_adding_new_ones(client):
+    pid = _project_with_structure(client)
+    contact = {"ref": "SYM-0001", "class_key": "contact_a", "label": "33HB", "cx": 110 / W, "cy": 120 / H, "w": 20 / W,
+               "h": 40 / H, "note": None, "origin": "manual", "confidence": None,
+               "terminals": [{"ref": "SYM-0001-T1", "name": "1", "tx": 110 / W, "ty": 88 / H, "origin": "manual"},
+                             {"ref": "SYM-0001-T2", "name": "2", "tx": 110 / W, "ty": 150 / H, "origin": "manual"}]}
+
+    result = _import(client, pid, [contact], [])
+
+    assert [t for t in result["terminals"] if t["symbol_ref"] == "SYM-0001"] == []
+    assert ("SYM-0001", "SYM-0001-T1", "SYM-0001", "SYM-0001-T2") in _ends(result["connections"])
+
+
 def test_without_structure_only_detected_symbols_are_offered(client):
     pid = create_project(client)
     res = client.post("/api/ml/inference/import", files={
