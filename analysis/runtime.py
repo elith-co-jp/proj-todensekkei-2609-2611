@@ -34,6 +34,7 @@ from run_yolo_e2e_pipeline import (
     load_symbol_ocr_reader,
     port_inference_config,
 )
+from terminal_numbers import attach_terminal_numbers
 
 
 def analyze_detections(
@@ -110,9 +111,12 @@ def analyze_detections(
         junction_node_policy="all",
         junction_node_classes={"junction"}, junction_node_threshold=24.0, source_image=image,
     )
+    terminal_number_counts = attach_terminal_numbers(payload["symbols"])  # terminal numbers on terminals (#40)
     payload["from_to"] = build_direct_from_to(payload, source_image=image)
     if dot_summary is not None:
         payload["dot_roles"] = dot_summary
+    if terminal_number_counts is not None:
+        payload["quality"]["terminal_numbers"] = terminal_number_counts
     payload.update({
         "schema_version": "todensekkei.sequence_extraction.v1",
         "status": "partial" if warnings else "completed",

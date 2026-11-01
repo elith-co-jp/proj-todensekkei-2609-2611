@@ -131,3 +131,28 @@ def test_dot_roles_follow_the_ink():
     assert roles["t_join"]["role"] == "junction" and not roles["t_join"]["suppressed"]
     assert roles["t_join_again"]["suppressed"] and roles["t_join_again"]["duplicate_of"] == "t_join"
     assert roles["terminal"]["role"] == "terminal"
+
+def test_terminal_numbers_pair_device_names_with_pins_by_row():
+    from terminal_numbers import connector_numbers
+
+    def fragment(text, x, y):
+        return {"text": text, "bbox": [[x - 8, y - 6], [x + 8, y - 6], [x + 8, y + 6], [x - 8, y + 6]]}
+
+    symbol = {
+        "class_name": "connector",
+        "bbox": {"x0": 0, "y0": 0, "x1": 100, "y1": 60},
+        "dot_role": {"dot": {"center": [50, 30]}},
+        "label_ocr": {
+            "crop_box": [0, 0, 100, 60],
+            "processed_size": [100, 60],
+            "fragments": [
+                fragment("609", 25, 5),
+                fragment("T86", 25, 20),
+                fragment("CN29", 25, 40),
+                fragment("104", 75, 20),
+                fragment("17CN2", 75, 40),
+                fragment("8", 75, 57),
+            ],
+        },
+    }
+    assert connector_numbers(symbol) == [{"device": "TB6", "number": "104"}, {"device": "CN29", "number": "17"}]

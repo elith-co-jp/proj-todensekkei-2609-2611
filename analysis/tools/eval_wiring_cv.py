@@ -21,8 +21,10 @@ import importlib
 import itertools
 import json
 import pickle
+import re
 import sys
 import time
+import unicodedata
 from collections import Counter
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
@@ -38,6 +40,20 @@ from holdout_cv import gold_items, gold_pairs, load_gold, predicted_pairs, prf, 
 NODE_CLASSES = {"connector", "junction", "terminal", "power_bus"}
 SCORED_CLASSES = ("junction", "connector")
 ROLE_OF_CLASS = {"junction": "junction", "connector": "terminal"}
+
+
+def gold_terminal_numbers(label: str) -> tuple[list[str], list[tuple[str, str]] | None]:
+    """Pin numbers in a gold connector label, and name-number pairs when they line up.
+
+    Labels list the left column (device names, top to bottom) and then the right column
+    (pin numbers); a number before the first name is a cable number, not a pin.
+    """
+    tokens = unicodedata.normalize("NFKC", label or "").upper().split()
+    first = next((i for i, t in enumerate(tokens) if re.search("[A-Z]", t)), len(tokens))
+    names = [t for t in tokens[first:] if re.search("[A-Z]", t)]
+    numbers = [t for t in tokens[first:] if t.isdigit()]
+    pairs = list(zip(names, numbers, strict=True)) if names and len(names) == len(numbers) else None
+    return numbers, pairs
 
 
 def oracle_predictions(drawing: dict[str, Any]) -> list[dict[str, Any]]:
@@ -210,6 +226,20 @@ def score_drawing(drawing: dict[str, Any], pred: list[dict[str, Any]], structure
         f"{g_sym[gi]['class_name']}->{p_sym[pi]['dot_role']}" for gi, pi, _ in scored["matches"]
         if g_sym[gi]["class_name"] in ROLE_OF_CLASS and p_sym[pi].get("dot_role")
     )
+    symbols = {s["id"]: s for s in structure.get("symbols", [])}
+    numbers: Counter = Counter()
+    for gi, pi, _ in scored["matches"]:
+        if g_sym[gi]["class_name"] != "connector":
+            continue
+        gold_numbers, gold_pairs_ = gold_terminal_numbers(g_sym[gi]["label"])
+        if not gold_numbers:
+            continue
+        read = symbols[p_sym[pi]["structure_id"]].get("terminal_numbers") or []
+        numbers["scored"] += 1
+        numbers["numbers_agree"] += sorted(p["number"] for p in read) == sorted(gold_numbers)
+        if gold_pairs_:
+            numbers["pairs_scored"] += 1
+            numbers["pairs_agree"] += sorted((p["device"], p["number"]) for p in read) == sorted(gold_pairs_)
     return {
         "sheet": drawing["sheet"],
         "pairs": {"tp": len(gp & pp), "fp": len(pp - gp), "fn": len(gp - pp)},
@@ -217,6 +247,7 @@ def score_drawing(drawing: dict[str, Any], pred: list[dict[str, Any]], structure
         "per_class": {c: dict(v) for c, v in detector["per_class"].items()},
         "per_class_after": {c: dict(v) for c, v in scored["per_class"].items()},
         "dot_roles": dict(roles),
+        "terminal_numbers": dict(numbers),
     }
 
 
@@ -225,6 +256,7 @@ def aggregate(rows: list[dict[str, Any]]) -> dict[str, Any]:
     before: dict[str, Counter] = {c: Counter() for c in SCORED_CLASSES}
     after: dict[str, Counter] = {c: Counter() for c in SCORED_CLASSES}
     roles: Counter = Counter()
+    numbers: Counter = Counter()
     for r in rows:
         for k in tot:
             tot[k].update(r[k])
@@ -232,6 +264,7 @@ def aggregate(rows: list[dict[str, Any]]) -> dict[str, Any]:
             before[c].update(r["per_class"].get(c, {}))
             after[c].update(r["per_class_after"].get(c, {}))
         roles.update(r["dot_roles"])
+        numbers.update(r["terminal_numbers"])
     agree = sum(n for k, n in roles.items() if k.split("->")[1] == ROLE_OF_CLASS[k.split("->")[0]])
     return {
         "drawings": len(rows),
@@ -242,6 +275,12 @@ def aggregate(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "dot_role_accuracy": round(agree / sum(roles.values()), 4) if roles else None,
         "dot_role_scored": sum(roles.values()),
         "dot_role_confusion": dict(roles.most_common()),
+        "terminal_numbers": {
+            "connectors_scored": numbers["scored"],
+            "numbers_agree": round(numbers["numbers_agree"] / numbers["scored"], 4) if numbers["scored"] else None,
+            "pairs_scored": numbers["pairs_scored"],
+            "pairs_agree": round(numbers["pairs_agree"] / numbers["pairs_scored"], 4) if numbers["pairs_scored"] else None,
+        },
     }
 
 
@@ -310,7 +349,8 @@ def main() -> None:
             sp, npairs = a["symbol_pairs"], a["node_pairs"]
             print(f"  {part:6s} drawings={a['drawings']} symbol_pairs f1={sp['f1']} tp={sp['tp']} fp={sp['fp']} fn={sp['fn']}"
                   f" | node_pairs f1={npairs['f1']} tp={npairs['tp']} fp={npairs['fp']} fn={npairs['fn']} | {cls}"
-                  f" | dot_role acc={a['dot_role_accuracy']} n={a['dot_role_scored']}")
+                  f" | dot_role acc={a['dot_role_accuracy']} n={a['dot_role_scored']}"
+                  f" | terminal_numbers {a['terminal_numbers']}")
     print(f"seconds={summary['seconds']}")
 
 
