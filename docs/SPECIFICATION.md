@@ -32,7 +32,7 @@ Docker Compose は `frontend`（Nginx）、`backend`（FastAPI + Poppler）、`d
 |------|------|
 | 役割 | 図面の登録、進捗確認、一括出力・削除 |
 | 主な操作 | 「PDF / 図面を登録」で PDF または画像をアップロード（複数可）／PDF は全ページを自動分割／名称またはサムネイルで編集画面へ／チェックボックスは Shift で範囲選択／状態タブ（すべて・作業中・レビュー待ち・完了）で絞り込み／カード表示と表表示の切り替え（ブラウザに保存） |
-| 表示 | 登録図面数・シンボル数・配線数・完了数と完了率の KPI、作業の流れ（登録→AI 解析→確認・修正→出力）、図面ごとのサムネイル・シンボル／端子／配線件数と状態 |
+| 表示 | 登録図面数・シンボル数・配線数・完了数と完了率の KPI、作業の流れ（登録→AI 解析→確認・修正→出力）、図面ごとのサムネイル・シンボル／端子／配線件数と状態。保存済みの件数と AI の結果（「AI検出 N」「AI配線 M」）を分けて表示し、凡例で意味を示す |
 | 利用 API | `GET /api/projects` `GET /api/projects/{id}/thumbnail` `GET /api/stats` `POST /api/projects` `POST /api/projects/bulk-delete` `POST /api/export` |
 
 一覧・データ受け渡し・ガイドで共通のサイドバーは展開／折りたたみ可能。編集画面は図面領域を
@@ -48,6 +48,7 @@ AI 改善サイクルの5段階は番号と線でつながった流れとして�
 ### 3.2 アノテーションエディタ（`/projects/:id`）
 
 編集ヘッダーには現在位置（現在ページ / 全図面数）、前後の図面への移動、個別出力、自動保存状態を表示する。
+現在ページは番号を入力して Enter で移動できる（全角数字可、範囲外は元に戻す）。
 ページ移動時に未送信の編集が残っている場合も、対象プロジェクトIDを保持した保存キューから送信する。
 詳細パネルは開閉可能で、PCでは右側、SPではキャンバス上のオーバーレイとして表示する。
 パネルを閉じると図面全体表示を再計算してキャンバスを最大限利用する。
@@ -72,9 +73,11 @@ AI 改善サイクルの5段階は番号と線でつながった流れとして�
 
 詳細パネルは 3 タブ。タブには `tablist` / `tab` / `tabpanel` を設定し、左右キーと Home / End で移動できる。
 
-- **シンボル**：一覧、クラス変更、ラベル入力、端子名の編集・削除、正規化座標の表示
+- **シンボル**：一覧、クラス変更、ラベル入力、端子名の編集・削除、正規化座標の表示。並び順は登録順・位置順・種別順を選べる。図面上で選ぶとこのタブへ切り替えて該当行までスクロールし、一覧で選ぶと画面外のシンボルの位置まで図面を移動する
 - **配線**：一覧、電線番号、種別（配線／シート間参照）、参照先の入力、削除
-- **図面情報**：名称・シート番号・頁・改訂・状態・担当・メモ、画像のサイズと sha256
+- **図面情報**：AI 検出の確認状況（採用・種別修正・削除・手動追加と次回学習への反映）、名称・シート番号（「AIで読取」で候補を表示）・頁・改訂・状態・担当・メモ、画像のサイズと sha256
+
+レイヤーパネルは配線・端子・ラベル（TAG）・AI 検出・シンボル種別ごとに表示を切り替える。ラベルを隠しても選択中のシンボルのラベルは表示する。
 
 編集内容は入力停止から約0.4秒後に**自動保存**する。通信は直列化し、保存中に追加された変更は
 最新状態へまとめて次のリクエストで保存する。保存は**シンボルと配線をまとめて置き換える**方式
@@ -105,9 +108,10 @@ ZIP を選択してインポートすると、`bundle.json` の有無で復元�
 
 - **モデル管理**: YOLO の `.pt` をアップロードして登録。`is_active` のモデルが推論・学習のベース。学習で生成された `best.pt` は自動登録されるが、適用は採用判定で選ぶ
 - **推論**: 対象図面と信頼度しきい値を指定して実行。検出は `predictions` テーブルに図面単位で「最新だけ」保持し、同画面で JSON 表示できる
+- **領域枠**: 正規化サイズで面積 4% 以上、または長辺 40% 以上の検出は `kind=region` として保存し、シンボル件数・エディタへの取込・構造解析から外す。解析結果画面で表示を切り替えられる
 - **外部推論の取込**: `ultralytics` 未導入環境では、外部で `yolo predict --save-txt --save-conf` した labels ZIP を取り込む。エクスポート画像名（`p<図面ID>_*.png`）と同名の `p<図面ID>_*.txt` を自動で図面へ対応づける
 - **修正**: エディタの「AI 推論」ボタンで検出を破線枠のシンボルとして取り込み、通常のシンボルと同じ操作で修正。保存時に `origin=inference` と信頼度が付く
-- **学習**: 蓄積アノテーションから `data/training/run_<id>/dataset` を生成し、`ultralytics` で学習（バックグラウンドスレッド）。履歴にメトリクス（mAP 等）とログ末尾を保持。完了時に新旧モデルを同じ蓄積データで評価し、比較指標とベースライン名を記録して採用待ち（`decision=pending`）にする
+- **学習**: 蓄積アノテーションから `data/training/run_<id>/dataset` を生成し、`ultralytics` で学習（バックグラウンドスレッド）。履歴にメトリクス（mAP 等）とログ末尾を保持。「未学習の図面で評価する」（既定オン）で図面が 5 枚以上あれば、約 20% を評価用として学習から外す。完了時に新旧モデルを同じ評価用図面で評価し、比較指標・ベースライン名・評価範囲（`eval_scope`）を記録して採用待ち（`decision=pending`）にする
 - **Windows 配布版**: CPU 版 PyTorch・Ultralytics・学習開始用の検証済み YOLOv8n 重み・学習済みの初期推論モデル（`assets/models/yolo11n_all_symbols_best.pt`）を単一 EXE に同梱。モデル未登録の初回起動時に同梱モデルを使用中の推論モデルとして自動登録する。初回学習は使用中のモデル（同梱モデル等）をベースに行われ、登録モデルが無い環境では内蔵 yolov8n 重みが起点になる。学習済み `best.pt` は採用判定で推論モデルになる。シーケンス図向け未学習の初期重みを推論モデルとして自動登録しない
 - **外部実行への誘導**: `ultralytics` が無い場合、推論・学習 API は日本語メッセージで外部フロー（エクスポート → 外部 predict/学習 → 取込）を案内する
 
@@ -127,9 +131,10 @@ ZIP を選択してインポートすると、`bundle.json` の有無で復元�
 | メソッド | パス | 内容 |
 |---|---|---|
 | `POST` | `/api/projects` | multipart `files`。画像は1ファイル、PDFは1ページ = 1プロジェクト。`{project_ids, count}` |
-| `GET` | `/api/projects?q=` | 一覧。`q` が数字なら ID 一致、それ以外は名称・シート番号の部分一致 |
+| `GET` | `/api/projects?q=` | 一覧。`q` が数字なら ID 一致、それ以外は名称・シート番号の部分一致。`prediction_count` は領域枠を除く AI 検出数、`analysis_wire_count` / `analysis_connection_count` は構造解析の配線数・接続数（未解析は null） |
 | `GET` | `/api/projects/{id}` | 詳細（シンボル・端子・配線を含む） |
 | `PUT` | `/api/projects/{id}/meta` | 図面情報の更新 |
+| `POST` | `/api/projects/{id}/sheet-number/suggest` | 図面下部を OCR し、シート番号の候補を最大 3 件返す `{candidates: [{text, score, region}]}`。sheet_no は書き換えない |
 | `PUT` | `/api/projects/{id}/annotations` | **一括置換**。`{symbols[], connections[]}` |
 | `DELETE` | `/api/projects/{id}` | 削除（画像・シンボル・配線を連鎖削除） |
 | `POST` | `/api/projects/bulk-delete` | `{ids}` |
@@ -158,8 +163,9 @@ ZIP を選択してインポートすると、`bundle.json` の有無で復元�
 | `POST` | `/api/ml/inference/run` | `{project_ids[], conf}`。使用中モデルで推論し `predictions` へ保存 |
 | `POST` | `/api/ml/inference/import` | multipart `archive`（外部 `yolo predict` の labels ZIP）。`{results, unmatched_files, missing_project_ids, count}` |
 | `GET` | `/api/ml/predictions` | 図面ごとの検出件数サマリ |
-| `GET` | `/api/ml/projects/{id}/predictions` | 図面の最新推論結果（JSON。クラス名・信頼度つき） |
-| `POST` | `/api/ml/training/run` | `{project_ids[], only_done, epochs, imgsz, base_model}`。バックグラウンドで学習 |
+| `GET` | `/api/ml/projects/{id}/predictions` | 図面の最新推論結果（JSON。クラス名・信頼度つき）。`detections` はシンボル候補、`regions` は領域枠 |
+| `GET` | `/api/ml/projects/{id}/review-summary` | AI 検出の確認状況（採用・種別修正・削除・手動追加、領域枠数、次回学習に含まれるか） |
+| `POST` | `/api/ml/training/run` | `{project_ids[], only_done, epochs, imgsz, base_model, holdout}`。バックグラウンドで学習。`holdout`（既定 true）で評価用図面を学習から外す |
 | `GET` | `/api/ml/training/runs` | 学習履歴（最新 50 件。メトリクス・ログ末尾つき） |
 | `GET` | `/api/ml/training/runs/{id}` | 学習ジョブの状態・メトリクス・新旧比較・ログ |
 | `POST` | `/api/ml/training/runs/{id}/decision` | `{decision: adopt\|reject}`。採用で成果物モデルを使用中に切替え |
