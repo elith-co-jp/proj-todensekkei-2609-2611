@@ -85,6 +85,7 @@ DIRECT_WIRE_GAP_BRIDGE_MAX_BLANK = 45.0
 DIRECT_TERMINAL_GAP_BRIDGE_MAX_BLANK = 45.0
 # A missing wire never runs through the middle of a coil: such a bridge would short it.
 DIRECT_GAP_BRIDGE_DEVICE_CLASSES = {"relay_coil", "solenoid"}
+BOX_PORTS_SKIP_COIL_INTERIOR = True
 # Classes whose electrical port is wherever a wire meets the box; when such a
 # symbol has no terminal link, attach it to every wire touching its bbox.
 TOUCHING_WIRE_FALLBACK_CLASSES = {"connector", "junction", "power_bus", "terminal"}
@@ -1113,6 +1114,11 @@ def enrich_symbols_and_graph(
     symbol_node_links: list[dict[str, Any]] = []
     symbol_wire_links: list[dict[str, Any]] = []
     symbol_terminal_links: list[dict[str, Any]] = []
+    # A wire end inside a coil or solenoid belongs to that device, never to a box drawn around it.
+    coil_boxes = [
+        s["bbox"] for s in symbols
+        if str(s.get("class_name") or "") in DIRECT_GAP_BRIDGE_DEVICE_CLASSES and not (s.get("dot_role") or {}).get("suppressed")
+    ] if BOX_PORTS_SKIP_COIL_INTERIOR else []
     for symbol in symbols:
         if (symbol.get("dot_role") or {}).get("suppressed"):
             symbol.update(terminals=[], nearby_node_ids=[], terminal_wire_ids=[], terminal_links=[],
@@ -1128,6 +1134,11 @@ def enrich_symbols_and_graph(
             inferred_terminal_classes=inferred_terminal_classes,
             inferred_terminal_config=inferred_terminal_config,
         )
+        if coil_boxes and symbol.get("class_name") == "other":
+            terminal_points = [
+                t for t in terminal_points
+                if not any(b["x0"] <= t["point"][0] <= b["x1"] and b["y0"] <= t["point"][1] <= b["y1"] for b in coil_boxes)
+            ]
         symbol["terminals"] = [
             {
                 "ref": terminal.get("terminal_ref"),
