@@ -114,7 +114,7 @@ export function EditorHeader({
         onClick={onApplyPredictions}
         disabled={aiApplying}
         aria-busy={aiApplying}
-        title="保存済みの AI 推論結果を編集用シンボルとして取り込みます"
+        title="保存済みの AI の結果（シンボル・端子・配線）を確認用の候補として取り込みます"
       >
         <Sparkles className={aiApplying ? 'animate-pulse' : undefined} size={15} />
         AI 推論

@@ -6,6 +6,17 @@ import { INSPECTOR_TABS, SYMBOL_SORTS, sortSymbols } from './model'
 import type { InspectorTab, MetaForm, SaveStatus, SymbolSort } from './model'
 import { MetaPanel } from './MetaPanel'
 
+function AiBadge({ confidence }: { confidence?: number | null }) {
+  return (
+    <span
+      className="flex-none rounded-full bg-cyan-100 px-1.5 py-0.5 text-[9px] font-black text-cyan-700"
+      title="AI の候補。確認して不要なら削除してください"
+    >
+      AI{confidence != null ? ` ${Math.round(confidence * 100)}%` : ''}
+    </span>
+  )
+}
+
 export function EditorInspector({
   inspectorRef,
   desktopInspector,
@@ -201,11 +212,7 @@ export function EditorInspector({
                       >
                         <span className="h-3 w-3 flex-none rounded-sm" style={{ background: colorOf(s.class_key) }} />
                         <span className="font-mono text-xs font-bold">{s.ref}</span>
-                        {s.origin === 'inference' && (
-                          <span className="flex-none rounded-full bg-cyan-100 px-1.5 py-0.5 text-[9px] font-black text-cyan-700">
-                            AI{s.confidence != null ? ` ${Math.round(s.confidence * 100)}%` : ''}
-                          </span>
-                        )}
+                        {s.origin === 'inference' && <AiBadge confidence={s.confidence} />}
                         <span className="truncate text-[11px] text-slate-500">{labelOf(s.class_key)}</span>
                       </button>
                       <button
@@ -278,6 +285,7 @@ export function EditorInspector({
                           {s.terminals.map((t) => (
                             <div key={t.ref} className="mb-1 flex items-center gap-1.5">
                               <span className="font-mono text-[10px] text-slate-400">{t.ref.split('-').pop()}</span>
+                              {t.origin === 'inference' && <AiBadge />}
                               <input
                                 className="field py-0.5 text-xs"
                                 value={t.name}
@@ -366,6 +374,7 @@ export function EditorInspector({
                       {c.to_symbol_ref}
                       {c.to_terminal_ref ? `:${c.to_terminal_ref.split('-').pop()}` : ''}
                     </span>
+                    {c.origin === 'inference' && <AiBadge />}
                   </button>
                   <button
                     type="button"

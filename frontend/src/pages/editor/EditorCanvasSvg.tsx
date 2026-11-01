@@ -2,6 +2,9 @@ import type { Connection, SymbolBox } from '../../types'
 
 export type DraftRect = { x: number; y: number; w: number; h: number }
 
+/* AI の候補（origin=inference）の色。一覧の「AI」バッジと同じ色にする */
+const AI_COLOR = '#0891b2'
+
 export function EditorCanvasSvg({
   iw,
   ih,
@@ -46,6 +49,8 @@ export function EditorCanvasSvg({
         const b = nodePos(c.to_symbol_ref, c.to_terminal_ref)
         if (!a || !b) return null
         const active = selectedConn === i
+        const ai = c.origin === 'inference'
+        const color = active ? '#9ACA3B' : c.kind === 'sheet_ref' ? '#db2777' : ai ? AI_COLOR : '#7c3aed'
         return (
           <g key={`c${i}`}>
             <line
@@ -53,12 +58,14 @@ export function EditorCanvasSvg({
               y1={a.y}
               x2={b.x}
               y2={b.y}
-              stroke={active ? '#9ACA3B' : c.kind === 'sheet_ref' ? '#db2777' : '#7c3aed'}
+              stroke={color}
               strokeWidth={(active ? 3.5 : 2) / zoom}
-              strokeDasharray={c.kind === 'sheet_ref' ? `${6 / zoom} ${4 / zoom}` : undefined}
+              strokeDasharray={
+                c.kind === 'sheet_ref' ? `${6 / zoom} ${4 / zoom}` : ai ? `${4 / zoom} ${3 / zoom}` : undefined
+              }
               opacity={0.85}
             />
-            <circle cx={b.x} cy={b.y} r={4 / zoom} fill={active ? '#9ACA3B' : '#7c3aed'} />
+            <circle cx={b.x} cy={b.y} r={4 / zoom} fill={active ? '#9ACA3B' : ai ? AI_COLOR : '#7c3aed'} />
           </g>
         )
       })}
@@ -125,8 +132,9 @@ export function EditorCanvasSvg({
                   cy={t.ty * ih}
                   r={4.5 / zoom}
                   fill="#fff"
-                  stroke="#3f9067"
+                  stroke={t.origin === 'inference' ? AI_COLOR : '#3f9067'}
                   strokeWidth={2 / zoom}
+                  strokeDasharray={t.origin === 'inference' ? `${2.5 / zoom} ${1.5 / zoom}` : undefined}
                 />
                 <text
                   x={t.tx * iw + 6 / zoom}

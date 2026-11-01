@@ -2,7 +2,12 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { RefreshCw } from 'lucide-react'
 
 import { api } from '../../api/client'
-import type { ReviewSummary } from '../../types'
+import type { ReviewSummary, WiringReviewCounts } from '../../types'
+
+function wiringLine(label: string, counts: WiringReviewCounts) {
+  if (!counts.imported) return `${label} ${counts.ai_count}（未取り込み）`
+  return `${label} ${counts.ai_count} → 採用 ${counts.kept}・削除 ${counts.deleted}・手動追加 ${counts.manual_added}`
+}
 
 function statusLine(summary: ReviewSummary) {
   if (!summary.imported) return { tone: 'text-slate-600', text: 'AI 検出はまだ取り込まれていません。' }
@@ -90,6 +95,12 @@ export function ReviewSummaryCard({
             <p className="mt-1 text-slate-600">
               領域枠 {summary.region_excluded_count} 件はシンボル対象外として除外
             </p>
+          )}
+          {summary.wiring && (
+            <>
+              <p className="mt-1 font-semibold text-slate-800">{wiringLine('AI端子', summary.wiring.terminals)}</p>
+              <p className="mt-1 font-semibold text-slate-800">{wiringLine('AI配線', summary.wiring.connections)}</p>
+            </>
           )}
           <p className={`mt-2 ${line.tone}`}>{line.text}</p>
         </>
