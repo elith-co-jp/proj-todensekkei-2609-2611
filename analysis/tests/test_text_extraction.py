@@ -154,6 +154,17 @@ def test_other_symbols_are_split_into_cards_units_equipment_and_destinations():
     assert tx.classify_other([item("ABC", 120, 150, 160, 165)], b, "ABC") == "unknown"
 
 
+def test_connector_arrow_read_as_hon_is_dropped_but_relay_table_hon_stays():
+    items = [item("CN201本", 300, 400, 350, 412), item("12", 360, 400, 375, 412),
+             item("CN1本-3", 300, 500, 350, 512), item("本", 100, 1000, 112, 1012)]
+    assert tx.symbol_label(items, box(295, 395, 380, 416), "connector") == "CN201 12"
+    assert tx.symbol_label(items, box(295, 495, 380, 516), "connector") == "CN1 3"
+    zones = [{"type": "relay_table", "bbox": (50, 950, 300, 1100)}]
+    texts = tx.classify_texts(items, [], zones)
+    assert [t["kind"] for t in texts] == ["device_number", "number", "device_number", "note"]
+    assert texts[3]["text"] == "本"
+
+
 def test_contact_labels_repair_d_read_as_zero():
     items = [item("830-1", 300, 400, 340, 412), item("ESD", 300, 414, 330, 426),
              item("0010", 400, 400, 432, 412), item("B834", 400, 414, 432, 426)]

@@ -28,7 +28,8 @@ ENABLED = True
 def _box_fragments(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [
         {
-            "text": re.sub(r"\s+", "", unicodedata.normalize("NFKC", str(item["text"])).upper()),
+            # 記号の線の読み違い（-3、3-）は前後の - を落とす
+            "text": re.sub(r"\s+", "", unicodedata.normalize("NFKC", str(item["text"])).upper()).strip("-~"),
             "x": (item["box"][0] + item["box"][2]) / 2,
             "y": (item["box"][1] + item["box"][3]) / 2,
             "h": item["box"][3] - item["box"][1],

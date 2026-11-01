@@ -144,6 +144,23 @@ def device_token(label: str) -> str:
     return next((t for t in tokens if not t.isdigit()), tokens[0] if tokens else "")
 
 
+# 端子台・コネクタの記号（≫ の形）を OCR が「本」と読み、器具名にくっつける（CN201本、CN1本-3）。
+# 英数字に続く・続かれる「本」は記号として消す。リレー表のシート欄の「本」は消さない。
+_GLYPH_HON = re.compile(r"(?<=[A-Za-z0-9])本|本(?=[-0-9])")
+
+
+def drop_glyph_marks(items: Iterable[TextItem], zones: list[dict[str, Any]] | None = None) -> list[TextItem]:
+    out: list[TextItem] = []
+    for item in items:
+        if "本" in item["text"] and not (zones and zone_of(item["box"], zones) == "relay_table"):
+            text = _GLYPH_HON.sub(" ", item["text"]).strip()
+            if not text:
+                continue
+            item = {**item, "text": text}
+        out.append(item)
+    return out
+
+
 def match_key(text: str) -> str:
     """照合用の文字列。図面の字体では O・Q と 0、I と 1 を見分けられないので同じ文字に寄せる。"""
     return normalize(text).replace(" ", "").replace("O", "0").replace("Q", "0").replace("I", "1")
@@ -285,7 +302,7 @@ def correct_token(token: str, lexicon: Counter) -> str:
 
 def symbol_label(items: list[TextItem], box: Any, class_name: str, lexicon: Counter | None = None) -> str:
     """記号枠の内側の文字から、その記号のラベルを作る。"""
-    words = reading_order(words_in_box(items, box), column_major=class_name == "connector")
+    words = reading_order(words_in_box(drop_glyph_marks(items), box), column_major=class_name == "connector")
     texts = [normalize(w["text"]) for w in words]
     if class_name == "other" and texts:
         ref = _REF_PATTERN.search(texts[0].replace(" ", ""))
@@ -633,7 +650,7 @@ def classify_texts(items: list[TextItem], symbols: list[dict[str, Any]], zones: 
     入らなければ注記とする。
     """
     out = []
-    for item in items:
+    for item in drop_glyph_marks(items, zones):
         text = normalize(item["text"])
         compact = text.replace(" ", "")
         center = _center(item["box"])
@@ -716,7 +733,7 @@ def extract_text_structure(
                 # terminal_numbers は語の位置で器具名（黒丸の左）と番号（右）を分けるので、OCR の行を語に割って渡す。
                 x0, y0, x1, y1 = _as_box(symbol["bbox"])
                 pad = CROP_PADDING_PX
-                symbol["text_items"] = words_in_box(crop_items, (x0 - pad, y0 - pad, x1 + pad, y1 + pad))
+                symbol["text_items"] = words_in_box(drop_glyph_marks(crop_items), (x0 - pad, y0 - pad, x1 + pad, y1 + pad))
         reread = reread_label(image, symbol["bbox"], class_name, label, label_reader)
         if reread is not None:
             symbol["ocr_label"], symbol["label_source"], label = label, "llm", reread
