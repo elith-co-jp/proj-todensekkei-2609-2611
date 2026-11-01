@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMemoryRouter, RouterProvider } from 'react-router-dom'
 
@@ -95,5 +95,24 @@ describe('AnalysisPage', () => {
     await view.findByRole('alert')
     expect(view.getByTestId('wire-layer')).toBeTruthy()
     expect(view.getByTestId('symbol-layer')).toBeTruthy()
+  })
+
+  it('jumps to the typed drawing number and resets an out-of-range number', async () => {
+    const view = openPage()
+    const jump = (await view.findByRole('textbox', { name: '図面番号を入力して移動' })) as HTMLInputElement
+    expect(jump.value).toBe('1')
+    expect(view.getByText('/ 2')).toBeTruthy()
+
+    act(() => jump.focus())
+    fireEvent.change(jump, { target: { value: '9' } })
+    fireEvent.keyDown(jump, { key: 'Enter' })
+    expect(jump.value).toBe('1')
+    expect(view.router.state.location.pathname).toBe('/projects/1/analysis')
+
+    act(() => jump.focus())
+    fireEvent.change(jump, { target: { value: '２' } })
+    fireEvent.keyDown(jump, { key: 'Enter' })
+    await waitFor(() => expect(view.router.state.location.pathname).toBe('/projects/2/analysis'))
+    expect(await view.findByText('図面2')).toBeTruthy()
   })
 })

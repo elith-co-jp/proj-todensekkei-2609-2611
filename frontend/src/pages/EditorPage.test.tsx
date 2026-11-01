@@ -412,6 +412,18 @@ describe('EditorPage interactions', () => {
     expect((await findByRole('alert')).textContent).toContain('出力できませんでした')
   })
 
+  it('ヘッダーの図面番号入力でエディタのまま別の図面へ移動する', async () => {
+    const { findByRole, router } = renderEditor()
+    const jump = (await findByRole('textbox', { name: '図面番号を入力して移動' })) as HTMLInputElement
+
+    act(() => jump.focus())
+    fireEvent.change(jump, { target: { value: '2' } })
+    fireEvent.keyDown(jump, { key: 'Enter' })
+
+    await waitFor(() => expect(router.state.location.pathname).toBe('/projects/2'))
+    await waitFor(() => expect(apiMocks.getProject).toHaveBeenLastCalledWith(2))
+  })
+
   it('保存失敗後にエディタを再生成しても下書きを復元して再試行できる', async () => {
     let rejectSave: (reason: Error) => void = () => {
       throw new Error('保存リクエストが開始されていません')

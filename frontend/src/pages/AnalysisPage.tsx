@@ -4,6 +4,7 @@ import { ArrowLeft, Cable, ChevronLeft, ChevronRight, Download, Pencil, Sparkles
 
 import { api } from '../api/client'
 import { LoadingOverlay } from '../components/LoadingOverlay'
+import { PageJump } from '../components/PageJump'
 import PredictionDrawing from '../components/PredictionDrawing'
 import type { ProjectDetail, ProjectPredictions, ProjectRow, StructureResult } from '../types'
 import { getProjectNavigation } from '../utils/workspace'
@@ -101,7 +102,7 @@ export default function AnalysisPage() {
           </div>
           <nav className="flex items-center gap-1" aria-label="図面の移動">
             {navigation.previousId ? <Link className="icon-button" to={`/projects/${navigation.previousId}/analysis`} title="前の図面" aria-label="前の図面"><ChevronLeft size={18} /></Link> : <span className="inline-block w-9" />}
-            <span className="min-w-12 text-center font-mono text-xs">{navigation.position}/{navigation.total}</span>
+            <PageJump projects={projects} currentId={projectId} pathFor={(id) => `/projects/${id}/analysis`} tone="light" />
             {navigation.nextId ? <Link className="icon-button" to={`/projects/${navigation.nextId}/analysis`} title="次の図面" aria-label="次の図面"><ChevronRight size={18} /></Link> : <span className="inline-block w-9" />}
           </nav>
           <Link to={`/projects/${projectId}`} className="icon-button" title="アノテーション編集" aria-label="アノテーション編集"><Pencil size={17} /></Link>

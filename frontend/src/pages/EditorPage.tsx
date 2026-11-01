@@ -1132,6 +1132,7 @@ export default function EditorPage() {
       <EditorHeader
         project={project}
         projectId={projectId}
+        projects={projectRows}
         navigation={navigation}
         symbolCount={symbols.length}
         connectionCount={connections.length}

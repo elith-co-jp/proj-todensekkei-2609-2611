@@ -12,13 +12,15 @@ import {
   Sparkles,
 } from 'lucide-react'
 
-import type { ProjectDetail } from '../../types'
+import { PageJump } from '../../components/PageJump'
+import type { ProjectDetail, ProjectRow } from '../../types'
 import type { ProjectNavigation } from '../../utils/workspace'
 import type { SaveStatus } from './model'
 
 export function EditorHeader({
   project,
   projectId,
+  projects,
   navigation,
   symbolCount,
   connectionCount,
@@ -32,6 +34,7 @@ export function EditorHeader({
 }: {
   project: ProjectDetail
   projectId: number
+  projects: ProjectRow[]
   navigation: ProjectNavigation
   symbolCount: number
   connectionCount: number
@@ -85,9 +88,7 @@ export function EditorHeader({
             <ChevronLeft size={18} />
           </span>
         )}
-        <span className="min-w-12 text-center text-[10px] font-bold text-slate-400">
-          {navigation.position || '—'} / {navigation.total || '—'}
-        </span>
+        <PageJump projects={projects} currentId={projectId} pathFor={(id) => `/projects/${id}`} tone="dark" />
         {navigation.nextId ? (
           <Link
             to={`/projects/${navigation.nextId}`}
