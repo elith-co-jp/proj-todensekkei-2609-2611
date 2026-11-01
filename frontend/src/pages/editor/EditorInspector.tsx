@@ -423,7 +423,7 @@ export function EditorInspector({
 
         <div
           id="inspector-panel-meta"
-          className="flex min-h-0 flex-1"
+          className={`min-h-0 flex-1 ${tab === 'meta' ? 'flex' : 'hidden'}`}
           role="tabpanel"
           aria-labelledby="inspector-tab-meta"
           hidden={tab !== 'meta'}
