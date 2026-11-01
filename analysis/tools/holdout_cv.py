@@ -358,7 +358,7 @@ def evaluate(drawing: dict[str, Any], pred: list[dict[str, Any]], structure: dic
         "per_class": {c: dict(v) for c, v in scored["per_class"].items()},
     }
     if structure is not None:
-        g_sym, p_sym = scored["g_sym"], scored["p_sym"]
+        g_sym = scored["g_sym"]
         sym_ids = [s["id"] for s in structure.get("symbols", [])]
         pred_to_gold = {sym_ids[pi]: g_sym[gi]["ref"] for gi, pi, _ in scored["matches"] if pi < len(sym_ids)}
         gp = gold_pairs(drawing, {g["ref"] for g in g_sym})

@@ -139,12 +139,13 @@ def _dot_for(symbol: dict[str, Any], dots: list[Dot], rules: DotRules) -> Dot | 
     return min(near, key=lambda d: (d.x - cx) ** 2 + (d.y - cy) ** 2) if near else None
 
 
-def assign_dot_roles(binary: np.ndarray, symbols: list[dict[str, Any]], rules: DotRules = DotRules()) -> dict[str, Any]:
+def assign_dot_roles(binary: np.ndarray, symbols: list[dict[str, Any]], rules: DotRules | None = None) -> dict[str, Any]:
     """Set symbol["dot_role"] on junction and connector detections, in place.
 
     Symbols keep their list positions, so callers pairing them with detections by index stay
     aligned; a second box on an already claimed dot is marked suppressed instead of removed.
     """
+    rules = rules or DotRules()
     dots = find_dots(binary, rules)
     roles: dict[str, int] = {}
     duplicates = 0

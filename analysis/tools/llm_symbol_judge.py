@@ -19,7 +19,6 @@ import time
 import urllib.request
 from collections import Counter
 from pathlib import Path
-from typing import Any
 
 from PIL import Image, ImageDraw
 

@@ -24,6 +24,16 @@ ENABLED = True
 
 def _fragments(symbol: dict[str, Any]) -> list[dict[str, Any]]:
     """OCR fragments in image coordinates."""
+    if symbol.get("text_items") is not None:
+        return [
+            {
+                "text": re.sub(r"\s+", "", unicodedata.normalize("NFKC", str(item["text"])).upper()),
+                "x": (item["box"][0] + item["box"][2]) / 2,
+                "y": (item["box"][1] + item["box"][3]) / 2,
+                "h": item["box"][3] - item["box"][1],
+            }
+            for item in symbol["text_items"]
+        ]
     ocr = symbol.get("label_ocr") or {}
     crop, size = ocr.get("crop_box"), ocr.get("processed_size")
     if not crop or not size:

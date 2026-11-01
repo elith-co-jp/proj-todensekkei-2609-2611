@@ -11,7 +11,9 @@ from models import AnnotationProject, MlModel, StructurePrediction
 from services.annotation_service import image_path
 
 
-def analyze_project(project: AnnotationProject, model: MlModel, detections: list[dict]) -> dict:
+def analyze_project(
+    project: AnnotationProject, model: MlModel, detections: list[dict], regions: list[dict] | None = None
+) -> dict:
     from analysis.runtime import analyze_detections
 
     if len(project.images) != 1:
@@ -25,6 +27,7 @@ def analyze_project(project: AnnotationProject, model: MlModel, detections: list
             "model_sha256": model.sha256, "model_name": model.name,
         },
         work_dir=DATA_DIR / "analysis_tmp",
+        regions=regions,
     )
 
 

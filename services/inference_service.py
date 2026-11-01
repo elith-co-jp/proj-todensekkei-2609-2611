@@ -160,7 +160,8 @@ def run_inference(
             from services.structure_service import analyze_project
 
             symbol_detections = [d for d in detections if detection_kind(d["w"], d["h"]) == "symbol"]
-            structure = analyze_project(project, model, symbol_detections)
+            region_detections = [d for d in detections if detection_kind(d["w"], d["h"]) == "region"]
+            structure = analyze_project(project, model, symbol_detections, region_detections)
         counts = _record_predictions(
             db, project, detections, model, model_label=model.name
         )

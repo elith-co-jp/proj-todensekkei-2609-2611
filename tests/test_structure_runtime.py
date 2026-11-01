@@ -59,3 +59,40 @@ def test_image_and_pdf_entry_points_produce_identical_wire_geometry(tmp_path, mo
     registered = build_final_output_from_analysis(tmp_path / "image" / "page_001", "test")
     for key in ("wires", "nodes", "edges", "text_regions"):
         assert original[key] == registered[key]
+
+
+def test_text_extraction_hook_reads_relay_table_and_keeps_text_zone_symbols_unwired(tmp_path, monkeypatch):
+    runtime = _runtime()
+    image = Image.new("RGB", (900, 600), "white")
+    ImageDraw.Draw(image).line([(150, 250), (800, 250)], fill="black", width=3)
+    image_path = tmp_path / "input.png"
+    image.save(image_path)
+    page_items = [("(ER21212)", (160, 230, 215, 244)), ("33HB", (45, 485, 70, 497)), ("FV2306", (44, 500, 72, 512))]
+    for i, (terminal, contact, sheet, position) in enumerate(
+        [("5-9-1", "a", "本", "10D"), ("8-12-4", "a", "本", "140"), ("7-11-3", "", "", ""), ("6-10-2", "", "", "")]
+    ):
+        y = 470 + 15 * i
+        page_items.append((terminal, (75, y, 100, y + 12)))
+        page_items += [(text, (x0, y, x1, y + 12)) for text, x0, x1 in ((contact, 104, 110), (sheet, 112, 125), (position, 127, 140)) if text]
+
+    def reader(array, **_):
+        if array.shape[:2] != (1200, 1800):
+            return [], None
+        return [([[x0 * 2, y0 * 2], [x1 * 2, y0 * 2], [x1 * 2, y1 * 2], [x0 * 2, y1 * 2]], text, 0.99)
+                for text, (x0, y0, x1, y1) in page_items], None
+
+    monkeypatch.setattr(runtime, "load_symbol_ocr_reader", lambda *_: (reader, "rapidocr", None))
+    detections = [
+        {"class_key": "connector", "class_label": "Connector", "cx": 0.07, "cy": 0.8, "w": 0.03, "h": 0.03, "confidence": 0.9},
+        {"class_key": "contact_a", "class_label": "Contact", "cx": 0.5, "cy": 0.42, "w": 0.04, "h": 0.06, "confidence": 0.9},
+    ]
+    result = runtime.analyze_detections(image_path, detections, source={}, work_dir=tmp_path / "work")
+    assert result["relay_table"]["rows"][:2] == [
+        {"device": "33HB FV2306", "terminal": "5-9-1", "contact": "a", "sheet": "本", "position": "10D"},
+        {"device": "33HB FV2306", "terminal": "8-12-4", "contact": "a", "sheet": "本", "position": "14D"},
+    ]
+    assert [(r["target_sheet"], r["kind"]) for r in result["sheet_references"]] == [("ER21212", "wire")]
+    assert [s["id"] for s in result["symbols"]] == ["symbol_001", "symbol_002"]
+    assert result["symbols"][0]["status"] == "suppressed_text_zone"
+    assert result["quality"]["text_zone_suppressed_count"] == 1
+    assert {r["region_type"] for r in result["regions"]} == {"relay_table"}
