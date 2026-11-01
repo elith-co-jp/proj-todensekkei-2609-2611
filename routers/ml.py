@@ -245,6 +245,7 @@ def training_run(payload: TrainingRunRequest, db: Session = Depends(get_db)):
             epochs=payload.epochs,
             imgsz=payload.imgsz,
             base_model=payload.base_model,
+            holdout=payload.holdout,
         )
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc

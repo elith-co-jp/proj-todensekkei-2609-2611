@@ -69,6 +69,10 @@ def _migrate_columns() -> None:
         statements.append(
             "ALTER TABLE training_runs ADD COLUMN baseline_label VARCHAR(500)"
         )
+    if "eval_scope_json" not in run_cols:
+        statements.append(
+            "ALTER TABLE training_runs ADD COLUMN eval_scope_json TEXT"
+        )
     prediction_cols = {c["name"] for c in inspector.get_columns("predictions")}
     backfill_prediction_kind = "kind" not in prediction_cols
     if backfill_prediction_kind:

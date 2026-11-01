@@ -102,6 +102,7 @@ class TrainingRunRequest(BaseModel):
     epochs: int = Field(default=100, ge=1, le=1000)
     imgsz: int = Field(default=1280, ge=320, le=4096)
     base_model: str | None = None  # None = active モデル（無ければ yolov8n.pt）
+    holdout: bool = True  # True なら一部の図面を学習に使わず、新旧モデルの評価専用にする
 
 
 class TrainingDecisionPayload(BaseModel):
