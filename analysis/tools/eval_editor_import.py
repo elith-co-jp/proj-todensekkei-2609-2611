@@ -19,7 +19,8 @@ annotation people entered by hand in the same editor.
   two terminals in one node. Two gold habits are reported apart. Terminals placed on a region-sized box
   (where wires cross the dashed frame of a 2RAXP panel) split one wire into two; the conv recall contracts
   them like wire bends, so contact - frame terminal - dot counts as the one wire contact - dot. Wires drawn
-  straight through a symbol gold leaves unwired (relay coils) are left out of the conv recall.
+  straight through a symbol gold leaves unwired (relay coils) are left out of the conv recall; a terminal block
+  boxed on top of a frame terminal (no terminals of its own, the wires go to the frame terminal) is not such a symbol.
 - connector names: gold connectors whose label carries pin numbers (eval_wiring_cv.gold_terminal_numbers)
   against the imported terminal name of the matched symbol, read as DEVICE-NUMBER tokens.
 - rerun: importing again into the imported result must add nothing.
@@ -160,9 +161,16 @@ def wire_nodes(
     gold_pos = {endpoint_key(s["ref"], t["ref"]): (t["tx"] * width, t["ty"] * height)
                 for s in project["symbols"] for t in (s.get("terminals") or [])}
     wired = {parse_member(k)[0] for e in edges for k in e}
-    unwired_boxes = [to_box(s["cx"], s["cy"], s["w"], s["h"], width, height) for s in project["symbols"]
-                     if s["ref"] not in wired and not is_wire_bend(s) and detection_kind(s["w"], s["h"]) == "symbol"]
     region_refs = {s["ref"] for s in project["symbols"] if detection_kind(s["w"], s["h"]) == "region"}
+    frame_points = [gold_pos[endpoint_key(s["ref"], t["ref"])] for s in project["symbols"]
+                    if s["ref"] in region_refs or s["class_key"] == "other" for t in (s.get("terminals") or [])]
+
+    def on_frame_terminal(box: dict[str, float]) -> bool:
+        return any(box["x0"] - 2 <= x <= box["x1"] + 2 and box["y0"] - 2 <= y <= box["y1"] + 2 for x, y in frame_points)
+
+    unwired_boxes = [box for s in project["symbols"]
+                     if s["ref"] not in wired and not is_wire_bend(s) and detection_kind(s["w"], s["h"]) == "symbol"
+                     and not on_frame_terminal(box := to_box(s["cx"], s["cy"], s["w"], s["h"], width, height))]
     gold_wires = {e for e in edges if len({parse_member(k)[0] for k in e}) == 2}
     region_keys = {k for e in gold_wires for k in e if parse_member(k)[0] in region_refs}
     conv_wires = _contract(gold_wires, region_keys)
