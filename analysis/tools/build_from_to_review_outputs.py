@@ -565,6 +565,7 @@ def build_predicted_graph_pairs(
     wire_gap_bridge_outward_only: bool = False,
     gap_blank_run: Callable[[tuple[float, float], tuple[float, float]], int] | None = None,
     wire_gap_bridge_max_blank: float = 0.0,
+    terminal_gap_bridge_max_blank: float = 0.0,
     trace: dict[str, Any] | None = None,
 ) -> set[tuple[str, str]]:
     nodes_by_id = {str(node["id"]): node for node in payload.get("nodes", [])}
@@ -757,6 +758,10 @@ def build_predicted_graph_pairs(
         text_overlap = segment_text_overlap_ratio(terminal_point, bridge_end, text_regions)
         if text_overlap > gap_bridge_text_overlap_max:
             stats["terminal_gap_bridge_rejected_text_overlap_count"] += 1
+            return False
+        if gap_blank_run is not None and terminal_gap_bridge_max_blank > 0 \
+                and gap_blank_run(terminal_point, bridge_end) > terminal_gap_bridge_max_blank:
+            stats["terminal_gap_bridge_rejected_blank_count"] += 1
             return False
         if crosses_blocking_symbol(terminal_point, bridge_end, allowed_symbol_ids={str(record.get("symbol_id") or "")}):
             stats["terminal_gap_bridge_rejected_symbol_overlap_count"] += 1

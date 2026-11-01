@@ -81,6 +81,8 @@ DIRECT_WIRE_GAP_BRIDGE_OUTWARD_ONLY = True
 # Longest run of blank pixels (at 150 dpi) a wire-gap bridge may cross. Markers on a wire stay
 # under about 38 px; the space between a card's + and - dots is over 50 px. 0 disables the check.
 DIRECT_WIRE_GAP_BRIDGE_MAX_BLANK = 45.0
+# The same limit for a terminal joined to the end of a collinear wire up to DIRECT_TERMINAL_GAP_BRIDGE_MAX away.
+DIRECT_TERMINAL_GAP_BRIDGE_MAX_BLANK = 45.0
 # Classes whose electrical port is wherever a wire meets the box; when such a
 # symbol has no terminal link, attach it to every wire touching its bbox.
 TOUCHING_WIRE_FALLBACK_CLASSES = {"connector", "junction", "power_bus", "terminal"}
@@ -1695,6 +1697,7 @@ def build_direct_from_to(
         wire_gap_bridge_outward_only=DIRECT_WIRE_GAP_BRIDGE_OUTWARD_ONLY,
         gap_blank_run=blank_run,
         wire_gap_bridge_max_blank=DIRECT_WIRE_GAP_BRIDGE_MAX_BLANK,
+        terminal_gap_bridge_max_blank=DIRECT_TERMINAL_GAP_BRIDGE_MAX_BLANK,
         trace=trace,
     )
     valid_pairs = sorted(
@@ -1753,6 +1756,7 @@ def build_direct_from_to(
             "terminal_terminal_bridge_max": DIRECT_TERMINAL_TERMINAL_BRIDGE_MAX,
             "wire_gap_bridge_outward_only": DIRECT_WIRE_GAP_BRIDGE_OUTWARD_ONLY,
             "wire_gap_bridge_max_blank": DIRECT_WIRE_GAP_BRIDGE_MAX_BLANK if blank_run is not None else 0.0,
+            "terminal_gap_bridge_max_blank": DIRECT_TERMINAL_GAP_BRIDGE_MAX_BLANK if blank_run is not None else 0.0,
             "bridge_stats": dict(sorted(bridge_stats.items())),
         },
     }
