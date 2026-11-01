@@ -51,6 +51,34 @@ const VIEW_STORAGE_KEY = 'todenyolo.workspace.view'
 
 const WORKFLOW_STEPS = ['登録', 'AI 解析', '確認・修正', '出力']
 
+const SAVED_MEANING = '人が確認して保存したアノテーション（学習に使う）'
+const AI_MEANING = '推論・解析の結果（未確定。エディタの「AI 推論」で取り込むまで保存件数に含まれない）'
+const SAVED_HINT = `保存済み = ${SAVED_MEANING}`
+const AI_HINT = `AI = ${AI_MEANING}`
+const AI_CHIP_CLASS =
+  'inline-flex items-center gap-1 whitespace-nowrap rounded-full border border-dashed border-blue-300 bg-blue-50/70 px-2 py-0.5 text-blue-700'
+
+function AiSymbolChip({ count }: { count: number }) {
+  if (count <= 0) return null
+  return (
+    <span className={AI_CHIP_CLASS} title={`AI 推論で検出したシンボル ${count} 件。${AI_HINT}`}>
+      <Sparkles size={11} aria-hidden="true" />
+      AI検出 {count}
+    </span>
+  )
+}
+
+function AiWireChip({ row }: { row: ProjectRow }) {
+  if (row.analysis_wire_count === null) return null
+  const connections = row.analysis_connection_count === null ? '' : `（接続 ${row.analysis_connection_count} 件）`
+  return (
+    <span className={AI_CHIP_CLASS} title={`AI 解析で検出した配線 ${row.analysis_wire_count} 本${connections}。${AI_HINT}`}>
+      <Sparkles size={11} aria-hidden="true" />
+      AI配線 {row.analysis_wire_count}
+    </span>
+  )
+}
+
 function readViewMode(): ViewMode {
   try {
     return window.localStorage.getItem(VIEW_STORAGE_KEY) === 'list' ? 'list' : 'grid'
@@ -492,7 +520,7 @@ export default function ProjectListPage() {
               <List size={15} />
             </button>
           </div>
-          <div className="flex w-full flex-wrap items-center gap-2 pb-4 pt-1">
+          <div className="flex w-full flex-wrap items-center gap-2 pb-2 pt-1">
             <div className="segmented" role="group" aria-label="状態で絞り込み">
               {STATUS_FILTERS.map(({ key, label }) => (
                 <button
@@ -519,6 +547,16 @@ export default function ProjectListPage() {
             />
           </label>
           </div>
+          <p className="flex w-full flex-wrap gap-x-4 gap-y-1.5 pb-3 text-[11px] leading-5 text-slate-500">
+            <span className="flex min-w-0 items-start gap-1.5">
+              <span className="flex-none whitespace-nowrap rounded-full bg-violet-50 px-2 font-semibold text-violet-700">保存済み</span>
+              <span>= {SAVED_MEANING}</span>
+            </span>
+            <span className="flex min-w-0 items-start gap-1.5">
+              <span className={`${AI_CHIP_CLASS} flex-none font-semibold`}>AI</span>
+              <span>= {AI_MEANING}</span>
+            </span>
+          </p>
         </div>
 
         {view === 'grid' && (
@@ -582,16 +620,17 @@ export default function ProjectListPage() {
                           {row.name}
                         </Link>
                         <div className="mt-3 flex flex-wrap gap-1.5 text-[11px] font-semibold">
-                          <span className="inline-flex items-center gap-1 rounded-full bg-violet-50 px-2 py-1 text-violet-700" title="シンボル">
+                          <span className="inline-flex items-center gap-1 rounded-full bg-violet-50 px-2 py-1 text-violet-700" title={SAVED_HINT}>
                             <Shapes size={12} aria-hidden="true" /> シンボル {row.symbol_count}
-                            {row.prediction_count > 0 && <span className="text-blue-700" title="AI 推論の検出件数">+{row.prediction_count}</span>}
                           </span>
-                          <span className="inline-flex items-center gap-1 rounded-full bg-sky-50 px-2 py-1 text-sky-700" title="端子">
+                          <span className="inline-flex items-center gap-1 rounded-full bg-sky-50 px-2 py-1 text-sky-700" title={SAVED_HINT}>
                             <CircleDot size={12} aria-hidden="true" /> 端子 {row.terminal_count}
                           </span>
-                          <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-1 text-amber-700" title="配線">
+                          <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-1 text-amber-700" title={SAVED_HINT}>
                             <Cable size={12} aria-hidden="true" /> 配線 {row.connection_count}
                           </span>
+                          <AiSymbolChip count={row.prediction_count} />
+                          <AiWireChip row={row} />
                         </div>
                         <div className="mt-auto flex gap-2 pt-4">
                           <Link to={`/projects/${row.id}/analysis`} className="btn btn-sm flex-1" aria-label={`${row.name}の解析結果`}>
@@ -622,9 +661,9 @@ export default function ProjectListPage() {
                 <th className="th w-28">シート</th>
                 <th className="th w-16">頁</th>
                 <th className="th w-24">状態</th>
-                <th className="th w-24 text-right">シンボル</th>
+                <th className="th w-28 text-right">シンボル</th>
                 <th className="th w-20 text-right">端子</th>
-                <th className="th w-20 text-right">配線</th>
+                <th className="th w-28 text-right">配線</th>
                 <th className="th w-28"><span className="sr-only">解析結果・編集</span></th>
               </tr>
             </thead>
@@ -662,16 +701,19 @@ export default function ProjectListPage() {
                       {STATUS_LABEL[row.status] ?? row.status}
                     </span>
                   </td>
-                  <td className="td text-right font-mono text-xs">
+                  <td className="td text-right font-mono text-xs" title={SAVED_HINT}>
                     {row.symbol_count}
-                    {row.prediction_count > 0 && (
-                      <span className="ml-1 rounded-full bg-blue-50 px-1.5 py-0.5 text-[9px] font-black text-blue-700" title="AI 推論の検出件数">
-                        +{row.prediction_count}
-                      </span>
-                    )}
+                    <div className="mt-1 flex justify-end font-sans text-[10px] font-bold empty:hidden">
+                      <AiSymbolChip count={row.prediction_count} />
+                    </div>
                   </td>
                   <td className="td text-right font-mono text-xs text-slate-500">{row.terminal_count}</td>
-                  <td className="td text-right font-mono text-xs">{row.connection_count}</td>
+                  <td className="td text-right font-mono text-xs" title={SAVED_HINT}>
+                    {row.connection_count}
+                    <div className="mt-1 flex justify-end font-sans text-[10px] font-bold empty:hidden">
+                      <AiWireChip row={row} />
+                    </div>
+                  </td>
                   <td className="td text-right">
                     <Link to={`/projects/${row.id}/analysis`} className="icon-button mr-1 h-9 w-9 border border-slate-200 text-blue-700 hover:bg-blue-50" aria-label={`${row.name}の解析結果`} title="解析結果">
                       <Cable size={16} />
@@ -721,6 +763,10 @@ export default function ProjectListPage() {
                     <div><div className="text-[9px] text-slate-400">記号</div><div className="mt-1 text-xs font-bold">{row.symbol_count}</div></div>
                     <div><div className="text-[9px] text-slate-400">端子</div><div className="mt-1 text-xs font-bold">{row.terminal_count}</div></div>
                     <div><div className="text-[9px] text-slate-400">配線</div><div className="mt-1 text-xs font-bold">{row.connection_count}</div></div>
+                  </div>
+                  <div className="mt-2 flex flex-wrap gap-1.5 text-[10px] font-bold empty:hidden">
+                    <AiSymbolChip count={row.prediction_count} />
+                    <AiWireChip row={row} />
                   </div>
                 </div>
                 <Link to={`/projects/${row.id}/analysis`} className="icon-button border border-slate-200 text-blue-700" aria-label={`${row.name}の解析結果`} title="解析結果">

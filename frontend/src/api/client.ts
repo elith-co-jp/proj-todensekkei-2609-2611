@@ -7,6 +7,8 @@ import type {
   ProjectDetail,
   ProjectPredictions,
   ProjectRow,
+  ReviewSummary,
+  SheetNumberCandidate,
   Stats,
   SymbolClass,
   StructureResult,
@@ -99,6 +101,11 @@ export const api = {
     }),
 
   deleteProject: (id: number) => req<{ deleted: number }>(`/api/projects/${id}`, { method: 'DELETE' }),
+
+  suggestSheetNumber: (id: number) =>
+    req<{ candidates: SheetNumberCandidate[] }>(`/api/projects/${id}/sheet-number/suggest`, {
+      method: 'POST',
+    }),
 
   bulkDelete: (ids: number[]) =>
     req<{ deleted: number[] }>('/api/projects/bulk-delete', {
@@ -198,12 +205,16 @@ export const api = {
   getPredictions: (projectId: number) =>
     req<ProjectPredictions>(`/api/ml/projects/${projectId}/predictions`),
 
+  getReviewSummary: (projectId: number) =>
+    req<ReviewSummary>(`/api/ml/projects/${projectId}/review-summary`),
+
   startTraining: (opts: {
     project_ids?: number[]
     only_done?: boolean
     epochs?: number
     imgsz?: number
     base_model?: string | null
+    holdout?: boolean
   }) =>
     req<TrainingRun>('/api/ml/training/run', {
       method: 'POST',

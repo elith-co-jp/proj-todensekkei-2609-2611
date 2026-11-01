@@ -26,6 +26,7 @@ import {
   buildAnnotationPayload,
   buildMetaForm,
   clamp01,
+  classRank,
   fitInside,
   INFERENCE_CENTER_TOLERANCE,
   INFERENCE_SIZE_TOLERANCE,
@@ -52,6 +53,7 @@ import type {
   Mode,
   SaveStatus,
   Snapshot,
+  SymbolSort,
 } from './editor/model'
 
 export default function EditorPage() {
@@ -73,6 +75,7 @@ export default function EditorPage() {
   const [selectedConn, setSelectedConn] = useState<number | null>(null)
   const [pending, setPending] = useState<{ symbolRef: string; terminalRef: string | null } | null>(null)
   const [tab, setTab] = useState<InspectorTab>('symbols')
+  const [symbolSort, setSymbolSort] = useState<SymbolSort>('registered')
 
   const [zoom, setZoom] = useState(1)
   const [pan, setPan] = useState({ x: 0, y: 0 })
@@ -93,6 +96,7 @@ export default function EditorPage() {
   const [hiddenSymbols, setHiddenSymbols] = useState<ReadonlySet<string>>(() => new Set())
   const [showTerminals, setShowTerminals] = useState(true)
   const [showConnections, setShowConnections] = useState(true)
+  const [showLabels, setShowLabels] = useState(true)
   const [layersOpen, setLayersOpen] = useState(() =>
     typeof window === 'undefined' ? true : window.matchMedia('(min-width: 1024px)').matches,
   )
@@ -501,6 +505,24 @@ export default function EditorPage() {
   )
 
   /* ------------------------------------------------------------------ 編集操作 */
+  const selectOnCanvas = (ref: string) => {
+    setSelectedRef(ref)
+    setTab('symbols')
+  }
+
+  const revealSymbol = (ref: string) => {
+    setSelectedRef(ref)
+    const s = symbolByRef.get(ref)
+    const rect = canvasRef.current?.getBoundingClientRect()
+    if (!s || !rect) return
+    const left = pan.x + (s.cx - s.w / 2) * iw * zoom
+    const top = pan.y + (s.cy - s.h / 2) * ih * zoom
+    const right = left + s.w * iw * zoom
+    const bottom = top + s.h * ih * zoom
+    if (left >= 0 && top >= 0 && right <= rect.width && bottom <= rect.height) return
+    setPan({ x: rect.width / 2 - s.cx * iw * zoom, y: rect.height / 2 - s.cy * ih * zoom })
+  }
+
   const addSymbol = (x1: number, y1: number, x2: number, y2: number) => {
     const raw = fitInside((x1 + x2) / 2, (y1 + y2) / 2, Math.abs(x2 - x1), Math.abs(y2 - y1))
     if (raw.w < MIN_BOX || raw.h < MIN_BOX) return
@@ -510,10 +532,11 @@ export default function EditorPage() {
       ...prev,
       { ref, class_key: classKey, label: null, ...raw, note: null, terminals: [] },
     ])
-    setSelectedRef(ref)
+    selectOnCanvas(ref)
   }
 
   const deleteSymbol = (ref: string) => {
+    const removed = symbolByRef.get(ref)
     pushHistory()
     setSymbols((prev) => prev.filter((s) => s.ref !== ref))
     setConnections((prev) => prev.filter((c) => c.from_symbol_ref !== ref && c.to_symbol_ref !== ref))
@@ -524,6 +547,11 @@ export default function EditorPage() {
       next.delete(ref)
       return next
     })
+    if (removed?.origin === 'inference') {
+      setNotice(
+        `AI 検出 ${ref} を削除しました。図面を『完了』にして学習すると、この位置は『シンボルではない』例として学習されます。`,
+      )
+    }
   }
 
   /* AI 推論結果を編集対象のシンボルとして取り込む（破線表示・人が修正して蓄積）*/
@@ -532,8 +560,15 @@ export default function EditorPage() {
     setAiApplying(true)
     try {
       const data = await api.getPredictions(projectId)
+      const regionNote = data.region_count
+        ? `／領域枠 ${data.region_count} 件はシンボル対象外として除外`
+        : ''
       if (data.count === 0) {
-        setNotice('この図面の推論結果がありません。「AI 改善サイクル」で推論を実行してください')
+        setNotice(
+          regionNote
+            ? `取り込める検出がありませんでした${regionNote}`
+            : 'この図面の推論結果がありません。「AI 改善サイクル」で推論を実行してください',
+        )
         return
       }
       const classKeys = new Set(classes.map((c) => c.key))
@@ -570,14 +605,15 @@ export default function EditorPage() {
         added += 1
       }
       if (added === 0) {
-        setNotice(skipped > 0 ? '推論結果はすべて取り込み済みです' : '取り込める検出がありませんでした')
+        setNotice((skipped > 0 ? '推論結果はすべて取り込み済みです' : '取り込める検出がありませんでした') + regionNote)
         return
       }
       pushHistory()
       setSymbols(next)
       setNotice(
         `AI 検出を ${added} 件取り込みました（破線枠）。内容を確認・修正して保存してください` +
-          (skipped > 0 ? `／${skipped} 件は既存と重複したためスキップ` : ''),
+          (skipped > 0 ? `／${skipped} 件は既存と重複したためスキップ` : '') +
+          regionNote,
       )
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
@@ -716,6 +752,7 @@ export default function EditorPage() {
     setSelectedRef(null)
     setShowTerminals(true)
     setShowConnections(true)
+    setShowLabels(true)
   }
 
   /* ------------------------------------------------------------------ ポインター（マウス／ペン／タッチ） */
@@ -760,7 +797,7 @@ export default function EditorPage() {
       const s = hitSymbol(nx, ny)
       if (s) {
         addTerminal(s.ref, nx, ny)
-        setSelectedRef(s.ref)
+        selectOnCanvas(s.ref)
       }
       return
     }
@@ -774,14 +811,14 @@ export default function EditorPage() {
     const corner = hitCorner(nx, ny)
     if (corner) {
       pushHistory()
-      setSelectedRef(corner.ref)
+      selectOnCanvas(corner.ref)
       startDrag({ kind: 'resize', ref: corner.ref, corner: corner.corner })
       return
     }
     const s = hitSymbol(nx, ny)
     if (s) {
       pushHistory()
-      setSelectedRef(s.ref)
+      selectOnCanvas(s.ref)
       startDrag({ kind: 'move', ref: s.ref, dx: nx - s.cx, dy: ny - s.cy })
       return
     }
@@ -1068,11 +1105,7 @@ export default function EditorPage() {
   const hiddenInferenceCount = inferenceRefs.filter((ref) => hiddenSymbols.has(ref)).length
   const classOrder = classes.map((c) => c.key)
   const classLayerRows = [...new Set(symbols.map((s) => s.class_key))]
-    .sort(
-      (a, b) =>
-        (classOrder.indexOf(a) < 0 ? classOrder.length : classOrder.indexOf(a)) -
-        (classOrder.indexOf(b) < 0 ? classOrder.length : classOrder.indexOf(b)),
-    )
+    .sort((a, b) => classRank(classOrder, a) - classRank(classOrder, b))
     .map((key) => {
       const members = symbols.filter((s) => s.class_key === key)
       const hidden = members.reduce((n, s) => n + (hiddenSymbols.has(s.ref) ? 1 : 0), 0)
@@ -1085,10 +1118,10 @@ export default function EditorPage() {
         refs: members.map((s) => s.ref),
       }
     })
-  const allLayersVisible = hiddenSymbols.size === 0 && showTerminals && showConnections
-  /* バッジは「表示をオフにした要素の数」（隠したシンボル + 端子/配線レイヤー） */
+  const allLayersVisible = hiddenSymbols.size === 0 && showTerminals && showConnections && showLabels
+  /* バッジは「表示をオフにした要素の数」（隠したシンボル + 端子/配線/ラベルレイヤー） */
   const hiddenAnnotationCount =
-    hiddenSymbols.size + (showTerminals ? 0 : 1) + (showConnections ? 0 : 1)
+    hiddenSymbols.size + (showTerminals ? 0 : 1) + (showConnections ? 0 : 1) + (showLabels ? 0 : 1)
 
   const draftRect =
     drag.kind === 'draw'
@@ -1112,6 +1145,7 @@ export default function EditorPage() {
       <EditorHeader
         project={project}
         projectId={projectId}
+        projects={projectRows}
         navigation={navigation}
         symbolCount={symbols.length}
         connectionCount={connections.length}
@@ -1161,7 +1195,7 @@ export default function EditorPage() {
           ) : (
             <CircleDot size={14} className="flex-none text-amber-300" />
           )}
-          <span className="min-w-0 flex-1 truncate">
+          <span className="min-w-0 flex-1 break-words">
             {visibleError
               ? visibleError
               : pending
@@ -1219,14 +1253,17 @@ export default function EditorPage() {
             <LayerPanel
               connectionCount={connections.length}
               terminalCount={terminalCount}
+              labelCount={symbols.length}
               inferenceRefs={inferenceRefs}
               hiddenInferenceCount={hiddenInferenceCount}
               classLayerRows={classLayerRows}
               showConnections={showConnections}
               showTerminals={showTerminals}
+              showLabels={showLabels}
               allLayersVisible={allLayersVisible}
               onToggleConnections={() => setShowConnections((value) => !value)}
               onToggleTerminals={() => setShowTerminals((value) => !value)}
+              onToggleLabels={() => setShowLabels((value) => !value)}
               onSetSymbolGroupHidden={setSymbolGroupHidden}
               onReset={resetLayers}
             />
@@ -1249,6 +1286,7 @@ export default function EditorPage() {
               zoom={zoom}
               showConnections={showConnections}
               showTerminals={showTerminals}
+              showLabels={showLabels}
               connections={connections}
               nodePos={nodePos}
               selectedConn={selectedConn}
@@ -1276,7 +1314,9 @@ export default function EditorPage() {
             labelOf={labelOf}
             hiddenSymbols={hiddenSymbols}
             selectedRef={selectedRef}
-            onSelectSymbol={setSelectedRef}
+            onSelectSymbol={revealSymbol}
+            symbolSort={symbolSort}
+            onSymbolSortChange={setSymbolSort}
             onSetSymbolHidden={setSymbolHidden}
             onDeleteSymbol={deleteSymbol}
             pushHistory={pushHistory}
@@ -1286,6 +1326,7 @@ export default function EditorPage() {
             onSelectConnection={setSelectedConn}
             project={project}
             metaSaveStatus={metaSaveStatus}
+            annotationSaveStatus={saveStatus}
             onQueueMetaSave={queueMetaSave}
           />
         )}

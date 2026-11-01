@@ -11,6 +11,7 @@ import {
   Scale,
   Sparkles,
   Trash2,
+  TriangleAlert,
   Upload,
   XCircle,
   Zap,
@@ -19,6 +20,7 @@ import {
 import { api } from '../api/client'
 import { LoadingOverlay } from '../components/LoadingOverlay'
 import type {
+  EvalScope,
   InferenceImportResult,
   InferenceRunResponse,
   MlModel,
@@ -75,6 +77,25 @@ function fmtTime(iso: string | null) {
   return iso ? iso.replace('T', ' ').slice(5, 19) : '—'
 }
 
+function EvalScopeNote({ scope }: { scope: EvalScope }) {
+  if (scope.mode === 'holdout') {
+    return (
+      <span className="inline-flex items-start gap-1.5 rounded-lg bg-emerald-50 px-2.5 py-1.5 text-[11px] font-semibold leading-5 text-emerald-800">
+        <CheckCircle2 size={13} className="mt-1 flex-none" aria-hidden="true" />
+        評価: 学習に使っていない図面 {scope.val_project_ids.length} 枚
+      </span>
+    )
+  }
+  return (
+    <span className="inline-flex items-start gap-1.5 rounded-lg bg-amber-50 px-2.5 py-1.5 text-[11px] font-semibold leading-5 text-amber-800">
+      <TriangleAlert size={13} className="mt-1 flex-none" aria-hidden="true" />
+      {scope.train_project_ids.length < 5
+        ? '図面が5枚未満のため、学習に使った図面で評価しています（実力より高く出ます）'
+        : '学習に使った図面で評価しています（実力より高く出ます）'}
+    </span>
+  )
+}
+
 export default function MlOpsPage() {
   const [status, setStatus] = useState<MlStatus | null>(null)
   const [models, setModels] = useState<MlModel[]>([])
@@ -97,6 +118,7 @@ export default function MlOpsPage() {
   const [epochs, setEpochs] = useState(100)
   const [imgsz, setImgsz] = useState(1280)
   const [onlyDone, setOnlyDone] = useState(true)
+  const [holdout, setHoldout] = useState(true)
   const [trainIds, setTrainIds] = useState<Set<number>>(new Set())
   const [logOpen, setLogOpen] = useState<number | null>(null)
 
@@ -239,6 +261,7 @@ export default function MlOpsPage() {
         only_done: onlyDone,
         epochs,
         imgsz,
+        holdout,
       })
       setNotice({
         kind: 'success',
@@ -421,10 +444,12 @@ export default function MlOpsPage() {
               <b>
                 {pendingRun.result_model?.name} v{pendingRun.result_model?.version}
               </b>{' '}
-              を蓄積済みデータ（{pendingRun.image_count} 枚）で評価し、学習の起点となったモデル
-              （{pendingRun.baseline_label ?? '比較対象なし'}）と比較しました。
+              {pendingRun.eval_scope ? 'を、' : `を蓄積済みデータ（${pendingRun.image_count} 枚）で評価し、`}
+              学習の起点となったモデル（{pendingRun.baseline_label ?? '比較対象なし'}）と
+              {pendingRun.eval_scope ? '同じ図面で評価して' : ''}比較しました。
               採用すると次回以降の推論と学習のベースにこのモデルが使われます。
             </p>
+            {pendingRun.eval_scope && <EvalScopeNote scope={pendingRun.eval_scope} />}
             {pendingRun.metrics || pendingRun.baseline_metrics ? (
               <div className="overflow-x-auto rounded-2xl border border-slate-200">
                 <table className="w-full min-w-[520px] text-xs">
@@ -748,6 +773,15 @@ export default function MlOpsPage() {
                 <input type="checkbox" className="h-4 w-4" checked={onlyDone} onChange={(e) => setOnlyDone(e.target.checked)} />
                 完了（done）の図面だけを学習に使う
               </label>
+              <div>
+                <label className="flex items-center gap-2 text-[11px] text-slate-600">
+                  <input type="checkbox" className="h-4 w-4" checked={holdout} onChange={(e) => setHoldout(e.target.checked)} />
+                  未学習の図面で評価する（推奨）
+                </label>
+                <p className="mt-1 pl-6 text-[10px] leading-relaxed text-slate-500">
+                  図面の約2割を学習に使わずに取り分け、新旧モデルをその図面で比べます。図面が5枚未満のときは学習に使った図面で評価します。
+                </p>
+              </div>
               <label className="block">
                 <span className="mb-1 flex flex-wrap items-center gap-2 text-[11px] text-slate-500">
                   <span>学習対象を個別指定（未選択なら上の条件）</span>
@@ -787,39 +821,46 @@ export default function MlOpsPage() {
                 <div className="thin-scroll max-h-72 overflow-auto rounded-2xl border border-slate-200">
                   {runs.map((r) => (
                     <div key={r.id}>
-                      <div className="flex items-center gap-2 border-b border-slate-100 px-3 py-2 text-xs">
-                        <span
-                          className={`inline-flex h-2.5 w-2.5 flex-none rounded-full ${
-                            r.status === 'success' ? 'bg-emerald-500' : r.status === 'failed' ? 'bg-rose-500' : 'bg-amber-400'
-                          }`}
-                        />
-                        <span className="font-mono text-slate-400">#{r.id}</span>
-                        <span className="font-bold text-slate-700">
-                          {r.status === 'running' ? '実行中' : r.status === 'success' ? '完了' : '失敗'}
-                        </span>
-                        {r.decision === 'pending' && (
-                          <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-700">採用待ち</span>
-                        )}
-                        {r.decision === 'adopted' && (
-                          <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-700">採用</span>
-                        )}
-                        {r.decision === 'rejected' && (
-                          <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-500">見送り</span>
-                        )}
-                        <span className="font-mono text-[10px] text-slate-400">
-                          {r.image_count}枚 / {r.epochs}ep / {r.imgsz}px
-                        </span>
-                        {r.metrics?.['metrics/mAP50-95(B)'] && (
-                          <span className="rounded-full bg-emerald-50 px-2 py-0.5 font-mono text-[10px] text-emerald-700">
-                            mAP {r.metrics['metrics/mAP50-95(B)']}
+                      <div className="border-b border-slate-100 px-3 py-2 text-xs">
+                        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                          <span
+                            className={`inline-flex h-2.5 w-2.5 flex-none rounded-full ${
+                              r.status === 'success' ? 'bg-emerald-500' : r.status === 'failed' ? 'bg-rose-500' : 'bg-amber-400'
+                            }`}
+                          />
+                          <span className="font-mono text-slate-400">#{r.id}</span>
+                          <span className="font-bold text-slate-700">
+                            {r.status === 'running' ? '実行中' : r.status === 'success' ? '完了' : '失敗'}
                           </span>
-                        )}
-                        <span className="flex-1" />
-                        <span className="font-mono text-[10px] text-slate-400">{fmtTime(r.started_at)}</span>
-                        {r.log_tail && (
-                          <button type="button" className="btn btn-sm" onClick={() => setLogOpen(logOpen === r.id ? null : r.id)}>
-                            ログ
-                          </button>
+                          {r.decision === 'pending' && (
+                            <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-700">採用待ち</span>
+                          )}
+                          {r.decision === 'adopted' && (
+                            <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-700">採用</span>
+                          )}
+                          {r.decision === 'rejected' && (
+                            <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-500">見送り</span>
+                          )}
+                          <span className="font-mono text-[10px] text-slate-400">
+                            {r.image_count}枚 / {r.epochs}ep / {r.imgsz}px
+                          </span>
+                          {r.metrics?.['metrics/mAP50-95(B)'] && (
+                            <span className="rounded-full bg-emerald-50 px-2 py-0.5 font-mono text-[10px] text-emerald-700">
+                              mAP {r.metrics['metrics/mAP50-95(B)']}
+                            </span>
+                          )}
+                          <span className="flex-1" />
+                          <span className="font-mono text-[10px] text-slate-400">{fmtTime(r.started_at)}</span>
+                          {r.log_tail && (
+                            <button type="button" className="btn btn-sm" onClick={() => setLogOpen(logOpen === r.id ? null : r.id)}>
+                              ログ
+                            </button>
+                          )}
+                        </div>
+                        {r.eval_scope && (
+                          <div className="mt-1.5">
+                            <EvalScopeNote scope={r.eval_scope} />
+                          </div>
                         )}
                       </div>
                       {logOpen === r.id && r.log_tail && (

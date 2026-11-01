@@ -82,6 +82,9 @@ export type ProjectRow = {
   connection_count: number
   terminal_count: number
   prediction_count: number
+  /** AI 解析（構造解析）で検出した配線の本数。未解析なら null */
+  analysis_wire_count: number | null
+  analysis_connection_count: number | null
   updated_at: string | null
 }
 
@@ -135,6 +138,9 @@ export type ProjectPredictions = {
   model_id: number | null
   count: number
   detections: Detection[]
+  /** シンボル対象外として除外した大きな枠（作図領域・DI範囲・雲マーク・LOC など） */
+  regions?: Detection[]
+  region_count?: number
 }
 
 export type PredictionSummary = {
@@ -147,6 +153,7 @@ export type InferenceRunResult = {
   project_id: number
   name: string
   detections: number
+  region_count?: number
   skipped_images?: number
   structure_available?: boolean
   wire_count?: number
@@ -188,6 +195,31 @@ export type InferenceImportResult = {
   count: number
 }
 
+export type ReviewSummary = {
+  project_id: number
+  status: 'draft' | 'review' | 'done'
+  in_next_training: boolean
+  ai_detection_count: number
+  region_excluded_count: number
+  imported: boolean
+  kept: number
+  relabeled: number
+  deleted: number
+  manual_added: number
+}
+
+export type SheetNumberCandidate = {
+  text: string
+  score: number
+  region: 'title_block' | 'margin'
+}
+
+export type EvalScope = {
+  mode: 'holdout' | 'train'
+  train_project_ids: number[]
+  val_project_ids: number[]
+}
+
 export type TrainingRun = {
   id: number
   status: 'running' | 'success' | 'failed'
@@ -204,6 +236,7 @@ export type TrainingRun = {
   baseline_label: string | null
   /** 採用判定: pending=採用待ち / adopted=採用 / rejected=見送り */
   decision: 'pending' | 'adopted' | 'rejected' | null
+  eval_scope: EvalScope | null
   log_tail: string | null
   started_at: string | null
   finished_at: string | null

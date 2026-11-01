@@ -8,6 +8,7 @@ export function EditorCanvasSvg({
   zoom,
   showConnections,
   showTerminals,
+  showLabels,
   connections,
   nodePos,
   selectedConn,
@@ -22,6 +23,7 @@ export function EditorCanvasSvg({
   zoom: number
   showConnections: boolean
   showTerminals: boolean
+  showLabels: boolean
   connections: Connection[]
   nodePos: (symbolRef: string, terminalRef: string | null) => { x: number; y: number } | null
   selectedConn: number | null
@@ -81,21 +83,23 @@ export function EditorCanvasSvg({
               strokeWidth={(active ? 2.5 : 1.5) / zoom}
               strokeDasharray={s.origin === 'inference' ? `${6 / zoom} ${3 / zoom}` : undefined}
             />
-            <text
-              x={x}
-              y={y - 3 / zoom}
-              fill={color}
-              fontSize={11 / zoom}
-              fontWeight="600"
-              style={{ paintOrder: 'stroke' }}
-              stroke="#fff"
-              strokeWidth={2.5 / zoom}
-            >
-              {s.origin === 'inference' ? 'AI ' : ''}
-              {s.ref}
-              {s.label ? ` ${s.label}` : ''}
-              {s.confidence != null ? ` ${Math.round(s.confidence * 100)}%` : ''}
-            </text>
+            {(showLabels || active) && (
+              <text
+                x={x}
+                y={y - 3 / zoom}
+                fill={color}
+                fontSize={11 / zoom}
+                fontWeight="600"
+                style={{ paintOrder: 'stroke' }}
+                stroke="#fff"
+                strokeWidth={2.5 / zoom}
+              >
+                {s.origin === 'inference' ? 'AI ' : ''}
+                {s.ref}
+                {s.label ? ` ${s.label}` : ''}
+                {s.confidence != null ? ` ${Math.round(s.confidence * 100)}%` : ''}
+              </text>
+            )}
             {active &&
               ([
                 [x, y],

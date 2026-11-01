@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { ArrowLeft, Cable, ChevronLeft, ChevronRight, Download, Pencil, Sparkles, Square } from 'lucide-react'
+import { ArrowLeft, Cable, ChevronLeft, ChevronRight, Download, Pencil, Sparkles, Square, SquareDashed } from 'lucide-react'
 
 import { api } from '../api/client'
 import { LoadingOverlay } from '../components/LoadingOverlay'
+import { PageJump } from '../components/PageJump'
 import PredictionDrawing from '../components/PredictionDrawing'
 import type { ProjectDetail, ProjectPredictions, ProjectRow, StructureResult } from '../types'
 import { getProjectNavigation } from '../utils/workspace'
@@ -23,6 +24,7 @@ export default function AnalysisPage() {
   const [downloading, setDownloading] = useState(false)
   const [showSymbols, setShowSymbols] = useState(true)
   const [showWires, setShowWires] = useState(true)
+  const [showRegions, setShowRegions] = useState(false)
   const [wireOpacity, setWireOpacity] = useState(0.45)
   const [notice, setNotice] = useState<string | null>(null)
   const generation = useRef(0)
@@ -88,6 +90,7 @@ export default function AnalysisPage() {
   )
   const { project, predictions, structure, projects } = current
   const navigation = getProjectNavigation(projects, projectId)
+  const regionCount = predictions.region_count ?? 0
 
   return (
     <div className="flex h-dvh min-h-[480px] flex-col bg-white text-slate-800">
@@ -101,7 +104,7 @@ export default function AnalysisPage() {
           </div>
           <nav className="flex items-center gap-1" aria-label="図面の移動">
             {navigation.previousId ? <Link className="icon-button" to={`/projects/${navigation.previousId}/analysis`} title="前の図面" aria-label="前の図面"><ChevronLeft size={18} /></Link> : <span className="inline-block w-9" />}
-            <span className="min-w-12 text-center font-mono text-xs">{navigation.position}/{navigation.total}</span>
+            <PageJump projects={projects} currentId={projectId} pathFor={(id) => `/projects/${id}/analysis`} tone="light" />
             {navigation.nextId ? <Link className="icon-button" to={`/projects/${navigation.nextId}/analysis`} title="次の図面" aria-label="次の図面"><ChevronRight size={18} /></Link> : <span className="inline-block w-9" />}
           </nav>
           <Link to={`/projects/${projectId}`} className="icon-button" title="アノテーション編集" aria-label="アノテーション編集"><Pencil size={17} /></Link>
@@ -111,25 +114,35 @@ export default function AnalysisPage() {
         <div className="flex flex-wrap items-center gap-x-5 gap-y-3 border-b border-slate-200 bg-slate-50 px-4 py-3 text-xs">
           <label className="flex items-center gap-2 font-semibold">
             <input type="checkbox" checked={showSymbols} onChange={(e) => setShowSymbols(e.target.checked)} className="h-4 w-4 accent-cyan-600" />
-            <Square size={14} className="text-cyan-600" />シンボル
+            <Square size={14} className="text-cyan-600" />AI検出シンボル
             <span className="font-mono font-normal text-slate-500">{predictions.count}</span>
           </label>
           <label className="flex items-center gap-2 font-semibold">
             <input type="checkbox" checked={showWires} onChange={(e) => setShowWires(e.target.checked)} className="h-4 w-4 accent-rose-500" disabled={!structure} />
-            <Cable size={14} className="text-rose-500" />配線
+            <Cable size={14} className="text-rose-500" />AI検出配線
             <span className="font-mono font-normal text-slate-500">{structure?.wires.length ?? '-'}</span>
           </label>
+          {regionCount > 0 && (
+            <label className="flex items-center gap-2 font-semibold" title="作図領域・DI範囲・雲マーク・LOC などの大きな枠。シンボルの件数には含めていません">
+              <input type="checkbox" checked={showRegions} onChange={(e) => setShowRegions(e.target.checked)} className="h-4 w-4 accent-slate-500" />
+              <SquareDashed size={14} className="text-slate-500" />領域枠（シンボル対象外）
+              <span className="font-mono font-normal text-slate-500">{regionCount}</span>
+            </label>
+          )}
           <label className="flex items-center gap-2 text-slate-600">
             配線の濃さ
             <input aria-label="配線の濃さ" type="range" min={10} max={90} step={5} value={Math.round(wireOpacity * 100)} onChange={(e) => setWireOpacity(Number(e.target.value) / 100)} disabled={!showWires || !structure} className="w-24 accent-rose-500 sm:w-32" />
             <span className="w-8 font-mono tabular-nums">{Math.round(wireOpacity * 100)}%</span>
           </label>
-          <span className="ml-auto text-slate-500">{structure ? `接続 ${structure.from_to.connection_count} 件` : predictions.count ? 'シンボルのみ解析済み' : '未解析'}</span>
+          <span className="ml-auto text-slate-500" title="エディタで人が確認して保存した件数（AI の結果とは別に数えます）">
+            保存済みアノテーション: シンボル {project.symbols.length}・配線 {project.connections.length}
+          </span>
+          <span className="text-slate-500">{structure ? `接続 ${structure.from_to.connection_count} 件` : predictions.count ? 'シンボルのみ解析済み' : '未解析'}</span>
         </div>
         {error && <p role="alert" className="border-b border-rose-200 bg-rose-50 px-4 py-2 text-sm text-rose-800">{error}</p>}
         {notice && <p role="status" className="border-b border-emerald-200 bg-emerald-50 px-4 py-2 text-xs text-emerald-800">{notice}</p>}
         {structure?.warnings.map((warning) => <p key={warning} role="status" className="border-b border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-900">{warning}</p>)}
-        <PredictionDrawing key={project.id} imageUrl={api.imageUrl(projectId)} name={project.name} width={project.image_width} height={project.image_height} detections={predictions.detections} structure={structure} showSymbols={showSymbols} showWires={showWires} wireOpacity={wireOpacity} />
+        <PredictionDrawing key={project.id} imageUrl={api.imageUrl(projectId)} name={project.name} width={project.image_width} height={project.image_height} detections={predictions.detections} regions={predictions.regions ?? []} structure={structure} showSymbols={showSymbols} showRegions={showRegions} showWires={showWires} wireOpacity={wireOpacity} />
       </div>
     </div>
   )

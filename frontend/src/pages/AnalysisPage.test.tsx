@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMemoryRouter, RouterProvider } from 'react-router-dom'
 
@@ -56,13 +56,14 @@ describe('AnalysisPage', () => {
     expect(view.getByTestId('wire-layer').querySelector('polyline')?.getAttribute('points')).toBe('100,200 600,200 600,500')
     expect(view.queryByText('MANUAL-DO-NOT-USE')).toBeNull()
     expect(view.queryByText('97%')).toBeNull()
-    fireEvent.click(view.getByRole('checkbox', { name: /^シンボル/ }))
+    expect(view.queryByRole('checkbox', { name: /^領域枠/ })).toBeNull()
+    fireEvent.click(view.getByRole('checkbox', { name: /^AI検出シンボル/ }))
     expect(view.queryByTestId('symbol-layer')).toBeNull()
     expect(view.getByTestId('wire-layer')).toBeTruthy()
-    fireEvent.click(view.getByRole('checkbox', { name: /^配線/ }))
+    fireEvent.click(view.getByRole('checkbox', { name: /^AI検出配線/ }))
     expect(view.queryByTestId('wire-layer')).toBeNull()
     expect(view.getByRole('img', { name: '図面1' })).toBeTruthy()
-    fireEvent.click(view.getByRole('checkbox', { name: /^シンボル/ }))
+    fireEvent.click(view.getByRole('checkbox', { name: /^AI検出シンボル/ }))
     expect(view.getByTestId('symbol-layer')).toBeTruthy()
     expect(view.queryByTestId('wire-layer')).toBeNull()
   })
@@ -81,7 +82,7 @@ describe('AnalysisPage', () => {
     api.getStructure.mockResolvedValue({ project_id: 1, result: null })
     const view = openPage()
     await view.findByText('シンボルのみ解析済み')
-    expect((view.getByRole('checkbox', { name: /^配線/ }) as HTMLInputElement).disabled).toBe(true)
+    expect((view.getByRole('checkbox', { name: /^AI検出配線/ }) as HTMLInputElement).disabled).toBe(true)
     expect((view.getByRole('button', { name: '構造JSON' }) as HTMLButtonElement).disabled).toBe(true)
     fireEvent.click(view.getByRole('button', { name: '解析を実行' }))
     await waitFor(() => expect(api.runAnalysis).toHaveBeenCalledWith([1]))
@@ -95,5 +96,45 @@ describe('AnalysisPage', () => {
     await view.findByRole('alert')
     expect(view.getByTestId('wire-layer')).toBeTruthy()
     expect(view.getByTestId('symbol-layer')).toBeTruthy()
+  })
+
+  it('jumps to the typed drawing number and resets an out-of-range number', async () => {
+    const view = openPage()
+    const jump = (await view.findByRole('textbox', { name: '図面番号を入力して移動' })) as HTMLInputElement
+    expect(jump.value).toBe('1')
+    expect(view.getByText('/ 2')).toBeTruthy()
+
+    act(() => jump.focus())
+    fireEvent.change(jump, { target: { value: '9' } })
+    fireEvent.keyDown(jump, { key: 'Enter' })
+    expect(jump.value).toBe('1')
+    expect(view.router.state.location.pathname).toBe('/projects/1/analysis')
+
+    act(() => jump.focus())
+    fireEvent.change(jump, { target: { value: '２' } })
+    fireEvent.keyDown(jump, { key: 'Enter' })
+    await waitFor(() => expect(view.router.state.location.pathname).toBe('/projects/2/analysis'))
+    expect(await view.findByText('図面2')).toBeTruthy()
+  })
+
+  it('labels AI counts apart from saved annotations and draws region frames only on request', async () => {
+    api.getPredictions.mockResolvedValue({
+      count: 1, region_count: 1,
+      detections: [{ class_key: 'connector', class_label: 'コネクタ', cx: 0.1, cy: 0.25, w: 0.04, h: 0.06, confidence: 0.97 }],
+      regions: [{ class_key: 'connector', class_label: 'コネクタ', cx: 0.5, cy: 0.5, w: 0.5, h: 0.5, confidence: 0.6 }],
+    })
+    const view = openPage()
+    await view.findByRole('heading', { name: '解析結果' })
+    expect(view.getByText('保存済みアノテーション: シンボル 1・配線 1')).toBeTruthy()
+
+    const regionToggle = view.getByRole('checkbox', { name: /^領域枠（シンボル対象外）/ }) as HTMLInputElement
+    expect(regionToggle.checked).toBe(false)
+    expect(view.queryByTestId('region-layer')).toBeNull()
+    expect(view.getByTestId('symbol-layer').querySelectorAll('rect')).toHaveLength(1)
+
+    fireEvent.click(regionToggle)
+    const region = view.getByTestId('region-layer').querySelector('rect')
+    expect(region?.getAttribute('x')).toBe('250')
+    expect(region?.getAttribute('width')).toBe('500')
   })
 })
