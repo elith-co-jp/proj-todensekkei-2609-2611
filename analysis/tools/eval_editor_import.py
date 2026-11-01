@@ -10,6 +10,9 @@ annotation people entered by hand in the same editor.
   duplicate imported connection counts against precision. Gold wire-bend markers (other/分岐点) are
   contracted: annotators boxed them only to route wires. Imported connections touching a gold symbol
   that gold leaves unwired (every relay coil) are not judged and are reported separately.
+  Misses and false hits are split by cause (fn_reasons / fp_reasons).
+- net_pairs: the same judged connections as electrical nets. Pairs of gold terminals that share a net in
+  the import against pairs that share a gold net, so a different route through the same net still counts.
 - connector names: gold connectors whose label carries pin numbers (eval_wiring_cv.gold_terminal_numbers)
   against the imported terminal name of the matched symbol, read as DEVICE-NUMBER tokens.
 - rerun: importing again into the imported result must add nothing.
@@ -22,9 +25,11 @@ Example:
 from __future__ import annotations
 
 import argparse
+import itertools
 import json
 import sys
 from collections import Counter
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
@@ -74,6 +79,28 @@ def gold_edges(project: dict[str, Any]) -> set[frozenset[str]]:
             neighbours[n].discard(bend)
             neighbours[n].update(around - {n})
     return {frozenset((a, b)) for a, ns in neighbours.items() for b in ns}
+
+
+def gold_nets(edges: set[frozenset[str]]) -> dict[str, str]:
+    parent: dict[str, str] = {}
+
+    def find(x: str) -> str:
+        while parent.setdefault(x, x) != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    for edge in edges:
+        a, b = tuple(edge)
+        parent[find(a)] = find(b)
+    return {key: find(key) for key in parent}
+
+
+def net_pairs(edges: Iterable[frozenset[str]]) -> set[frozenset[str]]:
+    groups: dict[str, set[str]] = {}
+    for key, root in gold_nets(set(edges)).items():
+        groups.setdefault(root, set()).add(key)
+    return {frozenset(p) for keys in groups.values() for p in itertools.combinations(sorted(keys), 2)}
 
 
 def imported_items(symbols: list[dict], width: int, height: int) -> list[dict]:
@@ -126,22 +153,50 @@ def score_drawing(drawing: dict[str, Any], structure: dict[str, Any], class_keys
 
     edges = gold_edges(project)
     wired = {parse_member(k)[0] for e in edges for k in e}
-    counts: Counter = Counter()
+    nets = gold_nets(edges)
+    ai_neighbours: dict[str, set[str]] = {}
+    fp: Counter = Counter()
+    not_judged = 0
     hit: set[frozenset[str]] = set()
+    joined: list[frozenset[str]] = []
     for c in connections:
+        ai_neighbours.setdefault(c["from_symbol_ref"], set()).add(c["to_symbol_ref"])
+        ai_neighbours.setdefault(c["to_symbol_ref"], set()).add(c["from_symbol_ref"])
         a, b = gold_key(c["from_symbol_ref"], c["from_terminal_ref"]), gold_key(c["to_symbol_ref"], c["to_terminal_ref"])
         if a is not None and b is not None and not {parse_member(a)[0], parse_member(b)[0]} <= wired:
-            counts["not_judged"] += 1
+            not_judged += 1
             continue
-        counts["judged"] += 1
         pair = frozenset((a, b)) if a is not None and b is not None and a != b else None
+        if pair is not None:
+            joined.append(pair)
         if pair in edges and pair not in hit:
             hit.add(pair)
         elif a is None or b is None:
-            counts["unmatched_symbol"] += 1
+            fp["unmatched_symbol"] += 1
+        elif a == b:
+            fp["same_gold_terminal"] += 1
+        elif pair in edges:
+            fp["duplicate"] += 1
+        elif nets.get(a) is not None and nets.get(a) == nets.get(b):
+            fp["same_net_other_route"] += 1
+        else:
+            fp["other_net"] += 1
+    from_gold = {g: p for p, g in to_gold.items()}
+    unwired = {p for p, g in to_gold.items() if g not in wired}
+    fn: Counter = Counter()
+    for edge in edges - hit:
+        refs = [parse_member(k)[0] for k in edge]
+        if any(detection_kind(gold_symbols[r]["w"], gold_symbols[r]["h"]) == "region" for r in refs):
+            fn["region_symbol"] += 1
+        elif any(r not in from_gold for r in refs):
+            fn["missed_symbol"] += 1
+        elif ai_neighbours.get(from_gold[refs[0]], set()) & ai_neighbours.get(from_gold[refs[-1]], set()) & unwired:
+            fn["through_unwired_symbol"] += 1
+        else:
+            fn["route"] += 1
+    gold_net_pairs, import_net_pairs = net_pairs(edges), net_pairs(joined)
     names: Counter = Counter()
     by_ref = {s["ref"]: s for s in symbols}
-    from_gold = {g: p for p, g in to_gold.items()}
     for g in g_sym:
         if g["class_name"] != "connector":
             continue
@@ -160,13 +215,17 @@ def score_drawing(drawing: dict[str, Any], structure: dict[str, Any], class_keys
             names["pairs_agree"] += sorted(pairs) == sorted(gold_pairs_)
     return {
         "sheet": drawing["sheet"],
-        "connections": {"tp": len(hit), "fp": counts["judged"] - len(hit), "fn": len(edges - hit)},
-        "not_judged": counts["not_judged"],
-        "unmatched_symbol": counts["unmatched_symbol"],
+        "connections": {"tp": len(hit), "fp": sum(fp.values()), "fn": len(edges - hit)},
+        "net_pairs": {"tp": len(gold_net_pairs & import_net_pairs), "fp": len(import_net_pairs - gold_net_pairs),
+                      "fn": len(gold_net_pairs - import_net_pairs)},
+        "not_judged": not_judged,
+        "fp_reasons": dict(fp),
+        "fn_reasons": dict(fn),
         "imported": {"symbols": len(symbols), "terminals": len(position), "connections": len(connections)},
         "skipped": candidates.skipped,
         "detection": dict(detection["aware"]),
         "class_agree": detection["type_correct"], "class_scored": detection["type_total"],
+        "label_agree": detection["label_correct"], "label_scored": detection["label_total"],
         "names": dict(names),
         "rerun_added": len(again.symbols) + len(again.terminals) + len(again.connections),
         "onto_gold": {"symbols": len(onto.symbols), "terminals": len(onto.terminals), "connections": len(onto.connections)},
@@ -175,19 +234,26 @@ def score_drawing(drawing: dict[str, Any], structure: dict[str, Any], class_keys
 
 def aggregate(rows: list[dict[str, Any]]) -> dict[str, Any]:
     tot: Counter = Counter()
+    nets: Counter = Counter()
     det: Counter = Counter()
     names: Counter = Counter()
     imported: Counter = Counter()
     onto: Counter = Counter()
     skipped: Counter = Counter()
+    fp: Counter = Counter()
+    fn: Counter = Counter()
     for r in rows:
         tot.update(r["connections"])
+        nets.update(r["net_pairs"])
         det.update(r["detection"])
         names.update(r["names"])
         imported.update(r["imported"])
         onto.update(r["onto_gold"])
         skipped.update(r["skipped"])
+        fp.update(r["fp_reasons"])
+        fn.update(r["fn_reasons"])
     class_scored = sum(r["class_scored"] for r in rows)
+    label_scored = sum(r["label_scored"] for r in rows)
 
     def rate(n: int, d: int) -> float | None:
         return round(n / d, 4) if d else None
@@ -196,12 +262,15 @@ def aggregate(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "drawings": len(rows),
         "connections": prf(tot["tp"], tot["fp"], tot["fn"]),
         "gold_connections": tot["tp"] + tot["fn"],
+        "net_pairs": prf(nets["tp"], nets["fp"], nets["fn"]),
         "not_judged": sum(r["not_judged"] for r in rows),
-        "unmatched_symbol": sum(r["unmatched_symbol"] for r in rows),
+        "fp_reasons": dict(fp.most_common()),
+        "fn_reasons": dict(fn.most_common()),
         "imported": dict(imported),
         "skipped": dict(skipped),
         "symbol_detection": prf(det["tp"], det["fp"], det["fn"]),
         "class_agreement": {"scored": class_scored, "agree": rate(sum(r["class_agree"] for r in rows), class_scored)},
+        "label_agreement": {"scored": label_scored, "agree": rate(sum(r["label_agree"] for r in rows), label_scored)},
         "connector_names": {
             "gold": names["gold"], "scored": names["scored"],
             "numbers_agree": rate(names["numbers_agree"], names["scored"]),
@@ -242,12 +311,15 @@ def main() -> None:
     print(f"errors={len(errors)}")
     for part in ("tune", "report", "all"):
         a = summary[part]
-        c, n = a["connections"], a["connector_names"]
+        c, n, net = a["connections"], a["connector_names"], a["net_pairs"]
         print(f"  {part:6s} drawings={a['drawings']} connections f1={c['f1']} p={c['precision']} r={c['recall']}"
               f" tp={c['tp']} fp={c['fp']} fn={c['fn']} gold={a['gold_connections']} not_judged={a['not_judged']}"
+              f" | net_pairs f1={net['f1']} p={net['precision']} r={net['recall']} tp={net['tp']} fp={net['fp']} fn={net['fn']}"
               f" | names numbers={n['numbers_agree']} pairs={n['pairs_agree']} scored={n['scored']}/{n['gold']}"
               f" | symbols f1={a['symbol_detection']['f1']} class={a['class_agreement']['agree']}"
-              f" | imported={a['imported']} rerun_added={a['rerun_added']} onto_gold={a['onto_gold_added']}")
+              f" label={a['label_agreement']['agree']}"
+              f" | imported={a['imported']} rerun_added={a['rerun_added']} onto_gold={a['onto_gold_added']}"
+              f"\n         fp={a['fp_reasons']} fn={a['fn_reasons']}")
 
 
 if __name__ == "__main__":
