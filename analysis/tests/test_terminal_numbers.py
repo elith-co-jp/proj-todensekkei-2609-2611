@@ -9,7 +9,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 
-from terminal_numbers import contact_numbers
+from terminal_numbers import connector_numbers, contact_numbers
 
 
 def item(value, x0, y0, x1, y1):
@@ -46,3 +46,28 @@ def test_page_reading_fills_an_end_the_symbol_reading_missed():
     symbol = contact([item("9", 503, 250, 509, 259), *LABEL])
     page = [item("9", 503, 250, 509, 259), item("5", 505, 274, 510, 281), item("5", 700, 274, 705, 281)]
     assert contact_numbers(symbol, page) == {"P1": "9", "P2": "5"}
+
+
+def terminal(names_numbers):
+    """端子台の黒丸（中心 x=300）。器具名は左、番号は右に 1 行ずつ。"""
+    items = []
+    for row, (name, number) in enumerate(names_numbers):
+        y = 200 + row * 14
+        items += [item(name, 250, y, 290, y + 12), item(number, 310, y, 330, y + 12)]
+    return {"class_name": "connector", "bbox": {"x0": 240, "y0": 195, "x1": 340, "y1": 230}, "text_items": items,
+            "dot_role": {"dot": {"center": [300, 207]}}}
+
+
+def test_ring_arcs_read_as_digits_beside_pin_numbers_are_dropped():
+    # 黒丸を囲む弧が 0・1 に読まれ、番号の前後にくっつく（3 → 30、18 → 118、1 → 01）。
+    assert connector_numbers(terminal([("TB13", "3"), ("CN211", "30")])) == [
+        {"device": "TB13", "number": "3"}, {"device": "CN211", "number": "3"}]
+    assert connector_numbers(terminal([("CN11", "18"), ("TB3", "118")])) == [
+        {"device": "CN11", "number": "18"}, {"device": "TB3", "number": "18"}]
+    assert connector_numbers(terminal([("CN11", "1"), ("TB3", "01")])) == [
+        {"device": "CN11", "number": "1"}, {"device": "TB3", "number": "1"}]
+
+
+def test_different_pin_numbers_of_the_two_devices_are_kept():
+    assert connector_numbers(terminal([("TB13", "42"), ("CN212", "10")])) == [
+        {"device": "TB13", "number": "42"}, {"device": "CN212", "number": "10"}]

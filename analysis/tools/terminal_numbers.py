@@ -95,6 +95,29 @@ def connector_numbers(symbol: dict[str, Any]) -> list[dict[str, str]]:
     # A number with no device on its row is a wire number printed under the terminal label.
     if any(p["device"] for p in pairs):
         pairs = [p for p in pairs if p["device"]]
+    return _without_ring_arcs(pairs)
+
+
+def _glued(longer: str, shorter: str) -> bool:
+    return len(longer) == len(shorter) + 1 and (
+        (longer[1:] == shorter and longer[0] in "01") or (longer[:-1] == shorter and longer[-1] in "01")
+    )
+
+
+def _without_ring_arcs(pairs: list[dict[str, str]]) -> list[dict[str, str]]:
+    """Drop the terminal dot's ring arcs that OCR reads as digits next to a pin number.
+
+    Pin numbers carry no leading 0 (01 -> 1). The two devices of one terminal usually share the number,
+    so when one number is the other with a 0 or 1 glued to one end (3 / 30, 18 / 118), the shorter is right.
+    In the 30 gold drawings 2 of 416 two-number terminals break that (71 / 7).
+    """
+    pairs = [{**p, "number": p["number"].lstrip("0") or "0"} for p in pairs]
+    if len(pairs) == 2:
+        a, b = pairs[0]["number"], pairs[1]["number"]
+        if _glued(a, b):
+            pairs[0]["number"] = b
+        elif _glued(b, a):
+            pairs[1]["number"] = a
     return pairs
 
 
