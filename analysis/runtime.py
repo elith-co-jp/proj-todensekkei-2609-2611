@@ -48,6 +48,14 @@ def _pixel_box(detection: dict[str, Any], width: int, height: int) -> dict[str, 
     }
 
 
+def page_for_detection(image_path: Path) -> Image.Image | str:
+    """雲マーク（#41）の線を消した図面。雲マークが記号の検出を邪魔しないようにする。雲マークが無ければファイルのまま。"""
+    with Image.open(image_path) as opened:
+        image = opened.convert("RGB")
+    clouds = detect_clouds(make_binary_mask(image))
+    return erase_clouds(image, clouds, []) if clouds.regions else str(image_path)
+
+
 def analyze_detections(
     image_path: Path,
     detections: list[dict[str, Any]],

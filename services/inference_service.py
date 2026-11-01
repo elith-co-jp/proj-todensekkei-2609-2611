@@ -102,6 +102,8 @@ def run_inference(
 
     from ultralytics import YOLO  # 重量級のため遅延 import
 
+    from analysis.runtime import page_for_detection
+
     detector = YOLO(str(path))
     class_by_index = _class_by_yolo_index(db)
     class_by_key = {c.key: c for c in class_by_index.values()}
@@ -117,7 +119,7 @@ def run_inference(
             if not src.exists():
                 skipped_images += 1
                 continue
-            results = detector.predict(str(src), conf=conf, verbose=False)
+            results = detector.predict(page_for_detection(src), conf=conf, verbose=False)
             for result in results:
                 boxes = result.boxes
                 if boxes is None or boxes.xywhn is None:

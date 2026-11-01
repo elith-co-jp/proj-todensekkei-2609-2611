@@ -61,3 +61,17 @@ def test_page_without_cloud_reports_none(tmp_path, monkeypatch):
 
     assert not [r for r in result["regions"] if r["region_type"] == "cloud"]
 
+
+def test_detector_sees_the_page_without_the_cloud(tmp_path):
+    pytest.importorskip("cv2")
+    from analysis.runtime import page_for_detection
+
+    plain = _page(tmp_path, with_cloud=False)
+    assert page_for_detection(plain) == str(plain)
+    clouded = _page(tmp_path, with_cloud=True)
+    apex = (552, 392)
+    assert Image.open(clouded).convert("L").getpixel(apex) < 128
+    cleaned = page_for_detection(clouded).convert("L")
+    assert cleaned.getpixel(apex) == 255, "cloud arc erased"
+    assert all(cleaned.getpixel((400, y)) < 128 for y in range(380, 550)), "the wire crossing the cloud stays"
+

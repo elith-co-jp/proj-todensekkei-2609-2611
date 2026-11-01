@@ -32,6 +32,9 @@ PROTECT_MARGIN = 0.15
 class Clouds(NamedTuple):
     regions: list[dict[str, Any]]
     erase: np.ndarray
+    # Wire pixels inside the cloud stroke (repainted in the wire tone) and wire pixels just outside it (the tone).
+    restore: np.ndarray
+    wire_nearby: np.ndarray
 
 
 def _run_through(ink: np.ndarray, orientation: str) -> np.ndarray:
@@ -132,18 +135,25 @@ def detect_clouds(binary: np.ndarray) -> Clouds:
             "region_type": "cloud", "source": "image", "arc_count": dips,
         })
     if not regions:
-        return Clouds([], np.zeros(ink.shape, bool))
+        empty = np.zeros(ink.shape, bool)
+        return Clouds([], empty, empty, empty)
     radius = max(1, round(BAND_RADIUS * scale))
     band = cv2.dilate(stroke, np.ones((2 * radius + 1, 2 * radius + 1), np.uint8)) > 0
     keep = _wires_through(ink, lines["h"], band, "h", scale) | _wires_through(ink, lines["v"], band, "v", scale)
-    return Clouds(regions, band & ink & ~keep)
+    nearby = cv2.dilate(band.astype(np.uint8), np.ones((31, 31), np.uint8)) > 0
+    return Clouds(regions, band & ink & ~keep, band & ink & keep, (lines["h"] | lines["v"]) & nearby & ~band)
 
 
 def erase_clouds(image: Image.Image, clouds: Clouds, symbol_boxes: list[dict[str, float]]) -> Image.Image:
-    """The page with cloud strokes painted white, for wiring. Ink in the middle of symbol boxes stays."""
+    """The page with cloud strokes painted white. Ink in the middle of symbol boxes stays.
+
+    Where a wire crosses the stroke its pixels carry the cloud's ink, which can be much darker than a
+    scanned wire; they are repainted in the tone of the wire next to the cloud.
+    """
     if not clouds.regions:
         return image
     erase = clouds.erase.copy()
+    restore = clouds.restore.copy()
     scale = max(0.5, image.width / 1755)
     for box in symbol_boxes:
         w, h = box["x1"] - box["x0"], box["y1"] - box["y0"]
@@ -152,7 +162,10 @@ def erase_clouds(image: Image.Image, clouds: Clouds, symbol_boxes: list[dict[str
         x0, x1 = (max(0, round(v)) for v in (box["x0"] + PROTECT_MARGIN * w, box["x1"] - PROTECT_MARGIN * w))
         y0, y1 = (max(0, round(v)) for v in (box["y0"] + PROTECT_MARGIN * h, box["y1"] - PROTECT_MARGIN * h))
         erase[y0:y1, x0:x1] = False
+        restore[y0:y1, x0:x1] = False
     pixels = np.array(image)
+    if clouds.wire_nearby.any():
+        pixels[restore] = np.median(pixels[clouds.wire_nearby], axis=0).astype(pixels.dtype)
     pixels[erase] = 255
     return Image.fromarray(pixels)
 
