@@ -555,8 +555,15 @@ export default function EditorPage() {
     setAiApplying(true)
     try {
       const data = await api.getPredictions(projectId)
+      const regionNote = data.region_count
+        ? `／領域枠 ${data.region_count} 件はシンボル対象外として除外`
+        : ''
       if (data.count === 0) {
-        setNotice('この図面の推論結果がありません。「AI 改善サイクル」で推論を実行してください')
+        setNotice(
+          regionNote
+            ? `取り込める検出がありませんでした${regionNote}`
+            : 'この図面の推論結果がありません。「AI 改善サイクル」で推論を実行してください',
+        )
         return
       }
       const classKeys = new Set(classes.map((c) => c.key))
@@ -593,14 +600,15 @@ export default function EditorPage() {
         added += 1
       }
       if (added === 0) {
-        setNotice(skipped > 0 ? '推論結果はすべて取り込み済みです' : '取り込める検出がありませんでした')
+        setNotice((skipped > 0 ? '推論結果はすべて取り込み済みです' : '取り込める検出がありませんでした') + regionNote)
         return
       }
       pushHistory()
       setSymbols(next)
       setNotice(
         `AI 検出を ${added} 件取り込みました（破線枠）。内容を確認・修正して保存してください` +
-          (skipped > 0 ? `／${skipped} 件は既存と重複したためスキップ` : ''),
+          (skipped > 0 ? `／${skipped} 件は既存と重複したためスキップ` : '') +
+          regionNote,
       )
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
@@ -1182,7 +1190,7 @@ export default function EditorPage() {
           ) : (
             <CircleDot size={14} className="flex-none text-amber-300" />
           )}
-          <span className="min-w-0 flex-1 truncate">
+          <span className="min-w-0 flex-1 break-words">
             {visibleError
               ? visibleError
               : pending

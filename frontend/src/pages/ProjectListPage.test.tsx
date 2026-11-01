@@ -149,4 +149,34 @@ describe('ProjectListPage', () => {
     expect(background).toBeTruthy()
     expect(background?.getAttribute('aria-hidden')).toBe('true')
   })
+
+  it('AI の件数を保存済みの件数と分け、ラベル付きで表示する', async () => {
+    apiMocks.listProjects.mockResolvedValue([
+      {
+        ...projectRow(1, 'AI解析済みの図面'),
+        symbol_count: 3,
+        connection_count: 2,
+        prediction_count: 29,
+        analysis_wire_count: 41,
+        analysis_connection_count: 18,
+      },
+      projectRow(2, '未解析の図面'),
+    ])
+
+    const { findByText, getAllByText, getByRole, getByText, queryByText } = render(
+      <MemoryRouter>
+        <ProjectListPage />
+      </MemoryRouter>,
+    )
+    expect(await findByText('AI解析済みの図面')).toBeTruthy()
+    expect(getByText('AI検出 29').getAttribute('title')).toContain('取り込むまで保存件数に含まれない')
+    expect(getByText('AI配線 41').getAttribute('title')).toContain('接続 18 件')
+    expect(getAllByText(/^AI検出 /)).toHaveLength(1)
+    expect(queryByText('+29')).toBeNull()
+    expect(getByText(/人が確認して保存したアノテーション（学習に使う）/)).toBeTruthy()
+
+    fireEvent.click(getByRole('button', { name: '表で表示' }))
+    expect(getAllByText('AI検出 29')).toHaveLength(2)
+    expect(getAllByText('AI配線 41')).toHaveLength(2)
+  })
 })

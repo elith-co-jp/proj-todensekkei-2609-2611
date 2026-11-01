@@ -11,6 +11,7 @@ import EditorPage from './EditorPage'
 const apiMocks = vi.hoisted(() => ({
   exportProject: vi.fn(),
   getProject: vi.fn(),
+  getPredictions: vi.fn(),
   imageUrl: vi.fn((id: number) => `/api/projects/${id}/image`),
   listClasses: vi.fn(),
   listProjects: vi.fn(),
@@ -422,6 +423,31 @@ describe('EditorPage interactions', () => {
 
     await waitFor(() => expect(router.state.location.pathname).toBe('/projects/2'))
     await waitFor(() => expect(apiMocks.getProject).toHaveBeenLastCalledWith(2))
+  })
+
+  it('AI 推論の取り込み通知で、領域枠をシンボル対象外として除外した件数を伝える', async () => {
+    apiMocks.getPredictions.mockResolvedValue({
+      project_id: 1,
+      name: '匿名ページ1',
+      model_label: null,
+      model_id: null,
+      count: 1,
+      region_count: 2,
+      detections: [
+        { class_key: 'relay', class_label: 'リレー', yolo_index: 0, cx: 0.5, cy: 0.8, w: 0.05, h: 0.05, confidence: 0.9 },
+      ],
+      regions: [],
+    })
+    const { findByRole, findByText, getByRole } = renderEditor()
+    await findByRole('region', { name: '図面アノテーションキャンバス' })
+
+    fireEvent.click(getByRole('button', { name: 'AI 推論' }))
+
+    expect(
+      await findByText(
+        'AI 検出を 1 件取り込みました（破線枠）。内容を確認・修正して保存してください／領域枠 2 件はシンボル対象外として除外',
+      ),
+    ).toBeTruthy()
   })
 
   it('保存失敗後にエディタを再生成しても下書きを復元して再試行できる', async () => {
