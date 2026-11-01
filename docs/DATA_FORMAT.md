@@ -148,7 +148,7 @@ from-to を Union-Find で連結し、導通する端子集合（ネット）に
           "cx": 0.382353, "cy": 0.499653, "w": 0.058824, "h": 0.083187,
           "note": null,
           "terminals": [
-            { "ref": "SYM-0001-T1", "name": "13", "tx": 0.3824, "ty": 0.5411 }
+            { "ref": "SYM-0001-T1", "name": "13", "tx": 0.3824, "ty": 0.5411, "origin": "manual" }
           ]
         }
       ],
@@ -157,7 +157,7 @@ from-to を Union-Find で連結し、導通する端子集合（ネット）に
           "from_symbol_ref": "SYM-0001", "from_terminal_ref": "SYM-0001-T1",
           "to_symbol_ref": "SYM-0002", "to_terminal_ref": null,
           "wire_no": "610", "net_id": null,
-          "kind": "wire", "external_ref": null, "note": null
+          "kind": "wire", "external_ref": null, "note": null, "origin": "manual"
         }
       ]
     }
@@ -224,7 +224,8 @@ AI 改善サイクル画面の構造解析をまとめて書き出したファ�
   "summary": {
     "page_count": 2, "symbol_count": 92, "wire_count": 140, "from_to_connection_count": 480,
     "sheet_reference_count": 6, "resolved_sheet_reference_count": 2,
-    "cross_sheet_relay_count": 4, "linked_cross_sheet_relay_count": 3
+    "cross_sheet_relay_count": 4, "linked_cross_sheet_relay_count": 3,
+    "cross_sheet_relay_row_count": 2, "linked_cross_sheet_relay_row_count": 2
   },
   "pages": [
     { "schema_version": "todensekkei.sequence_extraction.v1", "sheet_no": "ER21216", "symbols": [], "texts": [] }
@@ -238,20 +239,25 @@ AI 改善サイクル画面の構造解析をまとめて書き出したファ�
 |------|------|
 | `sheet_no` | 図面情報で確定したシート番号（未入力なら null） |
 | `symbols[]` | 検出したシンボル。`label` は器具番号のラベル。`status` はリレー表・表題欄の中の検出なら `suppressed_text_zone`（配線に使わない） |
-| `symbols[].terminals[].name` | 端子番号。コネクタは `CN229-6 TB16-102` のように器具名と番号の組 |
+| `symbols[].terminals[].name` | 端子番号。コネクタは `CN229-6 TB16-102` のように器具名と番号の組。接点は両端の番号（9・5 など。読めなければ P1・P2）。リレー表から補った番号は `name_source: "relay_table"` |
 | `symbols[].terminal_numbers[]` | コネクタの器具名（`device`）と番号（`number`）の組 |
 | `symbols[].dot_role` | 黒丸の役割。`terminal`（左右に文字がある端子）、`junction`（3 方向以上に配線が分かれる分岐点）、`review`（判定できない）。同じ黒丸の重複検出は `suppressed: true` |
+| `symbols[].relay_row` | リレー表の行と行列の位置で結び付いた接点。`row`、`device`、`terminal`、`contact`（a / b）、`position`、`table_terminal_numbers`（a は [COM, NO]、b は [COM, NC]）、`terminal_check`（一致・不一致・未読）、`class_check`（一致・不一致・表に合わせて変更）、`status`（linked / 要確認）、`reasons`。別シートの行は書き出し時に付き `project_id` を持つ |
+| `symbols[].detected_class` / `class_source` | 種別を直したときだけ付く。元の検出の種別と、直した根拠（`relay_table` など） |
+| `symbols[].symbol_review` | 円形の記号（リレーコイル・表示灯）の確認。`class_suggestion`、`cues`（× 印・表示灯の語・リレー表・同じ器具の接点）、`status`（確定 / 要確認） |
+| `symbols[].other_kind` | 「その他」の区分（暫定）。`destination`（行先・来先）、`card`、`terminal_unit`（端子台ユニット）、`equipment`（盤・装置）、`breaker`（遮断器）、`unknown` |
 | `symbols[].relay_link` | 書き出し時だけ付く。ラベルに別のシート番号がある接点・コイルについて、その図面（`project_id`）の同じ器具番号のコイル（`coil_symbol_ids`）とリレー表の行番号（`relay_table_rows`）。参照先の図面を同時に書き出していなければ付かない |
 | `symbols[].label_source` | `llm` のときローカル LLM が読み直したラベル。元の OCR の読みは `ocr_label` |
-| `texts[]` | 読めた文字。`kind` は `device_number`（器具番号）、`number`（端子番号・電線番号）、`destination`（行先・来先）、`relay_terminals`（リレー端子 5-9-1）、`name`（装置名・信号名称。`symbol_id` の記号に結び付く）、`note`（注記）、`other`。`zone` はリレー表・表題欄の中なら `relay_table` / `title_block`。ローカル LLM が読み直したものは `source: "llm"` と元の読み `ocr_text` を持つ |
+| `texts[]` | 読めた文字。`kind` は `device_number`（器具番号）、`number`（端子番号・電線番号）、`destination`（行先・来先）、`relay_terminals`（リレー端子 5-9-1）、`name`（装置名・信号名称。`symbol_id` の記号に結び付く）、`note`（注記）、`other`。`zone` はリレー表・表題欄の中なら `relay_table` / `title_block`。読み直したものは `source`（`name_ocr`: 同梱の日本語対応 OCR、`llm`: ローカル LLM）と元の読み `ocr_text` を持つ |
 | `relay_table.rows[]` | リレー表の行。`device`（器具番号）、`terminal`（5-9-1）、`contact`（a / b）、`sheet`（「本」またはシート番号）、`position`（行列 10D） |
-| `relay_table.links[]` | 器具番号ごとに、表の行（`rows`）と同じ図面のコイル（`coil_symbol_ids`）・接点（`contact_symbol_ids`）。コイルが無い、または「本」の接点が足りないときは `status: "要確認"` |
+| `relay_table.links[]` | 器具番号ごとに、表の行（`rows`）と同じ図面のコイル（`coil_symbol_ids`）・接点（`contact_symbol_ids`）。コイルが無い、または「本」の接点が足りないときは `status: "要確認"`。`row_links[]` は行ごとの行列の位置での紐付け（`row`、`position`、`sheet`、`symbol_id`、`status`、`reasons`） |
+| `drawing_grid` | 図面の枠の列番号・行の文字から求めた行列の位置（`columns`、`rows`） |
 | `sheet_references[]` | 括弧つき・「へ」「より」つきのシート番号。`kind` は `wire`（配線の行先・来先）か `relay`（接点のコイルがあるシート。`symbol_id` に接点・コイルの記号）。書き出し時に `target_project_id`（同時に書き出した図面のうちシート番号が一致する図面。無ければ null）を付ける |
 | `sheet_number_candidates[]` | シート番号の候補（`text`、`score`、`region`） |
-| `regions[]` | 領域。`region_type` は `drawing_area`（作図領域）、`title_block`（表題欄）、`relay_table`（リレー表）、`panel`（盤・カード）、`loc`。`source` は `detection`（検出した大枠）か `text`（文字から求めた範囲） |
+| `regions[]` | 領域。`region_type` は `drawing_area`（作図領域）、`title_block`（表題欄）、`relay_table`（リレー表）、`panel`（盤・カード）、`loc`、`cloud`（雲マーク、`arc_count` つき）。`source` は `detection`（検出した大枠）、`text`（文字から求めた範囲）、`image`（画像から求めた雲マーク） |
 | `from_to` | 端子と端子の接続 |
 | `dot_roles` | 黒丸の判定件数と判定に使った値 |
-| `quality.symbol_label_ocr` | ラベルを読んだ件数。`llm_reread_count` / `llm_text_reread_count` はローカル LLM が読み直した件数 |
+| `quality.symbol_label_ocr` | ラベルを読んだ件数。`llm_reread_count` / `llm_text_reread_count` はローカル LLM、`name_ocr_reread_count` は日本語対応 OCR が読み直した件数。`quality.relay_rows_by_position`（行列で結び付いた行数）、`quality.circle_review`（円形の記号の確認件数） |
 
 参照先の図面は、図面情報のシート番号（未入力ならシート番号の候補の 1 位）で照合する。枝番つきの参照（`ER21212-1`）は枝番なしの図面にも合わせる。
 
