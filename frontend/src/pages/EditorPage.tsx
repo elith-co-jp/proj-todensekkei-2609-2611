@@ -26,6 +26,7 @@ import {
   buildAnnotationPayload,
   buildMetaForm,
   clamp01,
+  classRank,
   fitInside,
   INFERENCE_CENTER_TOLERANCE,
   INFERENCE_SIZE_TOLERANCE,
@@ -52,6 +53,7 @@ import type {
   Mode,
   SaveStatus,
   Snapshot,
+  SymbolSort,
 } from './editor/model'
 
 export default function EditorPage() {
@@ -73,6 +75,7 @@ export default function EditorPage() {
   const [selectedConn, setSelectedConn] = useState<number | null>(null)
   const [pending, setPending] = useState<{ symbolRef: string; terminalRef: string | null } | null>(null)
   const [tab, setTab] = useState<InspectorTab>('symbols')
+  const [symbolSort, setSymbolSort] = useState<SymbolSort>('registered')
 
   const [zoom, setZoom] = useState(1)
   const [pan, setPan] = useState({ x: 0, y: 0 })
@@ -502,6 +505,25 @@ export default function EditorPage() {
   )
 
   /* ------------------------------------------------------------------ 編集操作 */
+  const selectOnCanvas = (ref: string) => {
+    setSelectedRef(ref)
+    setTab('symbols')
+  }
+
+  /* 一覧から選んだシンボルが画面外なら、倍率は変えずに中央へ寄せる */
+  const revealSymbol = (ref: string) => {
+    setSelectedRef(ref)
+    const s = symbolByRef.get(ref)
+    const rect = canvasRef.current?.getBoundingClientRect()
+    if (!s || !rect) return
+    const left = pan.x + (s.cx - s.w / 2) * iw * zoom
+    const top = pan.y + (s.cy - s.h / 2) * ih * zoom
+    const right = left + s.w * iw * zoom
+    const bottom = top + s.h * ih * zoom
+    if (left >= 0 && top >= 0 && right <= rect.width && bottom <= rect.height) return
+    setPan({ x: rect.width / 2 - s.cx * iw * zoom, y: rect.height / 2 - s.cy * ih * zoom })
+  }
+
   const addSymbol = (x1: number, y1: number, x2: number, y2: number) => {
     const raw = fitInside((x1 + x2) / 2, (y1 + y2) / 2, Math.abs(x2 - x1), Math.abs(y2 - y1))
     if (raw.w < MIN_BOX || raw.h < MIN_BOX) return
@@ -511,7 +533,7 @@ export default function EditorPage() {
       ...prev,
       { ref, class_key: classKey, label: null, ...raw, note: null, terminals: [] },
     ])
-    setSelectedRef(ref)
+    selectOnCanvas(ref)
   }
 
   const deleteSymbol = (ref: string) => {
@@ -762,7 +784,7 @@ export default function EditorPage() {
       const s = hitSymbol(nx, ny)
       if (s) {
         addTerminal(s.ref, nx, ny)
-        setSelectedRef(s.ref)
+        selectOnCanvas(s.ref)
       }
       return
     }
@@ -776,14 +798,14 @@ export default function EditorPage() {
     const corner = hitCorner(nx, ny)
     if (corner) {
       pushHistory()
-      setSelectedRef(corner.ref)
+      selectOnCanvas(corner.ref)
       startDrag({ kind: 'resize', ref: corner.ref, corner: corner.corner })
       return
     }
     const s = hitSymbol(nx, ny)
     if (s) {
       pushHistory()
-      setSelectedRef(s.ref)
+      selectOnCanvas(s.ref)
       startDrag({ kind: 'move', ref: s.ref, dx: nx - s.cx, dy: ny - s.cy })
       return
     }
@@ -1070,11 +1092,7 @@ export default function EditorPage() {
   const hiddenInferenceCount = inferenceRefs.filter((ref) => hiddenSymbols.has(ref)).length
   const classOrder = classes.map((c) => c.key)
   const classLayerRows = [...new Set(symbols.map((s) => s.class_key))]
-    .sort(
-      (a, b) =>
-        (classOrder.indexOf(a) < 0 ? classOrder.length : classOrder.indexOf(a)) -
-        (classOrder.indexOf(b) < 0 ? classOrder.length : classOrder.indexOf(b)),
-    )
+    .sort((a, b) => classRank(classOrder, a) - classRank(classOrder, b))
     .map((key) => {
       const members = symbols.filter((s) => s.class_key === key)
       const hidden = members.reduce((n, s) => n + (hiddenSymbols.has(s.ref) ? 1 : 0), 0)
@@ -1282,7 +1300,9 @@ export default function EditorPage() {
             labelOf={labelOf}
             hiddenSymbols={hiddenSymbols}
             selectedRef={selectedRef}
-            onSelectSymbol={setSelectedRef}
+            onSelectSymbol={revealSymbol}
+            symbolSort={symbolSort}
+            onSymbolSortChange={setSymbolSort}
             onSetSymbolHidden={setSymbolHidden}
             onDeleteSymbol={deleteSymbol}
             pushHistory={pushHistory}

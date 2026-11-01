@@ -127,6 +127,35 @@ export const INSPECTOR_TABS = [
 ] as const
 export type InspectorTab = (typeof INSPECTOR_TABS)[number][0]
 
+export const SYMBOL_SORTS = [
+  ['registered', '登録順'],
+  ['position', '位置順'],
+  ['class', '種別順'],
+] as const
+export type SymbolSort = (typeof SYMBOL_SORTS)[number][0]
+
+/* 位置順の1行の高さ（ページ高さ比）。中心が少しずれただけの同じ段の記号を左から読む順に並べる */
+const POSITION_ROW_HEIGHT = 0.02
+
+/** クラスマスタでの並び位置。マスタにない種別は末尾にまとめる */
+export function classRank(classOrder: readonly string[], key: string) {
+  const index = classOrder.indexOf(key)
+  return index < 0 ? classOrder.length : index
+}
+
+export function sortSymbols(symbols: SymbolBox[], sort: SymbolSort, classOrder: readonly string[]) {
+  if (sort === 'registered') return symbols
+  if (sort === 'position') {
+    const row = (s: SymbolBox) => Math.floor(s.cy / POSITION_ROW_HEIGHT)
+    return [...symbols].sort((a, b) => row(a) - row(b) || a.cx - b.cx)
+  }
+  return [...symbols].sort(
+    (a, b) =>
+      classRank(classOrder, a.class_key) - classRank(classOrder, b.class_key) ||
+      a.ref.localeCompare(b.ref, undefined, { numeric: true }),
+  )
+}
+
 export const SAVE_STATUS_LABELS: Record<SaveStatus, { short: string; long: string }> = {
   pending: { short: '未保存', long: '変更を検出' },
   saving: { short: '保存中', long: '自動保存中…' },

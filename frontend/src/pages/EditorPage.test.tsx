@@ -20,6 +20,8 @@ const apiMocks = vi.hoisted(() => ({
 
 vi.mock('../api/client', () => ({ api: apiMocks }))
 
+const scrollIntoView = vi.fn()
+
 const symbolClass: SymbolClass = {
   id: 1,
   key: 'relay',
@@ -107,6 +109,7 @@ function renderEditor() {
 beforeEach(() => {
   vi.clearAllMocks()
   window.sessionStorage.clear()
+  Object.defineProperty(Element.prototype, 'scrollIntoView', { configurable: true, value: scrollIntoView })
   for (const projectId of [1, 2]) {
     clearPersistedProjectSave('annotations', projectId)
     clearPersistedProjectSave('meta', projectId)
@@ -666,5 +669,81 @@ describe('EditorPage レイヤー表示', () => {
     fireEvent.keyDown(window, { key: 't' })
     expect(getByRole('button', { name: '端子を非表示' })).toBeTruthy()
     expect(container.querySelectorAll('svg circle[stroke="#3f9067"]')).toHaveLength(1)
+  })
+})
+
+describe('EditorPage 選択の連動', () => {
+  function canvasTransform(container: HTMLElement) {
+    const transform = (container.querySelector('.origin-top-left') as HTMLElement).style.transform
+    const [, x, y, scale] = /translate\((-?[\d.]+)px, (-?[\d.]+)px\) scale\(([\d.]+)\)/.exec(transform) ?? []
+    return { x: Number(x), y: Number(y), scale: Number(scale) }
+  }
+
+  it('図面上で選んだシンボルをシンボルタブで開き、その行までスクロールする', async () => {
+    Object.defineProperties(HTMLElement.prototype, {
+      setPointerCapture: { configurable: true, value: () => {} },
+      releasePointerCapture: { configurable: true, value: () => {} },
+      hasPointerCapture: { configurable: true, value: () => true },
+    })
+    const { findByRole, getByRole } = renderEditor()
+    const canvas = await findByRole('region', { name: '図面アノテーションキャンバス' })
+    fireEvent.click(getByRole('tab', { name: '図面情報' }))
+
+    fireEvent.keyDown(window, { key: 'v' })
+    fireEvent.pointerDown(canvas, { pointerId: 1, button: 0, clientX: 690, clientY: 324 })
+    fireEvent.pointerUp(window, { pointerId: 1 })
+
+    expect(getByRole('tab', { name: /^シンボル/ }).getAttribute('aria-selected')).toBe('true')
+    expect(getByRole('button', { name: /^SYM-0002リレー$/ }).getAttribute('aria-expanded')).toBe('true')
+    expect((scrollIntoView.mock.contexts.at(-1) as HTMLElement).dataset.symbolRef).toBe('SYM-0002')
+    expect(scrollIntoView).toHaveBeenLastCalledWith({ block: 'nearest', behavior: 'auto' })
+  })
+
+  it('シンボル一覧を登録順・位置順・種別順で並べ替えられる', async () => {
+    apiMocks.listClasses.mockResolvedValue([
+      symbolClass,
+      { ...symbolClass, id: 2, key: 'lamp', label: 'ランプ', yolo_index: 1, color: '#f59e0b', sort_order: 1 },
+    ])
+    apiMocks.getProject.mockImplementation(async (id: number) => {
+      const p = project(id)
+      p.symbols = [
+        { ...p.symbols[0], ref: 'SYM-0001', cx: 0.6, cy: 0.502 },
+        { ...p.symbols[0], ref: 'SYM-0002', class_key: 'lamp', cx: 0.2, cy: 0.3 },
+        { ...p.symbols[0], ref: 'SYM-0003', cx: 0.4, cy: 0.515 },
+      ]
+      return p
+    })
+    const { container, findByRole, getByRole } = renderEditor()
+    await findByRole('region', { name: '図面アノテーションキャンバス' })
+    const order = () =>
+      Array.from(container.querySelectorAll<HTMLElement>('[data-symbol-ref]')).map((row) => row.dataset.symbolRef)
+    expect(order()).toEqual(['SYM-0001', 'SYM-0002', 'SYM-0003'])
+
+    fireEvent.click(getByRole('button', { name: '位置順' }))
+    expect(order()).toEqual(['SYM-0002', 'SYM-0003', 'SYM-0001'])
+
+    fireEvent.click(getByRole('button', { name: '種別順' }))
+    expect(order()).toEqual(['SYM-0001', 'SYM-0003', 'SYM-0002'])
+
+    fireEvent.click(getByRole('button', { name: '登録順' }))
+    expect(order()).toEqual(['SYM-0001', 'SYM-0002', 'SYM-0003'])
+  })
+
+  it('一覧で選んだシンボルが画面外のときだけ、倍率を変えずに中央へ移動する', async () => {
+    const { container, findByText, getByRole } = renderEditor()
+    await findByText('95%')
+    const fitted = canvasTransform(container)
+
+    fireEvent.click(getByRole('button', { name: /^SYM-0002リレー$/ }))
+    expect(canvasTransform(container)).toEqual(fitted)
+
+    for (let i = 0; i < 3; i += 1) fireEvent.click(getByRole('button', { name: '図面を拡大' }))
+    const zoomed = canvasTransform(container)
+    fireEvent.click(getByRole('button', { name: /^SYM-0001リレー$/ }))
+    const centered = canvasTransform(container)
+
+    expect(centered.scale).toBe(zoomed.scale)
+    expect(centered.x + 0.3 * 1000 * centered.scale).toBeCloseTo(500)
+    expect(centered.y + 0.4 * 800 * centered.scale).toBeCloseTo(400)
   })
 })
