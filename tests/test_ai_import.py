@@ -187,6 +187,25 @@ def test_ends_of_coils_and_other_boxes_are_not_joined_inside_the_symbol(client):
     assert _ends(result["connections"]) == {("SYM-0003", "SYM-0003-T1", "SYM-0003", "SYM-0003-T2")}
 
 
+def test_contact_with_one_found_end_gets_the_opposite_end_and_its_inner_link(client):
+    pid = create_project(client, w=W, h=H)
+    structure = {
+        "image_size": {"width": W, "height": H},
+        "symbols": [{"id": "contact", "class_name": "contact_a", "bbox": {"x0": 100, "y0": 100, "x1": 140, "y1": 140},
+                     "terminals": [{**_port("contact-P01", 110, 104, "13"), "wire_orientation": "v"}]}],
+        "from_to": {"connections": []},
+    }
+    with database.SessionLocal() as db:
+        db.add(StructurePrediction(project_id=pid, payload_json=json.dumps(structure)))
+        db.commit()
+
+    result = _import(client, pid, [], [])
+    assert [(t["name"], round(t["tx"] * W, 6), round(t["ty"] * H, 6)) for t in result["symbols"][0]["terminals"]] == [
+        ("13", 110, 104), ("2", 110, 136),
+    ]
+    assert _ends(result["connections"]) == {("SYM-0001", "SYM-0001-T1", "SYM-0001", "SYM-0001-T2")}
+
+
 def test_without_structure_only_detected_symbols_are_offered(client):
     pid = create_project(client)
     res = client.post("/api/ml/inference/import", files={

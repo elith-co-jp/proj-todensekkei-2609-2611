@@ -92,6 +92,7 @@ def from_structure(structure: dict[str, Any], class_keys: Iterable[str]) -> AiCa
     width, height = float(size["width"]), float(size["height"])
     symbols: list[AiSymbol] = []
     port_of: dict[tuple[str, str], Endpoint] = {}
+    mirrored: list[int] = []
     skipped = {"duplicate_dots": 0, "text_zone": 0}
     for s in structure.get("symbols", []):
         role = s.get("dot_role") or {}
@@ -126,13 +127,19 @@ def from_structure(structure: dict[str, Any], class_keys: Iterable[str]) -> AiCa
         else:
             terminals = tuple(AiTerminal(p["point"][0] / width, p["point"][1] / height, _read_name(p.get("name"))) for p in ports)
             port_of.update({(s["id"], p["ref"]): (index, i) for i, p in enumerate(ports)})
+            if class_key in INTERNAL_LINK_CLASSES and len(terminals) == 1:
+                # 接点の両端は配線の向きに沿って向かい合う。片端しか見つからなければ枠の中心で折り返す。
+                t = terminals[0]
+                vertical = ports[0].get("wire_orientation", "v" if abs(t.ty - cy) * h >= abs(t.tx - cx) * w else "h") == "v"
+                terminals += (AiTerminal(t.tx, 2 * cy - t.ty, None) if vertical else AiTerminal(2 * cx - t.tx, t.ty, None),)
+                mirrored.append(index)
         px, py = (dot[0] / width, dot[1] / height) if dot else (cx, cy)
         symbols.append(AiSymbol(
             class_key, cx, cy, w, h, px, py,
             confidence=s.get("confidence"), label=(s.get("label") or "").strip() or None, terminals=terminals,
         ))
-    links: list[tuple[Endpoint, Endpoint]] = []
-    seen: set[frozenset[Endpoint]] = set()
+    links: list[tuple[Endpoint, Endpoint]] = [((i, 0), (i, 1)) for i in mirrored]
+    seen: set[frozenset[Endpoint]] = {frozenset(link) for link in links}
     for conn in (structure.get("from_to") or {}).get("connections", []):
         a = port_of.get((conn["from"]["symbol_id"], conn["from"]["terminal_ref"]))
         b = port_of.get((conn["to"]["symbol_id"], conn["to"]["terminal_ref"]))
