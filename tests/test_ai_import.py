@@ -159,6 +159,34 @@ def test_import_reuses_moved_relabeled_and_hand_drawn_symbols_without_changing_t
     assert (saved["SYM-0002"]["class_key"], saved["SYM-0002"]["origin"], len(saved["SYM-0002"]["terminals"])) == ("junction", "manual", 1)
 
 
+def test_ends_of_coils_and_other_boxes_are_not_joined_inside_the_symbol(client):
+    """人の登録では接点・電磁弁だけ両端をつなぐ。コイルや行先の矢印の両端をつなぐと別のネットが 1 つになる。"""
+    pid = create_project(client, w=W, h=H)
+    structure = {
+        "image_size": {"width": W, "height": H},
+        "symbols": [
+            {"id": "coil", "class_name": "relay_coil", "bbox": {"x0": 10, "y0": 10, "x1": 30, "y1": 50},
+             "terminals": [_port("coil-P01", 20, 12, "P1"), _port("coil-P02", 20, 48, "P2")]},
+            {"id": "arrow", "class_name": "other", "bbox": {"x0": 100, "y0": 10, "x1": 160, "y1": 30},
+             "terminals": [_port("arrow-P01", 102, 20, "P1"), _port("arrow-P02", 158, 20, "P2")]},
+            {"id": "contact", "class_name": "contact_b", "bbox": {"x0": 200, "y0": 10, "x1": 220, "y1": 50},
+             "terminals": [_port("contact-P01", 210, 12, "P1"), _port("contact-P02", 210, 48, "P2")]},
+        ],
+        "from_to": {"connections": [
+            {"type": "internal", "from": {"symbol_id": s, "terminal_ref": f"{s}-P01"},
+             "to": {"symbol_id": s, "terminal_ref": f"{s}-P02"}}
+            for s in ("coil", "arrow", "contact")
+        ]},
+    }
+    with database.SessionLocal() as db:
+        db.add(StructurePrediction(project_id=pid, payload_json=json.dumps(structure)))
+        db.commit()
+
+    result = _import(client, pid, [], [])
+    assert [s["class_key"] for s in result["symbols"]] == ["relay_coil", "other", "contact_b"]
+    assert _ends(result["connections"]) == {("SYM-0003", "SYM-0003-T1", "SYM-0003", "SYM-0003-T2")}
+
+
 def test_without_structure_only_detected_symbols_are_offered(client):
     pid = create_project(client)
     res = client.post("/api/ml/inference/import", files={

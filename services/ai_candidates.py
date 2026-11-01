@@ -18,6 +18,9 @@ from services.geometry import sanitize_box
 NODE_CLASSES = frozenset({"junction", "connector", "terminal", "power_bus"})
 # 黒丸は 8〜15 px と小さく、枠の重なりでは描いた枠の大きさで一致が決まるため、中心の距離で比べる。
 POINT_CLASSES = frozenset({"junction", "power_bus"})
+# 記号の中の端子どうしの接続（AI の internal）を取り込む種別。人の登録では接点・電磁弁だけ両端をつなぐ。
+# その他の枠（行先の矢印・カード）やリレーコイルの両端は別の電線なので、つなぐと別のネットが 1 つになる。
+INTERNAL_LINK_CLASSES = frozenset({"contact_a", "contact_b", "solenoid"})
 MATCH_IOU = 0.5
 POINT_MATCH_PX = 12.0
 TERMINAL_MATCH_PX = 10.0
@@ -134,6 +137,8 @@ def from_structure(structure: dict[str, Any], class_keys: Iterable[str]) -> AiCa
         a = port_of.get((conn["from"]["symbol_id"], conn["from"]["terminal_ref"]))
         b = port_of.get((conn["to"]["symbol_id"], conn["to"]["terminal_ref"]))
         if a is None or b is None or a == b or frozenset((a, b)) in seen:
+            continue
+        if a[0] == b[0] and symbols[a[0]].class_key not in INTERNAL_LINK_CLASSES:
             continue
         seen.add(frozenset((a, b)))
         links.append((a, b))
