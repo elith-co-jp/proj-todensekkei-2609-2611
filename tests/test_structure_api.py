@@ -72,7 +72,7 @@ def test_integrated_run_preserves_annotations_and_uses_detector_names(client, mo
     _fake_detector(monkeypatch)
     seen = []
 
-    def analyze(project, model, detections):
+    def analyze(project, model, detections, regions=None):
         seen.extend(detections)
         return _result(project.id)
 
