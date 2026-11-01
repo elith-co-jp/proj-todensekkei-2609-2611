@@ -189,7 +189,7 @@ def export_structure(payload: InferenceRunRequest, db: Session = Depends(get_db)
         result = get_structure(db, project.id)
         if result is None:
             raise HTTPException(409, f"構造解析が未実行の図面があります: {project.name}")
-        pages.append(result)
+        pages.append({**result, "sheet_no": project.sheet_no})
     return Response(
         json.dumps(document_structure(pages), ensure_ascii=False, indent=2, allow_nan=False),
         media_type="application/json",

@@ -61,6 +61,28 @@ def test_structure_missing_and_export_rejects_missing_pages(client):
     assert result.json()["summary"]["wire_count"] == 1
 
 
+def test_export_links_sheet_references_to_the_exported_drawings(client):
+    source, target = create_project(client), create_project(client, "second.png")
+    assert client.put(f"/api/projects/{source}/meta", json={"sheet_no": "ER21216"}).status_code == 200
+    refs = [
+        {"target_sheet": "ER21212", "kind": "wire", "text": "(ER21212)"},
+        {"target_sheet": "ER21212-1", "kind": "wire", "text": "(ER21212-1)"},
+        {"target_sheet": "ER29999", "kind": "relay", "text": "(ER29999)"},
+    ]
+    with database.SessionLocal() as db:
+        db.add(StructurePrediction(project_id=source, payload_json=json.dumps({**_result(source), "sheet_references": refs})))
+        # シート番号が未入力の図面は、自動読取の 1 位で照合する
+        db.add(StructurePrediction(project_id=target, payload_json=json.dumps(
+            {**_result(target), "sheet_number_candidates": [{"text": "ER21212", "score": 0.99}]})))
+        db.commit()
+
+    exported = client.post("/api/ml/analysis/export", json={"project_ids": [source, target]}).json()
+    linked = [r["target_project_id"] for r in exported["pages"][0]["sheet_references"]]
+    assert linked == [target, target, None]
+    assert exported["pages"][0]["sheet_no"] == "ER21216"
+    assert (exported["summary"]["sheet_reference_count"], exported["summary"]["resolved_sheet_reference_count"]) == (3, 2)
+
+
 def test_integrated_run_preserves_annotations_and_uses_detector_names(client, monkeypatch):
     from services import structure_service
 
