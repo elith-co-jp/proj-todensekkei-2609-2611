@@ -137,6 +137,12 @@ def _init_worker(overrides: list[str], ocr_threads: int, ocr_cache: str | None) 
 
     runtime.load_symbol_ocr_reader = limited_reader
 
+    from analysis import name_ocr
+
+    name_model = name_ocr.model_path()
+    name_reader = name_ocr.make_reader(name_model, ocr_threads) if name_model else None
+    runtime.name_ocr_reader = lambda: name_reader
+
 
 class DSU:
     def __init__(self) -> None:

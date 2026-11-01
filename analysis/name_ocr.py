@@ -30,11 +30,13 @@ def model_path() -> Path | None:
     return next((p for p in candidates if p.is_file()), None)
 
 
-def make_reader(path: Path) -> LabelReader:
+def make_reader(path: Path, threads: int | None = None) -> LabelReader:
+    """threads caps the onnxruntime threads (parallel evaluation workers); None leaves the library default."""
     import numpy as np
     from rapidocr_onnxruntime import RapidOCR
 
-    engine = RapidOCR(rec_model_path=str(path))
+    limits = {f"{part}_intra_op_num_threads": threads for part in ("det", "cls", "rec")} if threads else {}
+    engine = RapidOCR(rec_model_path=str(path), **limits)
 
     def read(image: Image.Image, box: Any) -> str | None:
         x0, y0, x1, y1 = _as_box(box)
