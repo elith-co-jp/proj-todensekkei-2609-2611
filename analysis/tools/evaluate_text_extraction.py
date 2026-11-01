@@ -224,7 +224,7 @@ def eval_others(drawings: list[dict[str, Any]], ocr: Ocr) -> dict[str, Any]:
             "confusion": {f"{a}->{b}": v for (a, b), v in sorted(confusion.items())}, "misses": misses}
 
 
-def eval_names(drawings: list[dict[str, Any]], ocr: Ocr, llm: LlmLabels | None, names_ocr: Path | None = None) -> dict[str, Any]:
+def eval_names(drawings: list[dict[str, Any]], ocr: Ocr, llm: LlmLabels | None) -> dict[str, Any]:
     """日本語の装置名・信号名称・注記（#43）。正解ラベルの日本語部分を、記号なら結び付いた名称、
     大枠なら枠の中の名称・注記と比べる。完全一致と文字の一致率（正解の文字のうち読めた割合）を出す。"""
     stats: dict[str, Counter] = defaultdict(Counter)
@@ -239,12 +239,7 @@ def eval_names(drawings: list[dict[str, Any]], ocr: Ocr, llm: LlmLabels | None, 
         width, height = int(d["project"]["image_width"]), int(d["project"]["image_height"])
         symbols = [{"id": g["ref"], "bbox": g["bbox"]} for g in all_gold if g["kind"] == "symbol"]
         texts = tx.classify_texts(items, symbols, tx.text_zones(items, width, height))
-        if names_ocr is not None:
-            from analysis.japanese_ocr import make_reader
-
-            image = Image.open(io.BytesIO(d["image"])).convert("RGB")
-            tx.reread_texts(image, texts, make_reader(names_ocr))
-        elif llm is not None:
+        if llm is not None:
             image = Image.open(io.BytesIO(d["image"])).convert("RGB")
             tx.reread_texts(image, texts, llm.reader_for(d["image"], llm.llm.TEXT))
         for g, want in wanted:
@@ -504,7 +499,6 @@ def main() -> None:
     parser.add_argument("--details", action="store_true", help="外れた項目の一覧も出す")
     parser.add_argument("--label-llm", help="器具番号の形でないラベルを読み直すローカル LLM の URL（Ollama 互換）")
     parser.add_argument("--label-llm-model", default="qwen3.6:35b-a3b-mtp-q4_K_M")
-    parser.add_argument("--names-ocr", type=Path, help="日本語の名称・注記を読み直す日本語の文字認識モデル（onnx）")
     args = parser.parse_args()
 
     _, drawings = load_gold(args.gold)
@@ -524,7 +518,7 @@ def main() -> None:
     if "others" in metrics and not args.baseline:
         out["others"] = eval_others(drawings, ocr)
     if "names" in metrics and not args.baseline:
-        out["names"] = eval_names(drawings, ocr, llm, args.names_ocr)
+        out["names"] = eval_names(drawings, ocr, llm)
     if "relay" in metrics:
         out["relay"] = eval_relay(drawings, ocr, args.relay_gt, args.baseline)
     if "refs" in metrics:
