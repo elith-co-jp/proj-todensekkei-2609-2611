@@ -243,6 +243,13 @@ def predicted_pairs(structure: dict[str, Any], pred_to_gold: dict[str, str]) -> 
     return pairs
 
 
+def read_extra(extra_labels: Path | None, fold_name: str) -> list[tuple[bytes, str]]:
+    folder = extra_labels / fold_name if extra_labels else None
+    if folder is None or not folder.exists():
+        return []
+    return [(png.read_bytes(), png.with_suffix(".txt").read_text(encoding="utf-8")) for png in sorted(folder.glob("*.png"))]
+
+
 def write_fold_dataset(root: Path, drawings: list[dict[str, Any]], train_sheets: set[str], extra: list[tuple[bytes, str]]) -> Path:
     images, labels = root / "images" / "train", root / "labels" / "train"
     images.mkdir(parents=True, exist_ok=True)
@@ -399,6 +406,8 @@ def score_rotated(args: argparse.Namespace, drawings: list[dict[str, Any]], degr
     tot: Counter = Counter()
     per_class: dict[str, Counter] = {}
     for fold_index, test_sheets in enumerate(folds_of(drawings, args.folds)):
+        if args.only_folds and fold_index not in args.only_folds:
+            continue
         weights = args.work / f"fold{fold_index}" / "train" / "weights" / "last.pt"
         for sheet in test_sheets:
             turned = rotated_drawing(by_sheet[sheet], degrees)
@@ -441,7 +450,8 @@ def main() -> None:
     parser.add_argument("--only-folds", type=int, nargs="*", help="run a subset of folds (debugging)")
     parser.add_argument("--weights", type=Path, help="score one fixed model on every drawing instead of training per fold")
     parser.add_argument("--structure", action="store_true", help="also run wire analysis and score connection pairs")
-    parser.add_argument("--extra-labels", type=Path, help="directory of <fold>/<name>.png + .txt pseudo labels per fold")
+    parser.add_argument("--extra-labels", type=Path,
+                        help="directory of <fold>/<name>.png + .txt pseudo labels per fold (all/ for --train-all)")
     parser.add_argument("--rescore", action="store_true", help="score the saved predictions under --work without training")
     parser.add_argument("--strict-iou", action="store_true", help="match dots by box IoU too (the pre-2026-11 rule)")
     parser.add_argument("--train-all", action="store_true", help="train one model on every drawing with the recipe (no scoring)")
@@ -461,9 +471,11 @@ def main() -> None:
         score_rotated(args, drawings, args.score_rotated)
         return
     if args.train_all:
-        data_yaml = write_fold_dataset(args.work / "all" / "dataset", drawings, {d["sheet"] for d in drawings}, [])
+        extra = read_extra(args.extra_labels, "all")
+        data_yaml = write_fold_dataset(args.work / "all" / "dataset", drawings, {d["sheet"] for d in drawings}, extra)
         weights = train_fold(recipe, data_yaml, args.work / "all")
-        print(json.dumps({"weights": str(weights), "drawings": len(drawings), "recipe": recipe}, ensure_ascii=False))
+        print(json.dumps({"weights": str(weights), "drawings": len(drawings), "extra_pages": len(extra), "recipe": recipe},
+                         ensure_ascii=False))
         return
     by_sheet = {d["sheet"]: d for d in drawings}
     folds = folds_of(drawings, args.folds)
@@ -481,10 +493,7 @@ def main() -> None:
             train_sheets = {d["sheet"] for d in drawings} - set(test_sheets)
             if train_sheets & set(test_sheets):
                 raise AssertionError("test drawing leaked into training")
-            extra = []
-            if args.extra_labels and (args.extra_labels / f"fold{fold_index}").exists():
-                for png in sorted((args.extra_labels / f"fold{fold_index}").glob("*.png")):
-                    extra.append((png.read_bytes(), png.with_suffix(".txt").read_text(encoding="utf-8")))
+            extra = read_extra(args.extra_labels, f"fold{fold_index}")
             data_yaml = write_fold_dataset(fold_dir / "dataset", drawings, train_sheets, extra)
             weights = train_fold(recipe, data_yaml, fold_dir)
         for sheet in test_sheets:

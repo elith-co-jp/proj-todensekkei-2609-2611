@@ -2,6 +2,8 @@
 
 Each fold gets labels only from the model trained on that fold's training drawings, so no
 evaluation drawing influences its own fold. Output: <out>/fold<k>/<page>.png + .txt (YOLO).
+A --train-all run (one model on every drawing, in <run>/all) labels into <out>/all, which
+holdout_cv.py --train-all --extra-labels reads.
 
 Example:
     python analysis/tools/pseudo_label.py --teacher-run runs/cv_baseline --pages data/pages/send100 --out pseudo/v1 --conf 0.6
@@ -33,7 +35,7 @@ def main() -> None:
 
     pages = sorted(args.pages.glob("*.png"))
     total = 0
-    for weights in sorted(args.teacher_run.glob("fold*/train/weights/last.pt")):
+    for weights in sorted(args.teacher_run.glob("*/train/weights/last.pt")):
         fold = weights.parents[2].name
         model = YOLO(str(weights))
         out = args.out / fold
