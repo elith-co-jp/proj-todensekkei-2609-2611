@@ -15,6 +15,7 @@ from typing import Any
 from PIL import Image
 
 from analysis.label_llm import TEXT, reader_from_env
+from analysis.relay_lamp import review_circles
 from analysis.text_extraction import extract_text_structure
 
 # The CLI tools use sibling imports. Keep that entry point intact; PyInstaller
@@ -115,6 +116,10 @@ def analyze_detections(
     wired_symbols = [s for s in symbols if not s.get("text_zone")]
     # --- ここまで文字の読み取り
 
+    # --- リレーと表示灯（#39）: 円形の記号を、円の中の×印・近くの文字・リレー表・同じ器具の接点で確かめる。
+    circle_review = review_circles(make_binary_mask(page_image), symbols, text_result)
+    # --- ここまでリレーと表示灯
+
     payload = filter_wire_decorations(
         payload, image, wired_symbols,
         confirm_text=rapidocr_text_confirmation(reader) if reader is not None and engine == "rapidocr" else None,
@@ -175,6 +180,7 @@ def analyze_detections(
             "llm_text_reread_count": sum(1 for t in text_result.get("texts", []) if t.get("source") == "llm"),
         },
         "text_zone_suppressed_count": len(symbols) - len(wired_symbols),
+        "circle_review": circle_review,
         "terminal_source": "inferred", "annotation_assistance": False,
     })
     return payload
