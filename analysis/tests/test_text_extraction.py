@@ -140,6 +140,20 @@ def test_texts_are_classified_and_japanese_names_attach_to_symbols():
     ]
 
 
+def test_other_symbols_are_split_into_cards_units_equipment_and_destinations():
+    b = box(100, 100, 400, 230)
+    card = [item("2B-2RSAM", 300, 105, 390, 120), item("628-C2F3", 330, 200, 380, 212), item("DIO-400", 330, 214, 380, 226)]
+    panel = [item("2RAXP", 300, 105, 360, 120), item("(ER20160)", 200, 200, 270, 214)]
+    unit = [item("2B-RCVTB(01)", 300, 105, 390, 120), item("611", 360, 210, 380, 222)]
+    breaker = [item("MCCB03", 150, 150, 210, 165)]
+    assert tx.classify_other(card, b, "2B-2RSAM 628-C2F3 DIO-400") == "card"
+    assert tx.classify_other(panel, b, "2RAXP") == "equipment"  # 枠の中の行先より盤の名前を優先する
+    assert tx.classify_other(unit, b, "2B-RCVTB(01) 611") == "terminal_unit"
+    assert tx.classify_other(breaker, b, "MCCB03") == "breaker"
+    assert tx.classify_other([item("(ER21212)", 120, 150, 200, 165)], b, "ER21212へ") == "destination"
+    assert tx.classify_other([item("ABC", 120, 150, 160, 165)], b, "ABC") == "unknown"
+
+
 def test_contact_labels_repair_d_read_as_zero():
     items = [item("830-1", 300, 400, 340, 412), item("ESD", 300, 414, 330, 426),
              item("0010", 400, 400, 432, 412), item("B834", 400, 414, 432, 426)]

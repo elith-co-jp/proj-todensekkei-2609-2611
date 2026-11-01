@@ -528,6 +528,34 @@ def _block_rows(
     return rows
 
 
+OtherKind = Literal["destination", "card", "terminal_unit", "equipment", "breaker", "unknown"]
+# 「その他」の記号の区分（#42。区分は暫定で、貴社と合意してから確定する）。枠の中の文字の書式で決める。
+_CARD = re.compile(r"D[I1L|][O0]-?\d|D[O0]T-?\d|-C[I1L|][RF]-?\d|-C\d[RF]\d")
+_TERMINAL_UNIT = re.compile(r"RCVTB|TB\(\d")
+_BREAKER = re.compile(r"MCCB|NFB|ELB|ACB|VCB|遮断器|ブレーカ")
+_EQUIPMENT = re.compile(r"^\d?R[A-Z]{2,}|\bL[O0]C\b|\bLN[Z2]\b|\bLMZ\b|\dR\s?P/C|盤|装置|ユニット")
+
+
+def classify_other(items: list[TextItem], box: Any, label: str) -> OtherKind:
+    """「その他」の記号を、行先・来先、カード、端子台ユニット、盤・装置、遮断器に分ける。どれにも当たらなければ unknown。"""
+    text = normalize(" ".join(w["text"] for w in words_in_box(items, box)))
+    compact = text.replace(" ", "")
+    if label.endswith("へ"):
+        return "destination"
+    if _BREAKER.search(compact):
+        return "breaker"
+    if _CARD.search(compact):
+        return "card"
+    if _TERMINAL_UNIT.search(compact):
+        return "terminal_unit"
+    if any(_EQUIPMENT.search(t) for t in text.split()) or _EQUIPMENT.search(compact):
+        return "equipment"
+    # 盤・カードの枠の中にも行先のシート番号が書かれるので、行先の判定は最後にする。
+    if _REF_PATTERN.search(compact):
+        return "destination"
+    return "unknown"
+
+
 def classify_region(items: list[TextItem], box: Any, width: int, height: int) -> RegionType:
     """領域枠の種類を、大きさ・位置と枠の内側の文字から決める。"""
     x0, y0, x1, y1 = _as_box(box)
@@ -694,6 +722,8 @@ def extract_text_structure(
             symbol["ocr_label"], symbol["label_source"], label = label, "llm", reread
         symbol["label"] = label
         symbol["label_candidate"] = {"text": label, "match_text": label, "tokens": [], "rejected_tokens": []}
+        if class_name == "other":
+            symbol["other_kind"] = classify_other(items, symbol["bbox"], label)
         zone = zone_of(symbol["bbox"], zones)
         if zone:
             symbol["text_zone"] = zone
