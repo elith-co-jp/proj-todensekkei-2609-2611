@@ -70,7 +70,7 @@ DASHED_RULE_MIN_LENGTH = 0
 
 # I/O cards are drawn as a solid rectangle around their input contacts. The wires to the inputs cross
 # the frame line without a dot, but each input's pin dot sits a few pixels from that crossing, so read
-# as a wire the frame line joined every input of the card into one net (DD-0007 §4.13). A horizontal
+# as a wire the frame line joined every input of the card into one net (DD-0007 §4.4). A horizontal
 # line inside an other box holding at least CARD_FRAME_MIN_CONTACTS contacts, with ink across at least
 # CARD_FRAME_MIN_INK of the box width, is the frame. 0 contacts disables the rule.
 CARD_FRAME_MIN_CONTACTS = 2
