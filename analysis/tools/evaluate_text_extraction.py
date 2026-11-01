@@ -45,20 +45,23 @@ def split_of(sheets: list[str], split: str) -> set[str]:
 
 
 class Ocr:
-    def __init__(self, cache: Path) -> None:
+    def __init__(self, cache: Path, rec_model: Path | None = None) -> None:
         self.cache = cache
         self.cache.mkdir(parents=True, exist_ok=True)
+        self.rec_model = rec_model
+        # 既定のモデルのキャッシュ名は変えない（過去の結果を使い回す）
+        self.tag = f"-{rec_model.stem}" if rec_model else ""
         self._reader = None
 
     def reader(self) -> Any:
         if self._reader is None:
             from rapidocr_onnxruntime import RapidOCR
 
-            self._reader = RapidOCR()
+            self._reader = RapidOCR(rec_model_path=str(self.rec_model)) if self.rec_model else RapidOCR()
         return self._reader
 
     def page(self, png: bytes) -> list[tx.TextItem]:
-        path = self.cache / f"{hashlib.sha256(png).hexdigest()[:16]}_page-{tx.PAGE_OCR_VERSION}.json"
+        path = self.cache / f"{hashlib.sha256(png).hexdigest()[:16]}_page-{tx.PAGE_OCR_VERSION}{self.tag}.json"
         if path.exists():
             return [{**i, "box": tuple(i["box"])} for i in json.loads(path.read_text())]
         items = tx.read_page_text(Image.open(io.BytesIO(png)), self.reader())
@@ -66,7 +69,7 @@ class Ocr:
         return items
 
     def crops(self, png: bytes, boxes: list[dict[str, float]]) -> list[list[tx.TextItem]]:
-        path = self.cache / f"{hashlib.sha256(png).hexdigest()[:16]}_crop-{tx.CROP_OCR_VERSION}.json"
+        path = self.cache / f"{hashlib.sha256(png).hexdigest()[:16]}_crop-{tx.CROP_OCR_VERSION}{self.tag}.json"
         cached = json.loads(path.read_text()) if path.exists() else {}
         keys = [",".join(str(round(v)) for v in b.values()) for b in boxes]
         missing = [k for k in keys if k not in cached]
@@ -499,12 +502,13 @@ def main() -> None:
     parser.add_argument("--details", action="store_true", help="外れた項目の一覧も出す")
     parser.add_argument("--label-llm", help="器具番号の形でないラベルを読み直すローカル LLM の URL（Ollama 互換）")
     parser.add_argument("--label-llm-model", default="qwen3.6:35b-a3b-mtp-q4_K_M")
+    parser.add_argument("--rec-model", type=Path, help="文字認識モデル（onnx）を既定から差し替えて測る")
     args = parser.parse_args()
 
     _, drawings = load_gold(args.gold)
     chosen = split_of([d["sheet"] for d in drawings], args.split)
     drawings = [d for d in drawings if d["sheet"] in chosen]
-    ocr = Ocr(args.cache)
+    ocr = Ocr(args.cache, args.rec_model)
     preds: dict[str, list[dict[str, Any]]] = {}
     if args.cv_preds:
         for path in args.cv_preds.glob("fold*/pred/*.json"):
