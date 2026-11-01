@@ -19,6 +19,9 @@ EXPLICIT_NODE_CLASSES = ("connector", "junction", "terminal", "power_bus")
 # Classes whose terminals sit where a wire stops inside the box (the + and - dots of a card),
 # not at fixed fractions of the box. Empty disables these ports.
 WIRE_END_PORT_CLASSES: frozenset[str] = frozenset({"other"})
+# A two-port contact sits on a wire that runs through its box; a wire passing just beside the box
+# (axis_padding_px allows it) belongs to the next contact when the box also covers the label.
+CONTACT_PREFERS_WIRES_INSIDE_BOX = True
 
 FONT_XS = load_font(12)
 FONT_SM = load_font(15)
@@ -261,8 +264,13 @@ def infer_ports_for_symbol(
                     "wire_visible_coverage": wire.get("visible_coverage"),
                     "reason": f"{mode}:{side}",
                     "ink_ratio": round(ink_ratio, 4),
+                    "wire_inside_box": (x0 <= axis <= x1) if orientation == "v" else (y0 <= axis <= y1),
                 }
             )
+
+    if CONTACT_PREFERS_WIRES_INSIDE_BOX and class_name in {"contact_a", "contact_b"} and not four_port:
+        inside = [candidate for candidate in candidates if candidate["wire_inside_box"]]
+        candidates = inside or candidates
 
     if class_name in {"contact_a", "contact_b"} and (
         contact_min_terminal_rel_x is not None or contact_max_terminal_rel_x is not None

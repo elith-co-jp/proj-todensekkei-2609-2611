@@ -156,3 +156,35 @@ def test_terminal_numbers_pair_device_names_with_pins_by_row():
         },
     }
     assert connector_numbers(symbol) == [{"device": "TB6", "number": "104"}, {"device": "CN29", "number": "17"}]
+
+def _contact_ports(draw_contact, monkeypatch, **switches):
+    from PIL import Image, ImageDraw
+
+    import experiment_symbol_port_inference as ports
+    from run_yolo_e2e_pipeline import port_inference_config
+
+    for name, value in switches.items():
+        monkeypatch.setattr(ports, name, value)
+    image = Image.new("RGB", (300, 200), "white")
+    wires = draw_contact(ImageDraw.Draw(image))
+    contact = {"id": "c", "class_name": "contact_a", "bbox": {"x0": 90, "y0": 58, "x1": 180, "y1": 102}}
+    config = port_inference_config("template_confident_relaxed_span_ink02")
+    return ports.infer_ports_for_symbol(contact, wires, image, config=config)
+
+
+def _wire(wire_id, x, y0, y1):
+    return {"id": wire_id, "orientation": "v", "polyline": [[x, y0], [x, y1]], "confidence": 0.9, "visible_coverage": 0.9}
+
+
+def test_contact_box_covering_its_label_takes_ports_on_its_own_wire_only(monkeypatch):
+    def draw_contact(draw):
+        draw.line((100, 20, 100, 150), fill="black", width=2)
+        draw.line((190, 20, 190, 150), fill="black", width=2)
+        for y in (72, 88):
+            draw.rectangle((176, y - 3, 182, y + 3), fill="black")
+        return [_wire("own", 100, 20, 150), _wire("next", 190, 20, 150)]
+
+    found = _contact_ports(draw_contact, monkeypatch)
+    assert len(found) >= 2 and {p["wire_id"] for p in found} == {"own"}
+    found = _contact_ports(draw_contact, monkeypatch, CONTACT_PREFERS_WIRES_INSIDE_BOX=False)
+    assert "next" in {p["wire_id"] for p in found}
