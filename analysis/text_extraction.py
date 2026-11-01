@@ -677,8 +677,12 @@ def classify_texts(items: list[TextItem], symbols: list[dict[str, Any]], zones: 
 
 
 def _relay_key(label: str) -> tuple[str, ...]:
+    """器具番号の照合キー（先頭 2 語）。ラベルの前にくっついた電線番号・端子番号（128 33LA）は飛ばす。"""
     text = re.sub(rf"\(?{SHEET_REF}\)?", " ", normalize(label))
-    return tuple(match_key(t) for t in text.split()[:2])
+    words = text.split()
+    while len(words) > 1 and words[0].isdigit():
+        words = words[1:]
+    return tuple(match_key(t) for t in words[:2])
 
 
 def same_relay_device(label: str, device: str) -> bool:

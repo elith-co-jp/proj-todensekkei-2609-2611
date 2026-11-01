@@ -85,7 +85,8 @@ def test_export_links_sheet_references_to_the_exported_drawings(client):
 
 def test_export_links_contacts_to_the_coil_and_relay_table_on_the_referenced_drawing(client):
     contact_page, coil_page = create_project(client), create_project(client, "second.png")
-    contact = {"id": "symbol_001", "class_name": "contact_a", "label": "33HB HV305 (ER21236)"}
+    # 電線番号がくっついたラベル（128 33HB）でも器具番号で照合する
+    contact = {"id": "symbol_001", "class_name": "contact_a", "label": "128 33HB HV305 (ER21236)"}
     other = {"id": "symbol_002", "class_name": "contact_a", "label": "43U AMESD (ER29999)"}
     refs = [
         {"target_sheet": "ER21236", "kind": "relay", "symbol_id": "symbol_001", "text": "(ER21236)"},
