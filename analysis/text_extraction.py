@@ -348,8 +348,9 @@ def reread_label(image: Image.Image, box: Any, class_name: str, label: str, read
     """接点・コイルの OCR ラベルが器具番号の形でないとき、別の読み手（ローカル LLM）に読み直させる。
 
     読み直した結果も器具番号の形をしているときだけ、その結果を返す。それ以外は None。
+    日本語のラベル（盤異常 など）は器具番号ではないので読み直さない（名称の読み直しは reread_texts）。
     """
-    if reader is None or class_name not in RELAY_REF_CLASSES or not doubtful_label(label):
+    if reader is None or class_name not in RELAY_REF_CLASSES or not doubtful_label(label) or _has_cjk(label):
         return None
     answer = normalize(reader(image, box) or "")
     return answer if answer and not doubtful_label(answer) else None
@@ -367,7 +368,7 @@ def reread_texts(image: Image.Image, texts: list[dict[str, Any]], reader: LabelR
     for text in texts:
         if text["kind"] not in ("name", "note") or text["zone"]:
             continue
-        lines = [" ".join(line.split()) for line in (reader(image, text["box"]) or "").splitlines()]
+        lines = [" ".join(line.split()).strip("$*#`") for line in (reader(image, text["box"]) or "").splitlines()]
         answer = next((line for line in lines if _has_cjk(line)), None)
         if answer:
             text["ocr_text"], text["text"], text["source"] = text["text"], answer, "llm"

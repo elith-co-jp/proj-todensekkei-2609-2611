@@ -162,6 +162,8 @@ def test_contact_labels_that_are_not_device_numbers_are_reread():
     assert tx.reread_label(image, b, "relay_coil", "0010 B834", reader) == "83D-1 ESD (ER21271)"
     assert tx.reread_label(image, b, "contact_a", "33HB FV2306", reader) is None
     assert tx.reread_label(image, b, "connector", "0010", reader) is None
+    # 日本語の名称は器具番号として読み直さない
+    assert tx.reread_label(image, b, "contact_a", "津谱完了", reader) is None
     assert len(asked) == 2
 
 
