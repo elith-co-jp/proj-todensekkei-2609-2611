@@ -79,7 +79,8 @@ def pick_sheet_number_candidates(
         region = _region(item["box"], width, height)
         parsed = _sheet_number(_normalize(item["text"])) if region else None
         if parsed is not None:
-            found.append((*parsed, region, item))
+            number, labelled = parsed
+            found.append((number, labelled, region, item))
     occurrences = Counter(number for number, *_ in found)
 
     best: dict[str, SheetNumberCandidate] = {}

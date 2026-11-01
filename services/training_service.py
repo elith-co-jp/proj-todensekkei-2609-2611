@@ -80,7 +80,7 @@ def start_training(
     epochs: int,
     imgsz: int,
     base_model: str | None,
-    holdout: bool = True,
+    holdout: bool,
 ) -> TrainingRun:
     if not ultralytics_available():
         raise ValueError(
