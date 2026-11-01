@@ -561,6 +561,7 @@ def build_predicted_graph_pairs(
     nonconductive_anchor_policy: str,
     bridge_stats: Counter[str] | None = None,
     endpoint_bridge_max: float = 0.0,
+    wire_gap_bridge_outward_only: bool = False,
 ) -> set[tuple[str, str]]:
     nodes_by_id = {str(node["id"]): node for node in payload.get("nodes", [])}
     edges = list(payload.get("edges", []))
@@ -767,6 +768,24 @@ def build_predicted_graph_pairs(
         if wire_gap_bridge_max <= 0:
             return
 
+        wire_span: dict[str, tuple[float, float]] = {}
+        for span_wire_id, segments in edges_by_wire.items():
+            along = 0 if str(segments[0]["orientation"]) == "h" else 1
+            values = [segment[key][along] for segment in segments for key in ("start", "end")]
+            wire_span[span_wire_id] = (min(values), max(values))
+
+        def leaves_wire_end(wire_id: str, orientation: str, point: tuple[float, float], target: tuple[float, float]) -> bool:
+            # A bridge running back over its own wire reaches a line that wire crosses,
+            # which would turn a crossing the junction rule rejected into a connection.
+            lo, hi = wire_span.get(wire_id, (float("-inf"), float("inf")))
+            along = 0 if orientation == "h" else 1
+            tolerance = 2.0
+            if target[along] < lo - tolerance:
+                return point[along] <= lo + tolerance
+            if target[along] > hi + tolerance:
+                return point[along] >= hi - tolerance
+            return False
+
         def has_terminal_anchor(target_edge_id: str, projection: tuple[float, float]) -> bool:
             if wire_gap_bridge_terminal_anchor_threshold <= 0:
                 return True
@@ -813,6 +832,9 @@ def build_predicted_graph_pairs(
                     if t < -0.02 or t > 1.02:
                         continue
                     t = max(0.0, min(1.0, t))
+                    if wire_gap_bridge_outward_only and not leaves_wire_end(source_wire_id, source_orientation, point, projection):
+                        stats["wire_gap_bridge_rejected_inward_count"] += 1
+                        continue
                     if not has_terminal_anchor(target_edge_id, projection):
                         # A wire's own span END almost touching a perpendicular
                         # wire is a drawn T-join — bridge it even without a

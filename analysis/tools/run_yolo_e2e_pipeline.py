@@ -75,6 +75,8 @@ DIRECT_GAP_BRIDGE_ALIGN_THRESHOLD = 28.0
 DIRECT_WIRE_GAP_TERMINAL_ANCHOR_THRESHOLD = 18.0
 DIRECT_TERMINAL_TERMINAL_BRIDGE_MAX = 140.0
 DIRECT_ENDPOINT_BRIDGE_MAX = 60.0
+# Join a wire end to a nearby perpendicular wire only past that end, never back over its own span.
+DIRECT_WIRE_GAP_BRIDGE_OUTWARD_ONLY = True
 # Classes whose electrical port is wherever a wire meets the box; when such a
 # symbol has no terminal link, attach it to every wire touching its bbox.
 TOUCHING_WIRE_FALLBACK_CLASSES = {"connector", "junction", "power_bus", "terminal"}
@@ -1658,6 +1660,7 @@ def build_direct_from_to(payload: dict[str, Any]) -> dict[str, Any]:
         nonconductive_anchor_policy="all",
         bridge_stats=bridge_stats,
         endpoint_bridge_max=DIRECT_ENDPOINT_BRIDGE_MAX,
+        wire_gap_bridge_outward_only=DIRECT_WIRE_GAP_BRIDGE_OUTWARD_ONLY,
     )
     valid_pairs = sorted(
         pair for pair in pairs if pair[0] in terminal_by_key and pair[1] in terminal_by_key
@@ -1713,6 +1716,7 @@ def build_direct_from_to(payload: dict[str, Any]) -> dict[str, Any]:
             "wire_gap_terminal_anchor_threshold": DIRECT_WIRE_GAP_TERMINAL_ANCHOR_THRESHOLD,
             "terminal_terminal_bridge_classes": sorted(DIRECT_TERMINAL_TERMINAL_BRIDGE_CLASSES),
             "terminal_terminal_bridge_max": DIRECT_TERMINAL_TERMINAL_BRIDGE_MAX,
+            "wire_gap_bridge_outward_only": DIRECT_WIRE_GAP_BRIDGE_OUTWARD_ONLY,
             "bridge_stats": dict(sorted(bridge_stats.items())),
         },
     }
