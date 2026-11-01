@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 
 from models import AnnotationProject, MlModel, Prediction, StructurePrediction, SymbolClass
 from services.annotation_service import classes_ordered, image_path
+from services.detection_rules import detection_kind
 from services.export_service import safe_members
 from services.geometry import sanitize_box
 from services.model_service import model_path
@@ -52,14 +53,16 @@ def _record_predictions(
     detections: list[dict],
     model: MlModel | None,
     model_label: str,
-) -> int:
-    """detections: [{class_id, cx, cy, w, h, confidence}]。そのプロジェクトの推論結果を置き換える。"""
+) -> dict[str, int]:
+    """detections: [{class_id, cx, cy, w, h, confidence}]。そのプロジェクトの推論結果を置き換え、
+    kind ごとの件数を返す。"""
     clear_predictions(db, project.id)
-    count = 0
+    counts = {"symbol": 0, "region": 0}
     for d in detections:
         cx, cy, w, h = sanitize_box(d["cx"], d["cy"], d["w"], d["h"])
         if w <= 0 or h <= 0:
             continue
+        kind = detection_kind(w, h)
         db.add(
             Prediction(
                 project_id=project.id,
@@ -71,11 +74,12 @@ def _record_predictions(
                 w=w,
                 h=h,
                 confidence=d.get("confidence"),
+                kind=kind,
             )
         )
-        count += 1
+        counts[kind] += 1
     db.flush()
-    return count
+    return counts
 
 
 def run_inference(
@@ -155,8 +159,9 @@ def run_inference(
                 raise RuntimeError(f"図面画像が見つかりません: {project.name}")
             from services.structure_service import analyze_project
 
-            structure = analyze_project(project, model, detections)
-        count = _record_predictions(
+            symbol_detections = [d for d in detections if detection_kind(d["w"], d["h"]) == "symbol"]
+            structure = analyze_project(project, model, symbol_detections)
+        counts = _record_predictions(
             db, project, detections, model, model_label=model.name
         )
         if structure is not None:
@@ -167,7 +172,8 @@ def run_inference(
             {
                 "project_id": project.id,
                 "name": project.name,
-                "detections": count,
+                "detections": counts["symbol"],
+                "region_count": counts["region"],
                 "skipped_images": skipped_images,
                 **({
                     "structure_available": True,
@@ -282,10 +288,15 @@ def import_predictions_zip(db: Session, blob: bytes, source_label: str) -> dict:
         if project is None:
             missing_ids.append(project_id)
             continue
-        count = _record_predictions(
+        counts = _record_predictions(
             db, project, by_project[project_id], model=None, model_label=source_label
         )
-        results.append({"project_id": project_id, "name": project.name, "detections": count})
+        results.append({
+            "project_id": project_id,
+            "name": project.name,
+            "detections": counts["symbol"],
+            "region_count": counts["region"],
+        })
     db.commit()
     return {
         "results": results,
@@ -296,7 +307,10 @@ def import_predictions_zip(db: Session, blob: bytes, source_label: str) -> dict:
 
 
 def predictions_payload(db: Session, project: AnnotationProject) -> dict:
-    """結果表示用 JSON。モデル情報＋検出一覧（クラス名・信頼度つき）。"""
+    """結果表示用 JSON。モデル情報＋検出一覧（クラス名・信頼度つき）。
+
+    detections / count はシンボル候補のみ。領域枠は regions / region_count に分ける。
+    """
     cls_by_id = {c.id: c for c in classes_ordered(db)}
     rows = (
         db.query(Prediction)
@@ -306,37 +320,40 @@ def predictions_payload(db: Session, project: AnnotationProject) -> dict:
     )
     model_labels = {r.model_label for r in rows if r.model_label}
     model_ids = {r.model_id for r in rows if r.model_id is not None}
+
+    def item(r: Prediction) -> dict:
+        cls = cls_by_id.get(r.class_id)
+        return {
+            "class_key": cls.key if cls else "other",
+            "class_label": cls.label if cls else "その他",
+            "yolo_index": cls.yolo_index if cls else 0,
+            "cx": r.cx,
+            "cy": r.cy,
+            "w": r.w,
+            "h": r.h,
+            "confidence": r.confidence,
+        }
+
+    symbols = [item(r) for r in rows if r.kind == "symbol"]
+    regions = [item(r) for r in rows if r.kind == "region"]
     return {
         "project_id": project.id,
         "name": project.name,
         # 複数ソースが混ざる場合は「出どころが一意でない」として None を返す
         "model_label": next(iter(model_labels)) if len(model_labels) == 1 else None,
         "model_id": next(iter(model_ids)) if len(model_ids) == 1 else None,
-        "count": len(rows),
-        "detections": [
-            {
-                "class_key": (cls_by_id.get(r.class_id).key if cls_by_id.get(r.class_id) else "other"),
-                "class_label": (
-                    cls_by_id.get(r.class_id).label if cls_by_id.get(r.class_id) else "その他"
-                ),
-                "yolo_index": (
-                    cls_by_id.get(r.class_id).yolo_index if cls_by_id.get(r.class_id) else 0
-                ),
-                "cx": r.cx,
-                "cy": r.cy,
-                "w": r.w,
-                "h": r.h,
-                "confidence": r.confidence,
-            }
-            for r in rows
-        ],
+        "count": len(symbols),
+        "detections": symbols,
+        "regions": regions,
+        "region_count": len(regions),
     }
 
 
 def predictions_summary(db: Session) -> list[dict]:
-    """プロジェクトごとの推論結果件数（一覧表示用）。"""
+    """プロジェクトごとのシンボル候補の件数（一覧表示用）。領域枠は数えない。"""
     rows = (
         db.query(Prediction.project_id, Prediction.model_label, Prediction.id)
+        .filter(Prediction.kind == "symbol")
         .order_by(Prediction.id.asc())
         .all()
     )

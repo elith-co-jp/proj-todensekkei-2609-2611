@@ -228,6 +228,8 @@ class Prediction(Base):
     w = Column(Float, nullable=False)
     h = Column(Float, nullable=False)
     confidence = Column(Float, nullable=True)
+    kind = Column(String(20), nullable=False, default="symbol", server_default="symbol")
+    # kind: symbol=シンボル候補 / region=作図領域・DI 範囲などの大枠（シンボル件数に含めない）
     created_at = Column(DateTime, default=utc_now_naive)
 
     project = relationship("AnnotationProject", back_populates="predictions")

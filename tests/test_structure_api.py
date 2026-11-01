@@ -14,7 +14,7 @@ from tests.conftest import SAMPLE_ANNOTATION, create_project
 from tests.test_ml_cycle import _predictions_zip, _upload_model
 
 
-def _fake_detector(monkeypatch, *, empty=False):
+def _fake_detector(monkeypatch, *, empty=False, xywhn=None):
     import services.inference_service as inference
 
     class Array:
@@ -24,9 +24,9 @@ def _fake_detector(monkeypatch, *, empty=False):
         def tolist(self):
             return self.values
 
+    rows = [] if empty else (xywhn or [[0.2, 0.5, 0.1, 0.1]])
     boxes = SimpleNamespace(
-        xywhn=Array([] if empty else [[0.2, 0.5, 0.1, 0.1]]),
-        conf=Array([] if empty else [0.9]), cls=Array([] if empty else [0]),
+        xywhn=Array(rows), conf=Array([0.9] * len(rows)), cls=Array([0] * len(rows)),
     )
     detector = SimpleNamespace(names={0: "connector"}, predict=lambda *a, **k: [SimpleNamespace(boxes=boxes)])
     monkeypatch.setattr(inference, "ultralytics_available", lambda: True)

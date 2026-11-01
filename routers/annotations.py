@@ -162,14 +162,14 @@ def list_projects(q: str | None = Query(default=None), db: Session = Depends(get
                 AnnotationProject.name.ilike(like) | AnnotationProject.sheet_no.ilike(like)
             )
     # 件数は行ごとの relationship 読み込みではなく集計クエリで取る（N+1 回避）
-    def _counts(model, key_col):
+    def _counts(model, key_col, *criteria):
         return dict(
-            db.query(key_col, func.count(model.id)).group_by(key_col).all()
+            db.query(key_col, func.count(model.id)).filter(*criteria).group_by(key_col).all()
         )
 
     symbol_counts = _counts(AnnotationSymbol, AnnotationSymbol.project_id)
     connection_counts = _counts(Connection, Connection.project_id)
-    prediction_counts = _counts(Prediction, Prediction.project_id)
+    prediction_counts = _counts(Prediction, Prediction.project_id, Prediction.kind == "symbol")
     terminal_counts = dict(
         db.query(AnnotationSymbol.project_id, func.count(SymbolTerminal.id))
         .join(SymbolTerminal, SymbolTerminal.symbol_id == AnnotationSymbol.id)
@@ -339,7 +339,7 @@ def stats(db: Session = Depends(get_db)):
         .group_by(AnnotationSymbol.origin)
         .all()
     )
-    prediction_total = db.query(Prediction).count()
+    prediction_total = db.query(Prediction).filter(Prediction.kind == "symbol").count()
     return {
         "project_count": len(projects),
         "symbol_count": symbols,

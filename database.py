@@ -13,6 +13,7 @@ from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 from runtime import data_base
+from services.detection_rules import detection_kind
 
 DATA_DIR = Path(os.environ.get("SEQANNO_DATA_DIR", data_base() / "data"))
 DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -68,11 +69,27 @@ def _migrate_columns() -> None:
         statements.append(
             "ALTER TABLE training_runs ADD COLUMN baseline_label VARCHAR(500)"
         )
+    prediction_cols = {c["name"] for c in inspector.get_columns("predictions")}
+    backfill_prediction_kind = "kind" not in prediction_cols
+    if backfill_prediction_kind:
+        statements.append(
+            "ALTER TABLE predictions ADD COLUMN kind VARCHAR(20) NOT NULL DEFAULT 'symbol'"
+        )
     if not statements:
         return
     with engine.begin() as conn:
         for stmt in statements:
             conn.execute(text(stmt))
+        if backfill_prediction_kind:
+            _backfill_prediction_kind(conn)
+
+
+def _backfill_prediction_kind(conn) -> None:
+    """列追加前の推論結果にも同じ規則を当て、再推論しなくても件数が揃うようにする。"""
+    rows = conn.execute(text("SELECT id, w, h FROM predictions")).all()
+    region_ids = [{"id": row.id} for row in rows if detection_kind(row.w, row.h) == "region"]
+    if region_ids:
+        conn.execute(text("UPDATE predictions SET kind = 'region' WHERE id = :id"), region_ids)
 
 
 def init_db() -> None:
