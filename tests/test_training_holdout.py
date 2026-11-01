@@ -39,8 +39,12 @@ def _write(ids: list[int], run_dir: Path, holdout: bool):
     return yaml.safe_load(Path(data_yaml).read_text(encoding="utf-8")), scope
 
 
+ROTATED = ("_r90", "_r270")
+
+
 def _project_ids_in(folder: Path, suffix: str) -> list[int]:
-    return sorted(int(f.name.split("_", 1)[0][1:]) for f in folder.glob(f"*{suffix}"))
+    """回転コピーを除いた、元の図面の id。"""
+    return sorted(int(f.name.split("_", 1)[0][1:]) for f in folder.glob(f"*{suffix}") if not f.stem.endswith(ROTATED))
 
 
 def test_wire_bend_marks_are_left_out_of_training_labels(client, tmp_path):
@@ -53,8 +57,31 @@ def test_wire_bend_marks_are_left_out_of_training_labels(client, tmp_path):
     assert client.put(f"/api/projects/{pid}/annotations", json=annotation).status_code == 200
     _write([pid], tmp_path, holdout=False)
 
-    lines = next((tmp_path / "dataset" / "labels" / "train").glob("*.txt")).read_text().splitlines()
+    original = [f for f in (tmp_path / "dataset" / "labels" / "train").glob("*.txt") if not f.stem.endswith(ROTATED)]
+    lines = original[0].read_text().splitlines()
     assert sorted(line.split()[1] for line in lines) == ["0.500000", "0.800000"]
+
+
+def test_training_drawings_get_copies_turned_both_ways_and_evaluation_drawings_do_not(client, tmp_path):
+    ids = _drawings(client, 6)
+    annotation = {"symbols": [{"class_key": "relay_coil", "cx": 0.9, "cy": 0.2, "w": 0.1, "h": 0.04}], "connections": []}
+    for pid in ids:
+        assert client.put(f"/api/projects/{pid}/annotations", json=annotation).status_code == 200
+    _write(ids, tmp_path, holdout=True)
+
+    dataset = tmp_path / "dataset"
+    train = sorted(f.stem for f in (dataset / "labels" / "train").glob("*.txt"))
+    val = sorted(f.stem for f in (dataset / "labels" / "val").glob("*.txt"))
+    assert not [s for s in val if s.endswith(ROTATED)]
+    originals = [s for s in train if not s.endswith(ROTATED)]
+    assert sorted(train) == sorted([*originals, *(s + r for s in originals for r in ROTATED)])
+    stem = originals[0]
+    boxes = {r: (dataset / "labels" / "train" / f"{stem}{r}.txt").read_text().split()[1:] for r in ROTATED}
+    # 右上の記号は、反時計回りに 90° 回すと左上、270° 回すと右下に来て、縦横が入れ替わる。
+    assert boxes["_r90"] == ["0.200000", "0.100000", "0.040000", "0.100000"]
+    assert boxes["_r270"] == ["0.800000", "0.900000", "0.040000", "0.100000"]
+    for r in ROTATED:
+        assert (dataset / "images" / "train" / f"{stem}{r}.png").exists()
 
 
 def test_six_drawings_hold_one_out_for_evaluation(client, tmp_path):

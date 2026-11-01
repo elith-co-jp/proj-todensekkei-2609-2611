@@ -34,6 +34,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from analyze_annotation_graph import build_project_graph, parse_member  # noqa: E402
 
 from services.detection_rules import detection_kind  # noqa: E402
+from services.rotation_copies import rotate_box, rotate_image, rotated_copy  # noqa: E402
 
 DEFAULT_RECIPE: dict[str, Any] = {
     "model": "yolo11n.pt",
@@ -250,13 +251,19 @@ def write_fold_dataset(root: Path, drawings: list[dict[str, Any]], train_sheets:
     for d in drawings:
         if d["sheet"] not in train_sheets:
             continue
-        (images / f"{d['sheet']}.png").write_bytes(d["image"])
         lines = [
             f"{index_of[s['class_key']]} {s['cx']:.6f} {s['cy']:.6f} {s['w']:.6f} {s['h']:.6f}"
             for s in d["project"]["symbols"]
             if not (recipe_drops_wire_bends() and is_wire_bend(s))
         ]
-        (labels / f"{d['sheet']}.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
+        label_text = "\n".join(lines) + "\n"
+        (images / f"{d['sheet']}.png").write_bytes(d["image"])
+        (labels / f"{d['sheet']}.txt").write_text(label_text, encoding="utf-8")
+        # Rotated copies of training drawings only: a test drawing never reaches training in any orientation.
+        for degrees in RECIPE.get("rotated_copies", ()):
+            png, rotated = rotated_copy(d["image"], label_text, degrees)
+            (images / f"{d['sheet']}_r{degrees}.png").write_bytes(png)
+            (labels / f"{d['sheet']}_r{degrees}.txt").write_text(rotated, encoding="utf-8")
     for i, (png, label_text) in enumerate(extra):
         (images / f"extra_{i:04d}.png").write_bytes(png)
         (labels / f"extra_{i:04d}.txt").write_text(label_text, encoding="utf-8")
@@ -375,6 +382,36 @@ def recipe_drops_wire_bends() -> bool:
     return bool(RECIPE.get("drop_wire_bends"))
 
 
+def rotated_drawing(drawing: dict[str, Any], degrees: int) -> dict[str, Any]:
+    """The drawing turned counter-clockwise by degrees (90 or 270), gold boxes turned with it."""
+    project = dict(drawing["project"])
+    project["image_width"], project["image_height"] = project["image_height"], project["image_width"]
+    project["symbols"] = [
+        {**s, **dict(zip(("cx", "cy", "w", "h"), rotate_box(s["cx"], s["cy"], s["w"], s["h"], degrees), strict=True))}
+        for s in project["symbols"]
+    ]
+    return {**drawing, "image": rotate_image(drawing["image"], degrees), "project": project}
+
+
+def score_rotated(args: argparse.Namespace, drawings: list[dict[str, Any]], degrees: int) -> None:
+    """Score each fold's saved model on its own test drawings turned by degrees (customer: 横書きの図面)."""
+    by_sheet = {d["sheet"]: d for d in drawings}
+    tot: Counter = Counter()
+    per_class: dict[str, Counter] = {}
+    for fold_index, test_sheets in enumerate(folds_of(drawings, args.folds)):
+        weights = args.work / f"fold{fold_index}" / "train" / "weights" / "last.pt"
+        for sheet in test_sheets:
+            turned = rotated_drawing(by_sheet[sheet], degrees)
+            scored = score_symbols(gold_items(turned), predict(weights, RECIPE, turned, RECIPE["conf"]))
+            tot.update({k: scored["aware"][k] for k in ("tp", "fp", "fn")})
+            for name, counts in scored["per_class"].items():
+                per_class.setdefault(name, Counter()).update(counts)
+    print(json.dumps({
+        "run": args.work.name, "degrees": degrees, "symbol_f1": prf(tot["tp"], tot["fp"], tot["fn"]),
+        "per_class_f1": {name: prf(c["tp"], c["fp"], c["fn"])["f1"] for name, c in sorted(per_class.items())},
+    }, ensure_ascii=False))
+
+
 def rescore(args: argparse.Namespace, drawings: list[dict[str, Any]]) -> None:
     """Score saved predictions of a finished run again, e.g. under --strict-iou."""
     rows = []
@@ -408,6 +445,8 @@ def main() -> None:
     parser.add_argument("--rescore", action="store_true", help="score the saved predictions under --work without training")
     parser.add_argument("--strict-iou", action="store_true", help="match dots by box IoU too (the pre-2026-11 rule)")
     parser.add_argument("--train-all", action="store_true", help="train one model on every drawing with the recipe (no scoring)")
+    parser.add_argument("--score-rotated", type=int, choices=(90, 270),
+                        help="score the saved fold models on their test drawings turned by this many degrees (no training)")
     args = parser.parse_args()
 
     recipe = {**DEFAULT_RECIPE, **(json.loads(args.recipe.read_text()) if args.recipe else {})}
@@ -417,6 +456,9 @@ def main() -> None:
     CLASS_KEYS, drawings = load_gold(args.gold)
     if args.rescore:
         rescore(args, drawings)
+        return
+    if args.score_rotated:
+        score_rotated(args, drawings, args.score_rotated)
         return
     if args.train_all:
         data_yaml = write_fold_dataset(args.work / "all" / "dataset", drawings, {d["sheet"] for d in drawings}, [])

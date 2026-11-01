@@ -36,6 +36,7 @@ from services.model_service import (
     serialize_model,
     store_model_bytes,
 )
+from services.rotation_copies import ROTATED_COPY_DEGREES, rotated_copy
 
 DEFAULT_BASE_MODEL = "yolov8n.pt"
 _LOG_TAIL_LIMIT = 4000
@@ -159,8 +160,15 @@ def _write_dataset(
             if not src.exists():
                 continue
             base = project_image_stem(project, image)
-            (images_dir / f"{base}.png").write_bytes(src.read_bytes())
+            png = src.read_bytes()
+            (images_dir / f"{base}.png").write_bytes(png)
             (labels_dir / f"{base}.txt").write_text(label_content, encoding="utf-8")
+            if split == "train":
+                # 横書き（90° 回した）図面・シンボルも読めるよう、学習用の図面だけ両方向に回したコピーを足す（#42）。
+                for degrees in ROTATED_COPY_DEGREES:
+                    rotated_png, rotated_label = rotated_copy(png, label_content, degrees)
+                    (images_dir / f"{base}_r{degrees}.png").write_bytes(rotated_png)
+                    (labels_dir / f"{base}_r{degrees}.txt").write_text(rotated_label, encoding="utf-8")
 
     train_ids = [p.id for p in drawings if p.id not in val_ids]
     if val_ids:
