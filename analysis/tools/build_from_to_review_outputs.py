@@ -5,6 +5,7 @@ import csv
 import json
 import math
 from collections import Counter, defaultdict
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -562,6 +563,8 @@ def build_predicted_graph_pairs(
     bridge_stats: Counter[str] | None = None,
     endpoint_bridge_max: float = 0.0,
     wire_gap_bridge_outward_only: bool = False,
+    gap_blank_run: Callable[[tuple[float, float], tuple[float, float]], int] | None = None,
+    wire_gap_bridge_max_blank: float = 0.0,
 ) -> set[tuple[str, str]]:
     nodes_by_id = {str(node["id"]): node for node in payload.get("nodes", [])}
     edges = list(payload.get("edges", []))
@@ -841,6 +844,11 @@ def build_predicted_graph_pairs(
                         # symbol terminal sitting on the junction point.
                         if not (is_wire_end and gap <= endpoint_bridge_max):
                             continue
+                    # Markers on a wire (numbered circles, wire-number boxes) leave short blanks;
+                    # a long blank stretch is open paper, e.g. between the + and - dots of a card.
+                    if gap_blank_run is not None and wire_gap_bridge_max_blank > 0 and gap_blank_run(point, projection) > wire_gap_bridge_max_blank:
+                        stats["wire_gap_bridge_rejected_blank_count"] += 1
+                        continue
                     candidate = (gap, target_edge_id, t, projection, str(target.get("wire_id") or ""))
                     if endpoint_key not in best_by_endpoint or gap < best_by_endpoint[endpoint_key][0]:
                         best_by_endpoint[endpoint_key] = candidate

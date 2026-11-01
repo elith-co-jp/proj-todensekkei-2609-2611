@@ -106,7 +106,7 @@ def analyze_detections(
         junction_node_policy="all",
         junction_node_classes={"junction"}, junction_node_threshold=24.0, source_image=image,
     )
-    payload["from_to"] = build_direct_from_to(payload)
+    payload["from_to"] = build_direct_from_to(payload, source_image=image)
     payload.update({
         "schema_version": "todensekkei.sequence_extraction.v1",
         "status": "partial" if warnings else "completed",

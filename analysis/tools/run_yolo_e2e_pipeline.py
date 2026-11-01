@@ -11,7 +11,7 @@ from typing import Any
 
 from PIL import Image, ImageDraw
 
-from analyze_pdf_structure import WIRE_GEOMETRY_REVISION, analyze_page, make_binary_mask
+from analyze_pdf_structure import WIRE_GEOMETRY_REVISION, analyze_page, make_binary_mask, support_vector_for_span
 from analyze_annotation_graph import load_zip_payload, symbol_bbox
 from build_from_to_review_outputs import build_predicted_graph_pairs
 from build_e2e_demo_outputs import (
@@ -77,6 +77,9 @@ DIRECT_TERMINAL_TERMINAL_BRIDGE_MAX = 140.0
 DIRECT_ENDPOINT_BRIDGE_MAX = 60.0
 # Join a wire end to a nearby perpendicular wire only past that end, never back over its own span.
 DIRECT_WIRE_GAP_BRIDGE_OUTWARD_ONLY = True
+# Longest run of blank pixels (at 150 dpi) a wire-gap bridge may cross. Markers on a wire stay
+# under about 38 px; the space between a card's + and - dots is over 50 px. 0 disables the check.
+DIRECT_WIRE_GAP_BRIDGE_MAX_BLANK = 45.0
 # Classes whose electrical port is wherever a wire meets the box; when such a
 # symbol has no terminal link, attach it to every wire touching its bbox.
 TOUCHING_WIRE_FALLBACK_CLASSES = {"connector", "junction", "power_bus", "terminal"}
@@ -1639,9 +1642,31 @@ def build_direct_terminal_records(
     return records, terminal_by_key
 
 
-def build_direct_from_to(payload: dict[str, Any]) -> dict[str, Any]:
+def blank_run_measure(source_image: Image.Image) -> Any:
+    binary = make_binary_mask(source_image)
+    scale = source_image.width / 1755
+
+    def longest_blank(start: tuple[float, float], end: tuple[float, float]) -> int:
+        (x0, y0), (x1, y1) = start, end
+        if abs(x1 - x0) >= abs(y1 - y0):
+            lo, hi = sorted((round(x0), round(x1)))
+            support = support_vector_for_span(binary, "h", round((y0 + y1) / 2), lo, hi + 1, half_width=2)
+        else:
+            lo, hi = sorted((round(y0), round(y1)))
+            support = support_vector_for_span(binary, "v", round((x0 + x1) / 2), lo, hi + 1, half_width=2)
+        longest = run = 0
+        for inked in support:
+            run = 0 if inked else run + 1
+            longest = max(longest, run)
+        return round(longest / scale)
+
+    return longest_blank
+
+
+def build_direct_from_to(payload: dict[str, Any], source_image: Image.Image | None = None) -> dict[str, Any]:
     terminal_records, terminal_by_key = build_direct_terminal_records(payload)
     bridge_stats: Counter[str] = Counter()
+    blank_run = blank_run_measure(source_image) if source_image is not None and DIRECT_WIRE_GAP_BRIDGE_MAX_BLANK > 0 else None
     pairs = build_predicted_graph_pairs(
         payload,
         terminal_records,
@@ -1661,6 +1686,8 @@ def build_direct_from_to(payload: dict[str, Any]) -> dict[str, Any]:
         bridge_stats=bridge_stats,
         endpoint_bridge_max=DIRECT_ENDPOINT_BRIDGE_MAX,
         wire_gap_bridge_outward_only=DIRECT_WIRE_GAP_BRIDGE_OUTWARD_ONLY,
+        gap_blank_run=blank_run,
+        wire_gap_bridge_max_blank=DIRECT_WIRE_GAP_BRIDGE_MAX_BLANK,
     )
     valid_pairs = sorted(
         pair for pair in pairs if pair[0] in terminal_by_key and pair[1] in terminal_by_key
@@ -1717,6 +1744,7 @@ def build_direct_from_to(payload: dict[str, Any]) -> dict[str, Any]:
             "terminal_terminal_bridge_classes": sorted(DIRECT_TERMINAL_TERMINAL_BRIDGE_CLASSES),
             "terminal_terminal_bridge_max": DIRECT_TERMINAL_TERMINAL_BRIDGE_MAX,
             "wire_gap_bridge_outward_only": DIRECT_WIRE_GAP_BRIDGE_OUTWARD_ONLY,
+            "wire_gap_bridge_max_blank": DIRECT_WIRE_GAP_BRIDGE_MAX_BLANK if blank_run is not None else 0.0,
             "bridge_stats": dict(sorted(bridge_stats.items())),
         },
     }
