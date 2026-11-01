@@ -43,6 +43,20 @@ def _project_ids_in(folder: Path, suffix: str) -> list[int]:
     return sorted(int(f.name.split("_", 1)[0][1:]) for f in folder.glob(f"*{suffix}"))
 
 
+def test_wire_bend_marks_are_left_out_of_training_labels(client, tmp_path):
+    pid = create_project(client, "sheet0.png")
+    annotation = {"symbols": [
+        {"class_key": "relay_coil", "label": "33HB", "cx": 0.5, "cy": 0.5, "w": 0.1, "h": 0.1},
+        {"class_key": "other", "label": "分岐点", "cx": 0.2, "cy": 0.2, "w": 0.02, "h": 0.02},
+        {"class_key": "other", "label": "カード", "cx": 0.8, "cy": 0.8, "w": 0.1, "h": 0.1},
+    ], "connections": []}
+    assert client.put(f"/api/projects/{pid}/annotations", json=annotation).status_code == 200
+    _write([pid], tmp_path, holdout=False)
+
+    lines = next((tmp_path / "dataset" / "labels" / "train").glob("*.txt")).read_text().splitlines()
+    assert sorted(line.split()[1] for line in lines) == ["0.500000", "0.800000"]
+
+
 def test_six_drawings_hold_one_out_for_evaluation(client, tmp_path):
     ids = _drawings(client, 6)
     data, scope = _write(ids, tmp_path, holdout=True)

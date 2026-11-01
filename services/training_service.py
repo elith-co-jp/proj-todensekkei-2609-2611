@@ -153,7 +153,7 @@ def _write_dataset(
         labels_dir = dataset_dir / "labels" / split
         images_dir.mkdir(parents=True, exist_ok=True)
         labels_dir.mkdir(parents=True, exist_ok=True)
-        label_content = build_label_content(db, project)
+        label_content = build_label_content(db, project, skip_wire_bends=True)
         for image in project.images:
             src = image_path(image.sha256)
             if not src.exists():
