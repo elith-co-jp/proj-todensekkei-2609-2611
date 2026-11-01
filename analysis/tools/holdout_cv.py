@@ -49,6 +49,16 @@ DEFAULT_RECIPE: dict[str, Any] = {
     "predict_args": {"max_det": 1000},
 }
 MATCH_IOU = 0.5
+# Dots are 8-15 px wide, so box IoU mostly measures how big the annotator drew the box.
+POINT_CLASSES = {"junction", "power_bus"}
+POINT_MATCH_PX = 12.0
+# Annotators boxed wire bends as other/分岐点 only to route from-to wiring; they are not symbols.
+WIRE_BEND_LABEL = "分岐点"
+STRICT_IOU = False
+
+
+def is_wire_bend(symbol: dict[str, Any]) -> bool:
+    return symbol.get("class_key") == "other" and (symbol.get("label") or "").strip() == WIRE_BEND_LABEL
 
 
 def sheet_of(project: dict[str, Any]) -> str:
@@ -115,17 +125,28 @@ def gold_items(drawing: dict[str, Any]) -> list[dict[str, Any]]:
             "bbox": to_box(s["cx"], s["cy"], s["w"], s["h"], width, height),
         }
         for s in project["symbols"]
+        if not is_wire_bend(s)
     ]
 
 
+def similarity(g: dict[str, Any], p: dict[str, Any]) -> float:
+    """IoU for boxed symbols; for dots, 1 at the same centre falling to MATCH_IOU at POINT_MATCH_PX."""
+    if g["class_name"] in POINT_CLASSES and not STRICT_IOU:
+        gx, gy = (g["bbox"]["x0"] + g["bbox"]["x1"]) / 2, (g["bbox"]["y0"] + g["bbox"]["y1"]) / 2
+        px, py = (p["bbox"]["x0"] + p["bbox"]["x1"]) / 2, (p["bbox"]["y0"] + p["bbox"]["y1"]) / 2
+        distance = ((gx - px) ** 2 + (gy - py) ** 2) ** 0.5
+        return 1.0 - (1.0 - MATCH_IOU) * distance / POINT_MATCH_PX if distance <= POINT_MATCH_PX else 0.0
+    return iou(g["bbox"], p["bbox"])
+
+
 def match(gold: list[dict[str, Any]], pred: list[dict[str, Any]], *, class_aware: bool) -> list[tuple[int, int, float]]:
-    """Greedy one-to-one matching by IoU, highest first."""
+    """Greedy one-to-one matching, highest similarity first."""
     pairs = sorted(
         (
             (score, gi, pi)
             for gi, g in enumerate(gold)
             for pi, p in enumerate(pred)
-            if (not class_aware or g["class_name"] == p["class_name"]) and (score := iou(g["bbox"], p["bbox"])) >= MATCH_IOU
+            if (not class_aware or g["class_name"] == p["class_name"]) and (score := similarity(g, p)) >= MATCH_IOU
         ),
         reverse=True,
     )
@@ -233,6 +254,7 @@ def write_fold_dataset(root: Path, drawings: list[dict[str, Any]], train_sheets:
         lines = [
             f"{index_of[s['class_key']]} {s['cx']:.6f} {s['cy']:.6f} {s['w']:.6f} {s['h']:.6f}"
             for s in d["project"]["symbols"]
+            if not (recipe_drops_wire_bends() and is_wire_bend(s))
         ]
         (labels / f"{d['sheet']}.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
     for i, (png, label_text) in enumerate(extra):
@@ -346,10 +368,34 @@ def evaluate(drawing: dict[str, Any], pred: list[dict[str, Any]], structure: dic
 
 
 CLASS_KEYS: list[str] = []
+RECIPE: dict[str, Any] = {}
+
+
+def recipe_drops_wire_bends() -> bool:
+    return bool(RECIPE.get("drop_wire_bends"))
+
+
+def rescore(args: argparse.Namespace, drawings: list[dict[str, Any]]) -> None:
+    """Score saved predictions of a finished run again, e.g. under --strict-iou."""
+    rows = []
+    by_sheet = {d["sheet"]: d for d in drawings}
+    for pred_file in sorted(args.work.glob("fold*/pred/*.json")):
+        drawing = by_sheet[pred_file.stem]
+        width, height = int(drawing["project"]["image_width"]), int(drawing["project"]["image_height"])
+        pred = json.loads(pred_file.read_text(encoding="utf-8"))
+        for p in pred:
+            p["bbox"] = to_box(p["cx"], p["cy"], p["w"], p["h"], width, height)
+        row = evaluate(drawing, pred, None)
+        row["fold"] = int(pred_file.parent.parent.name.removeprefix("fold"))
+        rows.append(row)
+    summary = summarize(rows)
+    print(json.dumps({"drawings": summary["drawings"], "strict_iou": STRICT_IOU, "symbol_f1": summary["symbol_f1"],
+                      "type_accuracy": summary["type_accuracy"], "per_class": summary["per_class"],
+                      "confusion": summary["confusion"]}, ensure_ascii=False))
 
 
 def main() -> None:
-    global CLASS_KEYS
+    global CLASS_KEYS, RECIPE, STRICT_IOU
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--gold", type=Path, nargs="+", required=True)
     parser.add_argument("--work", type=Path, required=True)
@@ -359,11 +405,18 @@ def main() -> None:
     parser.add_argument("--weights", type=Path, help="score one fixed model on every drawing instead of training per fold")
     parser.add_argument("--structure", action="store_true", help="also run wire analysis and score connection pairs")
     parser.add_argument("--extra-labels", type=Path, help="directory of <fold>/<name>.png + .txt pseudo labels per fold")
+    parser.add_argument("--rescore", action="store_true", help="score the saved predictions under --work without training")
+    parser.add_argument("--strict-iou", action="store_true", help="match dots by box IoU too (the pre-2026-11 rule)")
     args = parser.parse_args()
 
     recipe = {**DEFAULT_RECIPE, **(json.loads(args.recipe.read_text()) if args.recipe else {})}
+    RECIPE = recipe
+    STRICT_IOU = args.strict_iou
     args.work = args.work.resolve()
     CLASS_KEYS, drawings = load_gold(args.gold)
+    if args.rescore:
+        rescore(args, drawings)
+        return
     by_sheet = {d["sheet"]: d for d in drawings}
     folds = folds_of(drawings, args.folds)
     args.work.mkdir(parents=True, exist_ok=True)
