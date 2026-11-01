@@ -305,9 +305,19 @@ def best_label(crop_label: str, page_label: str, lexicon: Counter) -> str:
 
 
 def sheet_number_candidates(items: list[TextItem], width: int, height: int) -> list[dict[str, Any]]:
+    """シート番号の候補。表題欄が破れて末尾の 1 文字が欠けた読み（ER2107）は、欄外の完全な番号
+    （ER21070）に寄せる。改訂欄の図番（ER21029D04）はシート番号の 3 文字先まで続くので対象にしない。"""
     from services.sheet_number_service import pick_sheet_number_candidates
 
-    return pick_sheet_number_candidates(items, width, height)
+    candidates = pick_sheet_number_candidates(items, width, height)
+    merged = []
+    for candidate in candidates:
+        text = candidate["text"]
+        if any(c["text"].startswith(text) and len(c["text"]) == len(text) + 1 for c in candidates):
+            continue
+        prefixes = [c["score"] for c in candidates if text.startswith(c["text"]) and len(text) == len(c["text"]) + 1]
+        merged.append({**candidate, "score": max([candidate["score"], *prefixes])})
+    return sorted(merged, key=lambda c: c["score"], reverse=True)
 
 
 def sheet_references(items: list[TextItem], symbols: list[dict[str, Any]]) -> list[dict[str, Any]]:

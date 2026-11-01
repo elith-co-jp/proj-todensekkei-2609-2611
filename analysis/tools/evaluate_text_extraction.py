@@ -386,9 +386,12 @@ def main() -> None:
         out["refs"] = eval_refs(drawings, ocr, preds_for, args.baseline)
     if "sheet" in metrics:
         out["sheet_gold"] = eval_sheet([(d["sheet"], d["sheet"], d["image"]) for d in drawings], ocr, args.baseline)
-        if args.unseen_pages and args.sheet_gt and args.split != "tune":
+        if args.unseen_pages and args.sheet_gt:
             truth = json.loads(args.sheet_gt.read_text())["unseen"]
-            pages = [(n, s, (args.unseen_pages / f"{n}.png").read_bytes()) for n, s in sorted(truth.items())]
+            names = sorted(truth)
+            # 未学習図面も前半 50 枚だけで調整し、後半 50 枚で報告する。
+            names = {"tune": names[:50], "report": names[50:], "all": names}[args.split]
+            pages = [(n, truth[n], (args.unseen_pages / f"{n}.png").read_bytes()) for n in names]
             out["sheet_unseen"] = eval_sheet(pages, ocr, args.baseline)
     if "text_fp" in metrics and args.cv_preds:
         missing = [d["sheet"] for d in drawings if d["sheet"] not in preds]

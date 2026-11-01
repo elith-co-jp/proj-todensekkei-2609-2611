@@ -111,3 +111,13 @@ def test_erase_dots_removes_filled_dots_but_keeps_text_strokes():
     assert out.getpixel((55, 25)) == 255
     assert out.getpixel((10, 30)) == 0
     assert out.getpixel((91, 30)) == 0
+
+
+def test_sheet_number_prefers_full_margin_number_over_torn_title_block():
+    items = [
+        item("シート番号", 1603, 1087, 1650, 1102),
+        item("ER2107", 1603, 1098, 1651, 1116),
+        item("ER21070", 30, 1162, 120, 1186),
+        item("ER21070003", 1326, 1022, 1394, 1040),
+    ]
+    assert tx.sheet_number_candidates(items, 1755, 1241)[0]["text"] == "ER21070"
