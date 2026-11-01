@@ -266,7 +266,7 @@ _REF_PATTERN = re.compile(rf"\(({SHEET_REF})\)|({SHEET_REF})(?:へ|より)")
 RELAY_REF_CLASSES = {"relay_coil", "contact_a", "contact_b"}
 
 
-_CONFUSABLE = ("B8", "I1TL!|", "O0DQ", "NHY", "S5", "Z2", "G6")
+_CONFUSABLE = ("B8", "I1TL!|", "O0DQ", "NHY", "S5", "Z2", "CG6")
 _CLASS_OF = {c: i for i, group in enumerate(_CONFUSABLE) for c in group}
 _WRAP_NOISE = re.compile(r"[0-9I1|!.()]{1,3}")
 
