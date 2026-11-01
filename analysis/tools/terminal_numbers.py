@@ -106,13 +106,24 @@ def _contact_number_fragments(fragments: list[dict[str, Any]]) -> list[dict[str,
 
 
 def contact_numbers(symbol: dict[str, Any]) -> dict[str, str]:
-    """Nearest number to each terminal of a contact, keyed by terminal ref."""
-    numbers = _contact_number_fragments(_fragments(symbol))
+    """Nearest number to each terminal of a contact, keyed by terminal ref.
+
+    Numbers sit on the other side of the contact line from the label; digits on the label side belong to the
+    label (33 HV2111) or to the next contact.
+    """
+    fragments = _fragments(symbol)
+    numbers = _contact_number_fragments(fragments)
+    terminals = symbol.get("terminals") or []
+    words = [f["x"] for f in fragments if re.search("[A-Z]", f["text"])]
+    label_x = sum(words) / len(words) if words else None
     out: dict[str, str] = {}
     used: set[int] = set()
-    for terminal in symbol.get("terminals") or []:
+    for terminal in terminals:
         tx, ty = terminal["point"]
-        ranked = sorted((abs(f["y"] - ty) + 0.5 * abs(f["x"] - tx), i) for i, f in enumerate(numbers) if i not in used)
+        ranked = sorted(
+            (abs(f["y"] - ty) + 0.5 * abs(f["x"] - tx), i) for i, f in enumerate(numbers)
+            if i not in used and (label_x is None or (f["x"] < tx) == (label_x > tx))
+        )
         if ranked and ranked[0][0] <= 30:
             used.add(ranked[0][1])
             out[str(terminal.get("ref"))] = numbers[ranked[0][1]]["text"]
