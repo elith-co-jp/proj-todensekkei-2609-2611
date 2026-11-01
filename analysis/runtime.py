@@ -129,7 +129,7 @@ def analyze_detections(
         junction_node_policy="all",
         junction_node_classes={"junction"}, junction_node_threshold=24.0, source_image=image,
     )
-    terminal_number_counts = attach_terminal_numbers(payload["symbols"])
+    terminal_number_counts = attach_terminal_numbers(payload["symbols"], page_items=text_result.get("texts"))
     payload["from_to"] = build_direct_from_to(payload, source_image=image)
     for symbol in symbols:
         symbol.pop("text_items", None)

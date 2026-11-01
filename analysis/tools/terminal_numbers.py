@@ -20,24 +20,29 @@ DEVICE_PARTS = re.compile(r"(\d*[A-Z]+)([A-Z0-9]*)")
 CONTACT_CLASSES = {"contact_a", "contact_b"}
 # A contact's lower number is printed right after the left neighbour's label and is read fused with it ("(ER21271)6").
 CONTACT_NUMBER = re.compile(r"(?:.*\))?(\d{1,4})[.,]?")
+PAGE_PAD_PX = 8
 # False leaves terminal names as inferred (P1, P2).
 ENABLED = True
+
+
+def _box_fragments(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        {
+            "text": re.sub(r"\s+", "", unicodedata.normalize("NFKC", str(item["text"])).upper()),
+            "x": (item["box"][0] + item["box"][2]) / 2,
+            "y": (item["box"][1] + item["box"][3]) / 2,
+            "h": item["box"][3] - item["box"][1],
+            "x0": item["box"][0],
+            "x1": item["box"][2],
+        }
+        for item in items
+    ]
 
 
 def _fragments(symbol: dict[str, Any]) -> list[dict[str, Any]]:
     """OCR fragments in image coordinates."""
     if symbol.get("text_items") is not None:
-        return [
-            {
-                "text": re.sub(r"\s+", "", unicodedata.normalize("NFKC", str(item["text"])).upper()),
-                "x": (item["box"][0] + item["box"][2]) / 2,
-                "y": (item["box"][1] + item["box"][3]) / 2,
-                "h": item["box"][3] - item["box"][1],
-                "x0": item["box"][0],
-                "x1": item["box"][2],
-            }
-            for item in symbol["text_items"]
-        ]
+        return _box_fragments(symbol["text_items"])
     ocr = symbol.get("label_ocr") or {}
     crop, size = ocr.get("crop_box"), ocr.get("processed_size")
     if not crop or not size:
@@ -113,26 +118,39 @@ def _without_end_circle(f: dict[str, Any], tx: float, label_right: bool) -> str:
     return f["text"]
 
 
-def contact_numbers(symbol: dict[str, Any]) -> dict[str, str]:
+def _page_numbers(symbol: dict[str, Any], page_items: list[dict[str, Any]], crop: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Page OCR numbers inside the contact box that the crop OCR did not read (it drops small digits beside the circle)."""
+    box = symbol["bbox"]
+    inside = [
+        f for f in _contact_number_fragments(_box_fragments(page_items))
+        if box["x0"] - PAGE_PAD_PX <= f["x"] <= box["x1"] + PAGE_PAD_PX and box["y0"] - PAGE_PAD_PX <= f["y"] <= box["y1"] + PAGE_PAD_PX
+    ]
+    return [f for f in inside if not any(c["x0"] - 3 <= f["x"] <= c["x1"] + 3 and abs(c["y"] - f["y"]) <= c["h"] / 2 + 3 for c in crop)]
+
+
+def contact_numbers(symbol: dict[str, Any], page_items: list[dict[str, Any]] | None = None) -> dict[str, str]:
     """Nearest number to each terminal of a contact, keyed by terminal ref.
 
     Numbers sit on the other side of the contact line from the label; digits on the label side belong to the
-    label (33 HV2111) or to the next contact.
+    label (33 HV2111) or to the next contact. Page OCR numbers only fill ends the crop OCR left empty.
     """
     fragments = _fragments(symbol)
     numbers = _contact_number_fragments(fragments)
+    crop_count = len(numbers)
+    if page_items:
+        numbers += _page_numbers(symbol, page_items, fragments)
     terminals = symbol.get("terminals") or []
     words = [f["x"] for f in fragments if re.search("[A-Z]", f["text"])]
     label_x = sum(words) / len(words) if words else None
     pairs = sorted(
-        (abs(f["y"] - ty) + 0.5 * abs(f["x"] - tx), ti, fi)
+        (fi >= crop_count, abs(f["y"] - ty) + 0.5 * abs(f["x"] - tx), ti, fi)
         for ti, (tx, ty) in enumerate(t["point"] for t in terminals)
         for fi, f in enumerate(numbers)
         if label_x is None or (f["x"] < tx) == (label_x > tx)
     )
     out: dict[str, str] = {}
     used: set[int] = set()
-    for distance, ti, fi in pairs:
+    for _, distance, ti, fi in pairs:
         ref = str(terminals[ti].get("ref"))
         if distance <= 30 and ref not in out and fi not in used:
             used.add(fi)
@@ -141,7 +159,7 @@ def contact_numbers(symbol: dict[str, Any]) -> dict[str, str]:
     return out
 
 
-def attach_terminal_numbers(symbols: list[dict[str, Any]]) -> dict[str, int] | None:
+def attach_terminal_numbers(symbols: list[dict[str, Any]], page_items: list[dict[str, Any]] | None = None) -> dict[str, int] | None:
     if not ENABLED:
         return None
     counts = {"connectors": 0, "contact_terminals": 0}
@@ -158,7 +176,7 @@ def attach_terminal_numbers(symbols: list[dict[str, Any]]) -> dict[str, int] | N
                 terminal["name"] = name
             counts["connectors"] += 1
         elif symbol.get("class_name") in CONTACT_CLASSES:
-            numbers = contact_numbers(symbol)
+            numbers = contact_numbers(symbol, page_items)
             for terminal in symbol.get("terminals") or []:
                 if str(terminal.get("ref")) in numbers:
                     terminal["name"] = numbers[str(terminal.get("ref"))]
