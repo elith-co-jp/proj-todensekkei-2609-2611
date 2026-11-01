@@ -516,6 +516,46 @@ def zone_of(box: Any, zones: list[dict[str, Any]]) -> str | None:
 
 
 
+TEXT_NAME_MARGIN_PX = 20
+
+
+def _has_cjk(text: str) -> bool:
+    return any(unicodedata.east_asian_width(c) in "WF" for c in text)
+
+
+def classify_texts(items: list[TextItem], symbols: list[dict[str, Any]], zones: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """読めた文字を書式で分ける: 器具番号・番号（端子番号/電線番号）・行先/来先・リレー端子・名称・注記。
+
+    日本語の文字は、記号の枠（少し広げた範囲）に入れば装置名・信号名称としてその記号に結び付け、
+    入らなければ注記とする。
+    """
+    out = []
+    for item in items:
+        text = normalize(item["text"])
+        compact = text.replace(" ", "")
+        center = _center(item["box"])
+        owner = next((s["id"] for s in symbols if _inside(center, _as_box(s["bbox"]))), None)
+        if _REF_PATTERN.search(compact):
+            kind = "destination"
+        elif _TERMINAL_CELL.match(compact):
+            kind = "relay_terminals"
+        elif _has_cjk(text):
+            owner = owner or next(
+                (s["id"] for s in symbols if _inside(center, _as_box(s["bbox"]), TEXT_NAME_MARGIN_PX)), None)
+            kind = "name" if owner else "note"
+        elif re.fullmatch(r"\d{1,4}", compact):
+            kind = "number"
+        elif re.search(r"[A-Z]", compact) and re.search(r"\d", compact):
+            kind = "device_number"
+        else:
+            kind = "other"
+        out.append({
+            "text": item["text"], "kind": kind, "symbol_id": owner, "zone": zone_of(item["box"], zones),
+            "score": round(item["score"], 3), "box": [round(v, 1) for v in item["box"]],
+        })
+    return out
+
+
 def _relay_key(label: str) -> tuple[str, ...]:
     text = re.sub(rf"\(?{SHEET_REF}\)?", " ", normalize(label))
     return tuple(match_key(t) for t in text.split()[:2])
@@ -569,6 +609,7 @@ def extract_text_structure(
             symbol["text_zone"] = zone
     rows = parse_relay_table(items, width, height)
     return {
+        "texts": classify_texts(items, symbols, zones),
         "relay_table": {"rows": rows, "links": link_relay_table(rows, symbols)},
         "sheet_references": sheet_references(items, symbols),
         "sheet_number_candidates": sheet_number_candidates(items, width, height),

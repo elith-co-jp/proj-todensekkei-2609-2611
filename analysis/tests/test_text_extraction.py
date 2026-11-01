@@ -121,3 +121,20 @@ def test_sheet_number_prefers_full_margin_number_over_torn_title_block():
         item("ER21070003", 1326, 1022, 1394, 1040),
     ]
     assert tx.sheet_number_candidates(items, 1755, 1241)[0]["text"] == "ER21070"
+
+
+def test_texts_are_classified_and_japanese_names_attach_to_symbols():
+    items = [
+        item("(ER21212)", 164, 230, 219, 248),
+        item("33HB", 285, 774, 321, 790),
+        item("101", 313, 309, 334, 323),
+        item("盤異常", 300, 500, 340, 515),
+        item("位置記号無き器具は", 1320, 70, 1440, 86),
+        item("5-9-1", 125, 988, 165, 1007),
+    ]
+    symbols = [{"id": "symbol_001", "bbox": box(272, 745, 333, 830)}, {"id": "symbol_002", "bbox": box(280, 470, 330, 495)}]
+    texts = tx.classify_texts(items, symbols, [])
+    assert [(t["kind"], t["symbol_id"]) for t in texts] == [
+        ("destination", None), ("device_number", "symbol_001"), ("number", None),
+        ("name", "symbol_002"), ("note", None), ("relay_terminals", None),
+    ]
