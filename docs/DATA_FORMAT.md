@@ -213,3 +213,45 @@ YOLO 形式で受け付けるレイアウト:
 | 展開後の合計サイズ | 2 GiB |
 | 圧縮率（10 MB 超のとき） | 25 倍まで |
 | 画像 1 枚あたり | 64 MiB |
+
+## 5. 構造解析結果（structure.json）
+
+AI 改善サイクル画面の構造解析をまとめて書き出したファイル（`POST /api/ml/analysis/export`）。AI の予測だけで作り、人が入力したアノテーションは使わない。
+
+```json
+{
+  "schema_version": "todensekkei.document_structure.v1",
+  "summary": {
+    "page_count": 2, "symbol_count": 92, "wire_count": 140, "from_to_connection_count": 480,
+    "sheet_reference_count": 6, "resolved_sheet_reference_count": 2,
+    "cross_sheet_relay_count": 4, "linked_cross_sheet_relay_count": 3
+  },
+  "pages": [
+    { "schema_version": "todensekkei.sequence_extraction.v1", "sheet_no": "ER21216", "symbols": [], "texts": [] }
+  ]
+}
+```
+
+ページ（`pages[]`）の主な項目は次のとおり。座標は 150 dpi で画像化したページのピクセル。
+
+| 項目 | 内容 |
+|------|------|
+| `sheet_no` | 図面情報で確定したシート番号（未入力なら null） |
+| `symbols[]` | 検出したシンボル。`label` は器具番号のラベル。`status` はリレー表・表題欄の中の検出なら `suppressed_text_zone`（配線に使わない） |
+| `symbols[].terminals[].name` | 端子番号。コネクタは `CN229-6 TB16-102` のように器具名と番号の組 |
+| `symbols[].terminal_numbers[]` | コネクタの器具名（`device`）と番号（`number`）の組 |
+| `symbols[].dot_role` | 黒丸の役割。`terminal`（左右に文字がある端子）、`junction`（3 方向以上に配線が分かれる分岐点）、`review`（判定できない）。同じ黒丸の重複検出は `suppressed: true` |
+| `symbols[].relay_link` | 書き出し時だけ付く。ラベルに別のシート番号がある接点・コイルについて、その図面（`project_id`）の同じ器具番号のコイル（`coil_symbol_ids`）とリレー表の行番号（`relay_table_rows`）。参照先の図面を同時に書き出していなければ付かない |
+| `symbols[].label_source` | `llm` のときローカル LLM が読み直したラベル。元の OCR の読みは `ocr_label` |
+| `texts[]` | 読めた文字。`kind` は `device_number`（器具番号）、`number`（端子番号・電線番号）、`destination`（行先・来先）、`relay_terminals`（リレー端子 5-9-1）、`name`（装置名・信号名称。`symbol_id` の記号に結び付く）、`note`（注記）、`other`。`zone` はリレー表・表題欄の中なら `relay_table` / `title_block`。ローカル LLM が読み直したものは `source: "llm"` と元の読み `ocr_text` を持つ |
+| `relay_table.rows[]` | リレー表の行。`device`（器具番号）、`terminal`（5-9-1）、`contact`（a / b）、`sheet`（「本」またはシート番号）、`position`（行列 10D） |
+| `relay_table.links[]` | 器具番号ごとに、表の行（`rows`）と同じ図面のコイル（`coil_symbol_ids`）・接点（`contact_symbol_ids`）。コイルが無い、または「本」の接点が足りないときは `status: "要確認"` |
+| `sheet_references[]` | 括弧つき・「へ」「より」つきのシート番号。`kind` は `wire`（配線の行先・来先）か `relay`（接点のコイルがあるシート。`symbol_id` に接点・コイルの記号）。書き出し時に `target_project_id`（同時に書き出した図面のうちシート番号が一致する図面。無ければ null）を付ける |
+| `sheet_number_candidates[]` | シート番号の候補（`text`、`score`、`region`） |
+| `regions[]` | 領域。`region_type` は `drawing_area`（作図領域）、`title_block`（表題欄）、`relay_table`（リレー表）、`panel`（盤・カード）、`loc`。`source` は `detection`（検出した大枠）か `text`（文字から求めた範囲） |
+| `from_to` | 端子と端子の接続 |
+| `dot_roles` | 黒丸の判定件数と判定に使った値 |
+| `quality.symbol_label_ocr` | ラベルを読んだ件数。`llm_reread_count` / `llm_text_reread_count` はローカル LLM が読み直した件数 |
+
+参照先の図面は、図面情報のシート番号（未入力ならシート番号の候補の 1 位）で照合する。枝番つきの参照（`ER21212-1`）は枝番なしの図面にも合わせる。
+
