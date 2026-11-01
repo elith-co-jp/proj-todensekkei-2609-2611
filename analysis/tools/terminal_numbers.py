@@ -101,8 +101,16 @@ def _contact_number_fragments(fragments: list[dict[str, Any]]) -> list[dict[str,
         digits, x = match.group(1), f["x"]
         if match.start(1) > 0:
             x = f["x1"] - (f["x1"] - f["x0"]) * len(digits) / len(f["text"]) / 2
-        out.append({**f, "text": digits, "x": x})
+        out.append({**f, "text": digits, "x": x, "whole": match.span(1) == (0, len(f["text"]))})
     return out
+
+
+def _without_end_circle(f: dict[str, Any], tx: float, label_right: bool) -> str:
+    """The hollow circle at a contact end is read as one more digit when the number touches it (12 + circle = 125)."""
+    reaches_axis = f["x1"] > tx if label_right else f["x0"] < tx
+    if f["whole"] and reaches_axis and len(f["text"]) >= 2:
+        return f["text"][:-1] if label_right else f["text"][1:]
+    return f["text"]
 
 
 def contact_numbers(symbol: dict[str, Any]) -> dict[str, str]:
@@ -128,7 +136,8 @@ def contact_numbers(symbol: dict[str, Any]) -> dict[str, str]:
         ref = str(terminals[ti].get("ref"))
         if distance <= 30 and ref not in out and fi not in used:
             used.add(fi)
-            out[ref] = numbers[fi]["text"]
+            out[ref] = numbers[fi]["text"] if label_x is None else _without_end_circle(
+                numbers[fi], terminals[ti]["point"][0], label_x > terminals[ti]["point"][0])
     return out
 
 
