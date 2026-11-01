@@ -17,7 +17,8 @@ from sqlalchemy.orm import Session
 from database import get_db
 from models import AnnotationProject, MlModel, TrainingRun
 from routers.common import get_project_or_404, safe_upload_name
-from schemas import InferenceRunRequest, TrainingDecisionPayload, TrainingRunRequest
+from schemas import AnnotationUpdatePayload, InferenceRunRequest, TrainingDecisionPayload, TrainingRunRequest
+from services.ai_import_service import import_payload
 from services.inference_service import (
     import_predictions_zip,
     predictions_payload,
@@ -232,6 +233,19 @@ def project_predictions(project_id: int, db: Session = Depends(get_db)):
 def review_summary(project_id: int, db: Session = Depends(get_db)):
     """AI 検出を人がどう確認したか（採用・種別修正・削除・手動追加）と次回学習への反映。"""
     return project_review_summary(db, get_project_or_404(db, project_id))
+
+
+@router.post("/projects/{project_id}/ai-import")
+def ai_import(project_id: int, payload: AnnotationUpdatePayload, db: Session = Depends(get_db)):
+    """エディタの現在の内容に足す AI の候補（シンボル・端子・配線）を返す。保存はエディタが行う。"""
+    project = get_project_or_404(db, project_id)
+    if any(not s.ref or any(not t.ref for t in s.terminals) for s in payload.symbols):
+        raise HTTPException(400, "シンボルと端子の参照名（ref）を指定してください")
+    return import_payload(
+        db, project,
+        [s.model_dump() for s in payload.symbols],
+        [c.model_dump() for c in payload.connections],
+    )
 
 
 # ---------------------------------------------------------------- 学習

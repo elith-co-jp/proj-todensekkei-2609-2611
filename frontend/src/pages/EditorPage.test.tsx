@@ -9,6 +9,7 @@ import { clearPersistedProjectSave } from '../utils/workspace'
 import EditorPage from './EditorPage'
 
 const apiMocks = vi.hoisted(() => ({
+  aiImport: vi.fn(),
   exportProject: vi.fn(),
   getProject: vi.fn(),
   getPredictions: vi.fn(),
@@ -441,18 +442,82 @@ describe('EditorPage interactions', () => {
     await waitFor(() => expect(apiMocks.getProject).toHaveBeenLastCalledWith(2))
   })
 
-  it('AI 推論の取り込み通知で、領域枠をシンボル対象外として除外した件数を伝える', async () => {
-    apiMocks.getPredictions.mockResolvedValue({
-      project_id: 1,
-      name: '匿名ページ1',
-      model_label: null,
-      model_id: null,
-      count: 1,
-      region_count: 2,
-      detections: [
-        { class_key: 'relay', class_label: 'リレー', yolo_index: 0, cx: 0.5, cy: 0.8, w: 0.05, h: 0.05, confidence: 0.9 },
+  it('AI 推論で AI 解析の端子と配線を破線の候補として足し、既存のシンボルを変えずに保存する', async () => {
+    apiMocks.aiImport.mockResolvedValue({
+      source: 'structure',
+      symbols: [
+        {
+          ref: 'SYM-0003', class_key: 'relay', label: '33HB', cx: 0.5, cy: 0.8, w: 0.05, h: 0.05, note: null,
+          origin: 'inference', confidence: 0.9,
+          terminals: [{ ref: 'SYM-0003-T1', name: '13', tx: 0.5, ty: 0.78, origin: 'inference' }],
+        },
       ],
-      regions: [],
+      terminals: [{ symbol_ref: 'SYM-0001', ref: 'SYM-0001-T1', name: '1', tx: 0.3, ty: 0.42, origin: 'inference' }],
+      connections: [
+        {
+          from_symbol_ref: 'SYM-0001', from_terminal_ref: 'SYM-0001-T1', to_symbol_ref: 'SYM-0003',
+          to_terminal_ref: 'SYM-0003-T1', wire_no: null, net_id: null, kind: 'wire', external_ref: null, note: null,
+          origin: 'inference',
+        },
+      ],
+      counts: { existing_symbols: 2, region_excluded: 2, duplicate_dots: 1, text_zone: 0 },
+    })
+    const { container, findByRole, findByText, getByRole } = renderEditor()
+    await findByRole('region', { name: '図面アノテーションキャンバス' })
+
+    fireEvent.click(getByRole('button', { name: 'AI 推論' }))
+
+    expect(
+      await findByText(
+        'AI 検出を 1 件、端子を 2 件、配線を 1 件取り込みました（破線）。内容を確認・修正して保存してください' +
+          '／2 件は既存のシンボルと重なったため追加していません／重複した黒丸 1 件は取り込みませんでした' +
+          '／領域枠 2 件はシンボル対象外として除外',
+      ),
+    ).toBeTruthy()
+    const sent = apiMocks.aiImport.mock.calls[0]
+    expect(sent[0]).toBe(1)
+    expect(sent[1].symbols.map((s: { ref: string }) => s.ref)).toEqual(['SYM-0001', 'SYM-0002'])
+    const wires = [...container.querySelectorAll('svg line')].filter((l) => l.getAttribute('stroke') === '#0891b2')
+    expect(wires).toHaveLength(1)
+    expect(wires[0].getAttribute('stroke-dasharray')).toBeTruthy()
+
+    fireEvent.click(await findByRole('button', { name: '変更を検出' }))
+    await waitFor(() => expect(apiMocks.saveAnnotations).toHaveBeenCalledTimes(1))
+    const saved = apiMocks.saveAnnotations.mock.calls[0][1]
+    expect(saved.symbols[0]).toMatchObject({
+      ref: 'SYM-0001', class_key: 'relay', cx: 0.3, origin: 'manual',
+      terminals: [{ ref: 'SYM-0001-T1', name: '1', origin: 'inference' }],
+    })
+    expect(saved.symbols.map((s: { ref: string }) => s.ref)).toEqual(['SYM-0001', 'SYM-0002', 'SYM-0003'])
+    expect(saved.connections).toEqual([expect.objectContaining({ to_symbol_ref: 'SYM-0003', origin: 'inference' })])
+  })
+
+  it('AI 推論で足すものが無いときは画面を変えず、AI 解析で端子と配線を取り込めることを伝える', async () => {
+    apiMocks.aiImport.mockResolvedValue({
+      source: 'predictions',
+      symbols: [],
+      terminals: [],
+      connections: [],
+      counts: { existing_symbols: 2, region_excluded: 0, duplicate_dots: 0, text_zone: 0 },
+    })
+    const { findByRole, findByText, getByRole, queryByRole } = renderEditor()
+    await findByRole('region', { name: '図面アノテーションキャンバス' })
+
+    fireEvent.click(getByRole('button', { name: 'AI 推論' }))
+
+    expect(
+      await findByText('AI の結果はすべて取り込み済みです／端子と配線は「AI 解析」を実行すると取り込めます'),
+    ).toBeTruthy()
+    expect(queryByRole('button', { name: '変更を検出' })).toBeNull()
+  })
+
+  it('AI の結果が無い図面では推論の実行を案内する', async () => {
+    apiMocks.aiImport.mockResolvedValue({
+      source: null,
+      symbols: [],
+      terminals: [],
+      connections: [],
+      counts: { existing_symbols: 0, region_excluded: 0, duplicate_dots: 0, text_zone: 0 },
     })
     const { findByRole, findByText, getByRole } = renderEditor()
     await findByRole('region', { name: '図面アノテーションキャンバス' })
@@ -460,9 +525,7 @@ describe('EditorPage interactions', () => {
     fireEvent.click(getByRole('button', { name: 'AI 推論' }))
 
     expect(
-      await findByText(
-        'AI 検出を 1 件取り込みました（破線枠）。内容を確認・修正して保存してください／領域枠 2 件はシンボル対象外として除外',
-      ),
+      await findByText('この図面の推論結果がありません。「AI 改善サイクル」で推論を実行してください'),
     ).toBeTruthy()
   })
 
@@ -857,6 +920,21 @@ describe('EditorPage 学習への反映', () => {
         'AI 検出 SYM-0001 を削除しました。図面を『完了』にして学習すると、この位置は『シンボルではない』例として学習されます。',
       ),
     ).toBeTruthy()
+  })
+
+  it('AI 解析の結果がある図面では、AI の端子と配線の確認状況も示す', async () => {
+    apiMocks.getReviewSummary.mockResolvedValue({
+      ...reviewSummary,
+      wiring: {
+        terminals: { ai_count: 40, imported: true, kept: 35, deleted: 5, manual_added: 2 },
+        connections: { ai_count: 30, imported: false, kept: 0, deleted: 0, manual_added: 4 },
+      },
+    })
+    const { findByRole, findByText } = renderEditor()
+    fireEvent.click(await findByRole('tab', { name: '図面情報' }))
+
+    expect(await findByText('AI端子 40 → 採用 35・削除 5・手動追加 2')).toBeTruthy()
+    expect(await findByText('AI配線 30（未取り込み）')).toBeTruthy()
   })
 })
 

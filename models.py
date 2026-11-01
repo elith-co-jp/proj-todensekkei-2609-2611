@@ -150,6 +150,7 @@ class SymbolTerminal(Base):
     name = Column(String(50), nullable=False)  # "13" / "NC1" など
     tx = Column(Float, nullable=False)  # 画像に対する正規化座標
     ty = Column(Float, nullable=False)
+    origin = Column(String(20), nullable=False, default="manual", server_default="manual")
 
     symbol = relationship("AnnotationSymbol", back_populates="terminals")
 
@@ -180,6 +181,7 @@ class Connection(Base):
     kind = Column(String(20), nullable=False, default="wire")  # wire / sheet_ref
     external_ref = Column(String(200), nullable=True)  # (610-2F-9) 等のシート間参照
     note = Column(Text, nullable=True)
+    origin = Column(String(20), nullable=False, default="manual", server_default="manual")
     created_at = Column(DateTime, default=utc_now_naive)
 
     project = relationship("AnnotationProject", back_populates="connections")

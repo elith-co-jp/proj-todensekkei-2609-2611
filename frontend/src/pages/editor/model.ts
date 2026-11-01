@@ -1,6 +1,6 @@
 import { Cable, CircleDot, MousePointer2, Square } from 'lucide-react'
 
-import type { Connection, ProjectDetail, SymbolBox } from '../../types'
+import type { AiImportResult, Connection, ProjectDetail, SymbolBox } from '../../types'
 
 export type Mode = 'select' | 'box' | 'terminal' | 'connect'
 export type Corner = 'nw' | 'ne' | 'sw' | 'se'
@@ -25,9 +25,21 @@ export function buildAnnotationPayload(symbols: SymbolBox[], connections: Connec
         name: terminal.name,
         tx: terminal.tx,
         ty: terminal.ty,
+        origin: terminal.origin ?? 'manual',
       })),
     })),
-    connections,
+    connections: connections.map((connection) => ({
+      from_symbol_ref: connection.from_symbol_ref,
+      from_terminal_ref: connection.from_terminal_ref,
+      to_symbol_ref: connection.to_symbol_ref,
+      to_terminal_ref: connection.to_terminal_ref,
+      wire_no: connection.wire_no,
+      net_id: connection.net_id,
+      kind: connection.kind,
+      external_ref: connection.external_ref,
+      note: connection.note,
+      origin: connection.origin ?? 'manual',
+    })),
   }
 }
 
@@ -45,6 +57,10 @@ function isFiniteNumber(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value)
 }
 
+function isOrigin(value: unknown) {
+  return value === undefined || value === 'manual' || value === 'inference'
+}
+
 export function isAnnotationPayload(value: unknown): value is AnnotationPayload {
   if (!isRecord(value) || !Array.isArray(value.symbols) || !Array.isArray(value.connections)) return false
   const validSymbols = value.symbols.every((symbol) => {
@@ -58,7 +74,7 @@ export function isAnnotationPayload(value: unknown): value is AnnotationPayload 
       isFiniteNumber(symbol.w) &&
       isFiniteNumber(symbol.h) &&
       isNullableString(symbol.note) &&
-      (symbol.origin === undefined || symbol.origin === 'manual' || symbol.origin === 'inference') &&
+      isOrigin(symbol.origin) &&
       (symbol.confidence === undefined || symbol.confidence === null || isFiniteNumber(symbol.confidence)) &&
       symbol.terminals.every(
         (terminal) =>
@@ -66,7 +82,8 @@ export function isAnnotationPayload(value: unknown): value is AnnotationPayload 
           typeof terminal.ref === 'string' &&
           typeof terminal.name === 'string' &&
           isFiniteNumber(terminal.tx) &&
-          isFiniteNumber(terminal.ty),
+          isFiniteNumber(terminal.ty) &&
+          isOrigin(terminal.origin),
       )
     )
   })
@@ -82,7 +99,61 @@ export function isAnnotationPayload(value: unknown): value is AnnotationPayload 
       isNullableString(connection.net_id) &&
       (connection.kind === 'wire' || connection.kind === 'sheet_ref') &&
       isNullableString(connection.external_ref) &&
-      isNullableString(connection.note),
+      isNullableString(connection.note) &&
+      isOrigin(connection.origin),
+  )
+}
+
+/** AI の候補（追加分だけ）を、送ったときの内容に足す。既存の要素は変えない */
+export function mergeAiImport(symbols: SymbolBox[], connections: Connection[], result: AiImportResult) {
+  const extra = new Map<string, SymbolBox['terminals']>()
+  for (const { symbol_ref, ...terminal } of result.terminals) {
+    extra.set(symbol_ref, [...(extra.get(symbol_ref) ?? []), terminal])
+  }
+  return {
+    symbols: [
+      ...symbols.map((s) => (extra.has(s.ref) ? { ...s, terminals: [...s.terminals, ...extra.get(s.ref)!] } : s)),
+      ...result.symbols,
+    ],
+    connections: [...connections, ...result.connections],
+  }
+}
+
+export function aiImportAddedCount(result: AiImportResult) {
+  return result.symbols.length + result.terminals.length + result.connections.length
+}
+
+export function aiImportNotice(result: AiImportResult) {
+  const { counts } = result
+  const regionNote = counts.region_excluded ? `／領域枠 ${counts.region_excluded} 件はシンボル対象外として除外` : ''
+  if (result.source === null) {
+    return regionNote
+      ? `取り込める検出がありませんでした${regionNote}`
+      : 'この図面の推論結果がありません。「AI 改善サイクル」で推論を実行してください'
+  }
+  const terminalCount =
+    result.terminals.length + result.symbols.reduce((n, s) => n + s.terminals.length, 0)
+  const skipped = [
+    counts.duplicate_dots ? `重複した黒丸 ${counts.duplicate_dots} 件` : '',
+    counts.text_zone ? `リレー表・表題欄の中の文字 ${counts.text_zone} 件` : '',
+  ].filter(Boolean)
+  const skippedNote = skipped.length ? `／${skipped.join('・')}は取り込みませんでした` : ''
+  const wiringNote = result.source === 'predictions' ? '／端子と配線は「AI 解析」を実行すると取り込めます' : ''
+  if (aiImportAddedCount(result) === 0) {
+    return (
+      (counts.existing_symbols > 0 ? 'AI の結果はすべて取り込み済みです' : '取り込める検出がありませんでした') +
+      regionNote +
+      wiringNote
+    )
+  }
+  const parts = [`AI 検出を ${result.symbols.length} 件`]
+  if (result.source === 'structure') parts.push(`端子を ${terminalCount} 件`, `配線を ${result.connections.length} 件`)
+  return (
+    `${parts.join('、')}取り込みました（破線）。内容を確認・修正して保存してください` +
+    (counts.existing_symbols > 0 ? `／${counts.existing_symbols} 件は既存のシンボルと重なったため追加していません` : '') +
+    skippedNote +
+    regionNote +
+    wiringNote
   )
 }
 
@@ -171,10 +242,6 @@ export type Drag =
   | { kind: 'resize'; ref: string; corner: Corner }
 
 export const MIN_BOX = 0.002
-
-// AI 推論の取り込み時に「既存シンボルと同一」とみなす許容誤差（正規化座標）
-export const INFERENCE_CENTER_TOLERANCE = 0.01
-export const INFERENCE_SIZE_TOLERANCE = 0.02
 
 export function clamp01(v: number) {
   return v < 0 ? 0 : v > 1 ? 1 : v

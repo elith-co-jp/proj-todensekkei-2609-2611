@@ -14,6 +14,8 @@ export type Terminal = {
   /** 画像に対する正規化座標 (0-1) */
   tx: number
   ty: number
+  /** 登録の経緯。inference=AI の解析から取り込んだ候補 */
+  origin?: SymbolOrigin
 }
 
 export type SymbolOrigin = 'manual' | 'inference'
@@ -49,6 +51,8 @@ export type Connection = {
   kind: ConnectionKind
   external_ref: string | null
   note: string | null
+  /** 登録の経緯。inference=AI の解析から取り込んだ候補 */
+  origin?: SymbolOrigin
 }
 
 export type ProjectDetail = {
@@ -195,6 +199,31 @@ export type InferenceImportResult = {
   count: number
 }
 
+/** エディタに足す AI の候補。既存のシンボル・端子・配線は含まない（追加分だけ） */
+export type AiImportResult = {
+  /** 取り込み元。structure=AI 解析（端子・配線あり）/ predictions=推論のシンボルだけ / null=結果なし */
+  source: 'structure' | 'predictions' | null
+  symbols: SymbolBox[]
+  /** 既存のシンボルに足す端子 */
+  terminals: (Terminal & { symbol_ref: string })[]
+  connections: Connection[]
+  counts: {
+    /** AI の候補と重なった既存シンボルの数（追加しない） */
+    existing_symbols: number
+    region_excluded: number
+    duplicate_dots: number
+    text_zone: number
+  }
+}
+
+export type WiringReviewCounts = {
+  ai_count: number
+  imported: boolean
+  kept: number
+  deleted: number
+  manual_added: number
+}
+
 export type ReviewSummary = {
   project_id: number
   status: 'draft' | 'review' | 'done'
@@ -206,6 +235,8 @@ export type ReviewSummary = {
   relabeled: number
   deleted: number
   manual_added: number
+  /** AI 解析の端子・配線の確認状況。AI 解析の結果が無い図面は null */
+  wiring?: { terminals: WiringReviewCounts; connections: WiringReviewCounts } | null
 }
 
 export type SheetNumberCandidate = {

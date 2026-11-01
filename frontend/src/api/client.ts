@@ -1,4 +1,5 @@
 import type {
+  AiImportResult,
   InferenceImportResult,
   InferenceRunResponse,
   MlModel,
@@ -209,6 +210,14 @@ export const api = {
 
   getReviewSummary: (projectId: number) =>
     req<ReviewSummary>(`/api/ml/projects/${projectId}/review-summary`),
+
+  /** エディタの現在の内容（未保存を含む）を送り、足す AI の候補だけを受け取る。サーバーには保存しない */
+  aiImport: (projectId: number, payload: unknown) =>
+    req<AiImportResult>(`/api/ml/projects/${projectId}/ai-import`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    }),
 
   startTraining: (opts: {
     project_ids?: number[]
