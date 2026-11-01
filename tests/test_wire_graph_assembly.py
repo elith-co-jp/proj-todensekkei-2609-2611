@@ -188,3 +188,11 @@ def test_contact_box_covering_its_label_takes_ports_on_its_own_wire_only(monkeyp
     assert len(found) >= 2 and {p["wire_id"] for p in found} == {"own"}
     found = _contact_ports(draw_contact, monkeypatch, CONTACT_PREFERS_WIRES_INSIDE_BOX=False)
     assert "next" in {p["wire_id"] for p in found}
+
+def test_wire_end_is_not_bridged_to_the_bus_through_a_coil():
+    payload, records = vertical_and_horizontal(40, 60)
+    coil = {"id": "c", "member_key": "C", "symbol_id": "C", "class_name": "relay_coil", "point": [160, 75],
+            "bbox": {"x0": 80, "y0": 62, "x1": 120, "y1": 96}}
+    options = {**OPTIONS, "wire_gap_bridge_outward_only": True}
+    assert build_predicted_graph_pairs(payload, [*records, coil], **options) == {("A", "B")}
+    assert build_predicted_graph_pairs(payload, [*records, coil], **options, gap_bridge_device_classes={"relay_coil"}) == set()

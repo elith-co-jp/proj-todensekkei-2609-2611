@@ -83,6 +83,8 @@ DIRECT_WIRE_GAP_BRIDGE_OUTWARD_ONLY = True
 DIRECT_WIRE_GAP_BRIDGE_MAX_BLANK = 45.0
 # The same limit for a terminal joined to the end of a collinear wire up to DIRECT_TERMINAL_GAP_BRIDGE_MAX away.
 DIRECT_TERMINAL_GAP_BRIDGE_MAX_BLANK = 45.0
+# A missing wire never runs through the middle of a coil: such a bridge would short it.
+DIRECT_GAP_BRIDGE_DEVICE_CLASSES = {"relay_coil", "solenoid"}
 # Classes whose electrical port is wherever a wire meets the box; when such a
 # symbol has no terminal link, attach it to every wire touching its bbox.
 TOUCHING_WIRE_FALLBACK_CLASSES = {"connector", "junction", "power_bus", "terminal"}
@@ -1698,6 +1700,7 @@ def build_direct_from_to(
         gap_blank_run=blank_run,
         wire_gap_bridge_max_blank=DIRECT_WIRE_GAP_BRIDGE_MAX_BLANK,
         terminal_gap_bridge_max_blank=DIRECT_TERMINAL_GAP_BRIDGE_MAX_BLANK,
+        gap_bridge_device_classes=set(DIRECT_GAP_BRIDGE_DEVICE_CLASSES),
         trace=trace,
     )
     valid_pairs = sorted(

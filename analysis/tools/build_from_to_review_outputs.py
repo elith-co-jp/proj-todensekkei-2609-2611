@@ -566,6 +566,7 @@ def build_predicted_graph_pairs(
     gap_blank_run: Callable[[tuple[float, float], tuple[float, float]], int] | None = None,
     wire_gap_bridge_max_blank: float = 0.0,
     terminal_gap_bridge_max_blank: float = 0.0,
+    gap_bridge_device_classes: set[str] | None = None,
     trace: dict[str, Any] | None = None,
 ) -> set[tuple[str, str]]:
     nodes_by_id = {str(node["id"]): node for node in payload.get("nodes", [])}
@@ -625,6 +626,18 @@ def build_predicted_graph_pairs(
         *,
         allowed_symbol_ids: set[str],
     ) -> bool:
+        # A missing wire never runs through the middle of a coil: a bridge there would short it.
+        if gap_bridge_device_classes:
+            horizontal = abs(end[0] - start[0]) >= abs(end[1] - start[1])
+            lo, hi = sorted((start[0], end[0]) if horizontal else (start[1], end[1]))
+            across = (start[1] + end[1]) / 2 if horizontal else (start[0] + end[0]) / 2
+            for class_name, box in symbol_boxes.values():
+                if class_name not in gap_bridge_device_classes:
+                    continue
+                a0, a1, c0, c1 = (box["x0"], box["x1"], box["y0"], box["y1"]) if horizontal else (box["y0"], box["y1"], box["x0"], box["x1"])
+                quarter = (c1 - c0) / 4
+                if lo <= (a0 + a1) / 2 <= hi and c0 + quarter <= across <= c1 - quarter:
+                    return True
         if gap_bridge_symbol_overlap_max >= 1.0:
             return False
         for symbol_id, (class_name, box) in symbol_boxes.items():
