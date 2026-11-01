@@ -565,6 +565,7 @@ def build_predicted_graph_pairs(
     wire_gap_bridge_outward_only: bool = False,
     gap_blank_run: Callable[[tuple[float, float], tuple[float, float]], int] | None = None,
     wire_gap_bridge_max_blank: float = 0.0,
+    trace: dict[str, Any] | None = None,
 ) -> set[tuple[str, str]]:
     nodes_by_id = {str(node["id"]): node for node in payload.get("nodes", [])}
     edges = list(payload.get("edges", []))
@@ -577,6 +578,8 @@ def build_predicted_graph_pairs(
     stop_by_member: dict[str, str] = {}
     terminal_members_by_graph_node: dict[str, set[str]] = defaultdict(set)
     stats = bridge_stats if bridge_stats is not None else Counter()
+    edge_kind: dict[tuple[str, str], str] = {}
+    gap_bridged_stops: set[str] = set()
     excluded_segments = payload.get("quality", {}).get("wire_decoration_filter", {}).get("excluded_segments", [])
 
     def follows_excluded_decoration(start: tuple[float, float], end: tuple[float, float]) -> bool:
@@ -608,11 +611,12 @@ def build_predicted_graph_pairs(
             return f"node:{node_id}@{wire_id or 'unknown'}"
         return f"node:{node_id}"
 
-    def add_graph_edge(left: str, right: str) -> None:
+    def add_graph_edge(left: str, right: str, kind: str) -> None:
         if left == right:
             return
         graph[left].add(right)
         graph[right].add(left)
+        edge_kind.setdefault(sorted_pair(left, right), kind)
 
     def crosses_blocking_symbol(
         start: tuple[float, float],
@@ -758,9 +762,10 @@ def build_predicted_graph_pairs(
             stats["terminal_gap_bridge_rejected_symbol_overlap_count"] += 1
             return False
         if endpoint_node:
-            add_graph_edge(stop_id, graph_node_id(endpoint_node, wire_id))
+            add_graph_edge(stop_id, graph_node_id(endpoint_node, wire_id), "terminal_gap_bridge")
         else:
             stops_by_edge[edge_id].append((t, stop_id))
+            gap_bridged_stops.add(stop_id)
         stats["terminal_gap_bridge_count"] += 1
         stats[f"terminal_gap_bridge_{str(record.get('class_name') or 'unknown')}"] += 1
         if gap > 1:
@@ -865,7 +870,7 @@ def build_predicted_graph_pairs(
             bridge_id = f"bridge:{index:05d}:{target_edge_id}"
             coords[bridge_id] = projection
             stops_by_edge[target_edge_id].append((t, bridge_id))
-            add_graph_edge(endpoint_key, bridge_id)
+            add_graph_edge(endpoint_key, bridge_id, "wire_gap_bridge")
             stats["wire_gap_bridge_count"] += 1
             if gap <= endpoint_bridge_max:
                 stats["endpoint_bridge_count"] += 1
@@ -938,7 +943,7 @@ def build_predicted_graph_pairs(
             if crosses_blocking_symbol(coords[left], coords[right], allowed_symbol_ids={left_symbol_id, right_symbol_id}):
                 stats["terminal_terminal_bridge_rejected_symbol_overlap_count"] += 1
                 continue
-            add_graph_edge(left, right)
+            add_graph_edge(left, right, "terminal_terminal_bridge")
             stats["terminal_terminal_bridge_count"] += 1
 
     def nearest_node_id(point: list[float]) -> tuple[str | None, float]:
@@ -968,7 +973,7 @@ def build_predicted_graph_pairs(
             preferred_wire_id = str(wire_id or record.get("wire_id_hint") or "")
             for graph_id in graph_ids_for_anchor_node(record, str(anchor_node_id), preferred_wire_id or None):
                 terminal_members_by_graph_node[graph_id].add(str(record["member_key"]))
-                add_graph_edge(stop_id, graph_id)
+                add_graph_edge(stop_id, graph_id, "node_anchor")
             continue
         if wire_id:
             candidates = edges_by_wire.get(str(wire_id), [])
@@ -981,7 +986,7 @@ def build_predicted_graph_pairs(
         if node_id:
             preferred_wire_id = str(wire_id or record.get("wire_id_hint") or "")
             for graph_id in graph_ids_for_anchor_node(record, str(node_id), preferred_wire_id or None):
-                add_graph_edge(stop_id, graph_id)
+                add_graph_edge(stop_id, graph_id, "node_anchor")
             continue
         bridge_terminal_to_collinear_wire(record, stop_id)
 
@@ -999,9 +1004,12 @@ def build_predicted_graph_pairs(
         ]
         items.sort(key=lambda item: (item[0], item[1]))
         for (_left_t, left), (_right_t, right) in zip(items, items[1:]):
-            add_graph_edge(left, right)
+            add_graph_edge(left, right, "wire")
 
     add_terminal_terminal_bridges()
+    if trace is not None:
+        trace.update(graph=graph, edge_kind=edge_kind, coords=coords, terminal_by_stop=terminal_by_stop,
+                     members_by_graph_node=terminal_members_by_graph_node, gap_bridged_stops=gap_bridged_stops)
 
     pairs: set[tuple[str, str]] = set()
     terminal_stops = set(terminal_by_stop)

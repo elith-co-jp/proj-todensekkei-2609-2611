@@ -1668,7 +1668,9 @@ def blank_run_measure(source_image: Image.Image) -> Callable[[tuple[float, float
     return longest_blank
 
 
-def build_direct_from_to(payload: dict[str, Any], source_image: Image.Image | None = None) -> dict[str, Any]:
+def build_direct_from_to(
+    payload: dict[str, Any], source_image: Image.Image | None = None, trace: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     terminal_records, terminal_by_key = build_direct_terminal_records(payload)
     bridge_stats: Counter[str] = Counter()
     blank_run = blank_run_measure(source_image) if source_image is not None and DIRECT_WIRE_GAP_BRIDGE_MAX_BLANK > 0 else None
@@ -1693,6 +1695,7 @@ def build_direct_from_to(payload: dict[str, Any], source_image: Image.Image | No
         wire_gap_bridge_outward_only=DIRECT_WIRE_GAP_BRIDGE_OUTWARD_ONLY,
         gap_blank_run=blank_run,
         wire_gap_bridge_max_blank=DIRECT_WIRE_GAP_BRIDGE_MAX_BLANK,
+        trace=trace,
     )
     valid_pairs = sorted(
         pair for pair in pairs if pair[0] in terminal_by_key and pair[1] in terminal_by_key

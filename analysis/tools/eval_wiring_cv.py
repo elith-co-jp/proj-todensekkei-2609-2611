@@ -40,6 +40,8 @@ from holdout_cv import gold_items, gold_pairs, load_gold, predicted_pairs, prf, 
 NODE_CLASSES = {"connector", "junction", "terminal", "power_bus"}
 SCORED_CLASSES = ("junction", "connector")
 ROLE_OF_CLASS = {"junction": "junction", "connector": "terminal"}
+# Same-symbol gold links shorter than this are a wire crossing a box border; card + to - links are about 60 px.
+BORDER_CROSSING_PX = 30.0
 
 
 def gold_terminal_numbers(label: str) -> tuple[list[str], list[tuple[str, str]] | None]:
@@ -157,22 +159,62 @@ def _pairs_of_groups(dsu: DSU, members: dict[str, str]) -> set[tuple[str, str]]:
     return {pair for keys in groups.values() for pair in itertools.combinations(sorted(keys), 2)}
 
 
-def gold_node_pairs(drawing: dict[str, Any], symbol_refs: set[str]) -> set[tuple[str, str]]:
+def _through_coil(a: tuple[float, float], b: tuple[float, float], coils: list[dict[str, float]]) -> bool:
+    """A gold link drawn straight through the middle of a relay coil box, along its axis."""
+    for box in coils:
+        mx, my = (box["x1"] - box["x0"]) / 4, (box["y1"] - box["y0"]) / 4
+        if abs(a[0] - b[0]) <= 6 and box["x0"] + mx <= a[0] <= box["x1"] - mx \
+                and min(a[1], b[1]) <= box["y0"] + my and max(a[1], b[1]) >= box["y1"] - my:
+            return True
+        if abs(a[1] - b[1]) <= 6 and box["y0"] + my <= a[1] <= box["y1"] - my \
+                and min(a[0], b[0]) <= box["x0"] + mx and max(a[0], b[0]) >= box["x1"] - mx:
+            return True
+    return False
+
+
+def gold_nodes(drawing: dict[str, Any], symbol_refs: set[str], *, conventions: bool = False) -> tuple[DSU, dict[str, str]]:
+    """Wire-only electrical nodes of the gold drawing: a union-find over terminal keys, and the scored keys.
+
+    conventions=True removes three annotation habits no prediction can follow: every relay coil is bridged by
+    a link drawn straight through it (gold never wires coils); a link endpoint without a terminal ref on a
+    one-terminal symbol forms a key of its own, apart from that terminal; and a wire crossing the border of a
+    panel box is drawn as a link between two terminals of that box, which the same-symbol rule would cut.
+    """
+    project = drawing["project"]
+    width, height = int(project["image_width"]), int(project["image_height"])
+    single = {s["ref"]: s["terminals"][0]["ref"] for s in project["symbols"] if len(s.get("terminals") or []) == 1}
+    points = {s["ref"]: (s["cx"] * width, s["cy"] * height) for s in project["symbols"]}
+    points.update({t["ref"]: (t["tx"] * width, t["ty"] * height) for s in project["symbols"] for t in s.get("terminals") or []})
+    coils = [to_box(s["cx"], s["cy"], s["w"], s["h"], width, height) for s in project["symbols"] if s["class_key"] == "relay_coil"]
+    boxes = {s["ref"] for s in project["symbols"] if s["class_key"] == "other"}
     dsu = DSU()
     members: dict[str, str] = {}
-    for conn in drawing["project"]["connections"]:
+    for conn in project["connections"]:
+        ends = [(conn[f"{side}_symbol_ref"], conn.get(f"{side}_terminal_ref")) for side in ("from", "to")]
         if conn["from_symbol_ref"] == conn["to_symbol_ref"]:
-            continue
-        a = endpoint_key(conn["from_symbol_ref"], conn.get("from_terminal_ref"))
-        b = endpoint_key(conn["to_symbol_ref"], conn.get("to_terminal_ref"))
+            a, b = (points.get(terminal or ref) for ref, terminal in ends)
+            crossing = conventions and conn["from_symbol_ref"] in boxes and a and b and min(abs(a[0] - b[0]), abs(a[1] - b[1])) <= 6 \
+                and abs(a[0] - b[0]) + abs(a[1] - b[1]) <= BORDER_CROSSING_PX
+            if not crossing:
+                continue
+        if conventions:
+            ends = [(ref, terminal or single.get(ref)) for ref, terminal in ends]
+            if _through_coil(*(points[terminal or ref] for ref, terminal in ends), coils):
+                continue
+        a, b = (endpoint_key(ref, terminal) for ref, terminal in ends)
         dsu.union(a, b)
         for key, ref in ((a, conn["from_symbol_ref"]), (b, conn["to_symbol_ref"])):
             if ref in symbol_refs:
                 members[key] = key
-    return _pairs_of_groups(dsu, members)
+    return dsu, members
 
 
-def predicted_node_pairs(drawing: dict[str, Any], structure: dict[str, Any], pred_to_gold: dict[str, str]) -> set[tuple[str, str]]:
+def gold_node_pairs(drawing: dict[str, Any], symbol_refs: set[str], *, conventions: bool = False) -> set[tuple[str, str]]:
+    return _pairs_of_groups(*gold_nodes(drawing, symbol_refs, conventions=conventions))
+
+
+def predicted_nodes(drawing: dict[str, Any], structure: dict[str, Any], pred_to_gold: dict[str, str]) -> tuple[DSU, dict[str, str]]:
+    """Predicted nodes as a union-find over from_to terminal ids, and each scored terminal's nearest gold terminal key."""
     width, height = int(drawing["project"]["image_width"]), int(drawing["project"]["image_height"])
     gold_terminals = {
         s["ref"]: [(endpoint_key(s["ref"], t["ref"]), (t["tx"] * width, t["ty"] * height)) for t in s.get("terminals") or []]
@@ -198,7 +240,11 @@ def predicted_node_pairs(drawing: dict[str, Any], structure: dict[str, Any], pre
         if left["symbol_id"] == right["symbol_id"] and left.get("class_name") not in NODE_CLASSES:
             continue
         dsu.union(left["id"], right["id"])
-    return _pairs_of_groups(dsu, members)
+    return dsu, members
+
+
+def predicted_node_pairs(drawing: dict[str, Any], structure: dict[str, Any], pred_to_gold: dict[str, str]) -> set[tuple[str, str]]:
+    return _pairs_of_groups(*predicted_nodes(drawing, structure, pred_to_gold))
 
 
 def structure_predictions(structure: dict[str, Any], pred: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -222,6 +268,7 @@ def score_drawing(drawing: dict[str, Any], pred: list[dict[str, Any]], structure
     refs = {g["ref"] for g in g_sym}
     gp, pp = gold_pairs(drawing, refs), predicted_pairs(structure, pred_to_gold)
     gn, pn = gold_node_pairs(drawing, refs), predicted_node_pairs(drawing, structure, pred_to_gold)
+    gc = gold_node_pairs(drawing, refs, conventions=True)
     roles = Counter(
         f"{g_sym[gi]['class_name']}->{p_sym[pi]['dot_role']}" for gi, pi, _ in scored["matches"]
         if g_sym[gi]["class_name"] in ROLE_OF_CLASS and p_sym[pi].get("dot_role")
@@ -244,6 +291,7 @@ def score_drawing(drawing: dict[str, Any], pred: list[dict[str, Any]], structure
         "sheet": drawing["sheet"],
         "pairs": {"tp": len(gp & pp), "fp": len(pp - gp), "fn": len(gp - pp)},
         "node_pairs": {"tp": len(gn & pn), "fp": len(pn - gn), "fn": len(gn - pn)},
+        "node_pairs_conv": {"tp": len(gc & pn), "fp": len(pn - gc), "fn": len(gc - pn)},
         "per_class": {c: dict(v) for c, v in detector["per_class"].items()},
         "per_class_after": {c: dict(v) for c, v in scored["per_class"].items()},
         "dot_roles": dict(roles),
@@ -252,7 +300,7 @@ def score_drawing(drawing: dict[str, Any], pred: list[dict[str, Any]], structure
 
 
 def aggregate(rows: list[dict[str, Any]]) -> dict[str, Any]:
-    tot = {k: Counter() for k in ("pairs", "node_pairs")}
+    tot = {k: Counter() for k in ("pairs", "node_pairs", "node_pairs_conv")}
     before: dict[str, Counter] = {c: Counter() for c in SCORED_CLASSES}
     after: dict[str, Counter] = {c: Counter() for c in SCORED_CLASSES}
     roles: Counter = Counter()
@@ -270,6 +318,7 @@ def aggregate(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "drawings": len(rows),
         "symbol_pairs": prf(tot["pairs"]["tp"], tot["pairs"]["fp"], tot["pairs"]["fn"]),
         "node_pairs": prf(tot["node_pairs"]["tp"], tot["node_pairs"]["fp"], tot["node_pairs"]["fn"]),
+        "node_pairs_conv": prf(tot["node_pairs_conv"]["tp"], tot["node_pairs_conv"]["fp"], tot["node_pairs_conv"]["fn"]),
         "class_f1_detector": {c: prf(v["tp"], v["fp"], v["fn"]) for c, v in before.items()},
         "class_f1_structure": {c: prf(v["tp"], v["fp"], v["fn"]) for c, v in after.items()},
         "dot_role_accuracy": round(agree / sum(roles.values()), 4) if roles else None,
@@ -346,9 +395,10 @@ def main() -> None:
                 f"(fp{a['class_f1_structure'][c]['fp']}/fn{a['class_f1_structure'][c]['fn']})"
                 for c in SCORED_CLASSES
             )
-            sp, npairs = a["symbol_pairs"], a["node_pairs"]
+            sp, npairs, conv = a["symbol_pairs"], a["node_pairs"], a["node_pairs_conv"]
             print(f"  {part:6s} drawings={a['drawings']} symbol_pairs f1={sp['f1']} tp={sp['tp']} fp={sp['fp']} fn={sp['fn']}"
                   f" | node_pairs f1={npairs['f1']} tp={npairs['tp']} fp={npairs['fp']} fn={npairs['fn']} | {cls}"
+                  f" | node_pairs_conv f1={conv['f1']} tp={conv['tp']} fp={conv['fp']} fn={conv['fn']}"
                   f" | dot_role acc={a['dot_role_accuracy']} n={a['dot_role_scored']}"
                   f" | terminal_numbers {a['terminal_numbers']}")
     print(f"seconds={summary['seconds']}")
