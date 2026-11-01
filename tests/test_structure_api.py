@@ -14,7 +14,7 @@ from tests.conftest import SAMPLE_ANNOTATION, create_project
 from tests.test_ml_cycle import _predictions_zip, _upload_model
 
 
-def _fake_detector(monkeypatch, *, empty=False):
+def _fake_detector(monkeypatch, *, empty=False, xywhn=None):
     import services.inference_service as inference
 
     class Array:
@@ -24,9 +24,9 @@ def _fake_detector(monkeypatch, *, empty=False):
         def tolist(self):
             return self.values
 
+    rows = [] if empty else (xywhn or [[0.2, 0.5, 0.1, 0.1]])
     boxes = SimpleNamespace(
-        xywhn=Array([] if empty else [[0.2, 0.5, 0.1, 0.1]]),
-        conf=Array([] if empty else [0.9]), cls=Array([] if empty else [0]),
+        xywhn=Array(rows), conf=Array([0.9] * len(rows)), cls=Array([0] * len(rows)),
     )
     detector = SimpleNamespace(names={0: "connector"}, predict=lambda *a, **k: [SimpleNamespace(boxes=boxes)])
     monkeypatch.setattr(inference, "ultralytics_available", lambda: True)
@@ -144,3 +144,19 @@ def test_zero_symbols_still_saves_wire_result(client, monkeypatch):
     assert res.json()["detection_count"] == 0
     assert res.json()["results"][0]["structure_available"]
     assert client.post("/api/ml/analysis/export", json={"project_ids": [project_id]}).json()["summary"]["wire_count"] == 1
+
+
+def test_project_list_reports_analysis_counts_only_when_analyzed(client):
+    analyzed, untouched = create_project(client), create_project(client, "second.png")
+    result = {
+        **_result(analyzed),
+        "wires": [{"id": f"wire_{i:03d}"} for i in range(4)],
+        "from_to": {"connection_count": 3, "connections": []},
+    }
+    with database.SessionLocal() as db:
+        db.add(StructurePrediction(project_id=analyzed, payload_json=json.dumps(result)))
+        db.commit()
+
+    rows = {r["id"]: r for r in client.get("/api/projects").json()}
+    assert (rows[analyzed]["analysis_wire_count"], rows[analyzed]["analysis_connection_count"]) == (4, 3)
+    assert (rows[untouched]["analysis_wire_count"], rows[untouched]["analysis_connection_count"]) == (None, None)

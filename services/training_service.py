@@ -2,7 +2,7 @@
 
 蓄積済みアノテーションからデータセットを組み立て、バックグラウンドスレッドで
 ultralytics の学習を実行する。完了すると best.pt を `MlModel`（source='trained'）として
-登録し、学習に使った蓄積データで新旧モデルを評価して指標を記録する。
+登録し、評価用の図面（holdout 時は学習に使っていない図面）で新旧モデルを評価して指標を記録する。
 学習済みモデルは `decision='pending'`（採用待ち）で止め、利用者が比較結果を見て
 採用を選んだときだけ active に切り替える。
 
@@ -39,6 +39,8 @@ from services.model_service import (
 
 DEFAULT_BASE_MODEL = "yolov8n.pt"
 _LOG_TAIL_LIMIT = 4000
+HOLDOUT_MIN_DRAWINGS = 5
+HOLDOUT_RATIO = 0.2
 
 
 def default_base_model() -> str:
@@ -78,6 +80,7 @@ def start_training(
     epochs: int,
     imgsz: int,
     base_model: str | None,
+    holdout: bool,
 ) -> TrainingRun:
     if not ultralytics_available():
         raise ValueError(
@@ -105,21 +108,45 @@ def start_training(
     db.commit()
     db.refresh(run)
 
-    thread = threading.Thread(target=_run_training, args=(run.id,), name=f"training-run-{run.id}", daemon=True)
+    thread = threading.Thread(
+        target=_run_training, args=(run.id, holdout), name=f"training-run-{run.id}", daemon=True
+    )
     thread.start()
     return run
 
 
-def _write_dataset(db: Session, run_dir, projects: list[AnnotationProject]) -> str:
-    """data/training/run_<id>/dataset に ultralytics 標準構成を書き出し、data.yaml のパスを返す。"""
-    dataset_dir = run_dir / "dataset"
-    images_dir = dataset_dir / "images" / "train"
-    labels_dir = dataset_dir / "labels" / "train"
-    images_dir.mkdir(parents=True, exist_ok=True)
-    labels_dir.mkdir(parents=True, exist_ok=True)
+def _holdout_ids(drawing_ids: list[int], holdout: bool) -> set[int]:
+    """id 順に並べた図面から評価専用の図面を等間隔に選ぶ。少なすぎるときは選ばない。"""
+    n = len(drawing_ids)
+    if not holdout or n < HOLDOUT_MIN_DRAWINGS:
+        return set()
+    val_count = max(1, round(n * HOLDOUT_RATIO))
+    return {drawing_ids[int((i + 0.5) * n / val_count)] for i in range(val_count)}
 
-    written = 0
-    for project in projects:
+
+def _write_dataset(
+    db: Session, run_dir, projects: list[AnnotationProject], holdout: bool
+) -> tuple[str, dict]:
+    """data/training/run_<id>/dataset に ultralytics 標準構成を書き出し、data.yaml のパスと評価範囲を返す。
+
+    同じ図面のシンボルは描き方が揃っているため、学習に使った図面で評価すると未学習の図面より
+    高い精度が出る。holdout では図面単位で val を分け、新旧モデルを未学習の図面で比べる。
+    """
+    dataset_dir = run_dir / "dataset"
+    drawings = sorted(
+        (p for p in projects if any(image_path(i.sha256).exists() for i in p.images)),
+        key=lambda p: p.id,
+    )
+    if not drawings:
+        raise ValueError("学習用画像を出力できませんでした")
+    val_ids = _holdout_ids([p.id for p in drawings], holdout)
+
+    for project in drawings:
+        split = "val" if project.id in val_ids else "train"
+        images_dir = dataset_dir / "images" / split
+        labels_dir = dataset_dir / "labels" / split
+        images_dir.mkdir(parents=True, exist_ok=True)
+        labels_dir.mkdir(parents=True, exist_ok=True)
         label_content = build_label_content(db, project)
         for image in project.images:
             src = image_path(image.sha256)
@@ -128,21 +155,24 @@ def _write_dataset(db: Session, run_dir, projects: list[AnnotationProject]) -> s
             base = project_image_stem(project, image)
             (images_dir / f"{base}.png").write_bytes(src.read_bytes())
             (labels_dir / f"{base}.txt").write_text(label_content, encoding="utf-8")
-            written += 1
-    if written == 0:
-        raise ValueError("学習用画像を出力できませんでした")
+
+    train_ids = [p.id for p in drawings if p.id not in val_ids]
+    if val_ids:
+        eval_scope = {"mode": "holdout", "train_project_ids": train_ids, "val_project_ids": sorted(val_ids)}
+    else:
+        eval_scope = {"mode": "train", "train_project_ids": train_ids, "val_project_ids": train_ids}
 
     names = {c.yolo_index: c.key for c in classes_ordered(db)}
     data_yaml = {
         "path": str(dataset_dir),
         "train": "images/train",
-        "val": "images/train",
+        "val": "images/val" if val_ids else "images/train",
         "nc": len(names),
         "names": {int(k): v for k, v in sorted(names.items())},
     }
     data_yaml_path = run_dir / "data.yaml"
     data_yaml_path.write_text(yaml.safe_dump(data_yaml, allow_unicode=True, sort_keys=False), encoding="utf-8")
-    return str(data_yaml_path)
+    return str(data_yaml_path), eval_scope
 
 
 _METRIC_KEYS = (
@@ -212,7 +242,7 @@ def _read_metrics(run_dir) -> dict | None:
         return None
 
 
-def _run_training(run_id: int) -> None:
+def _run_training(run_id: int, holdout: bool) -> None:
     db = SessionLocal()
     log_buf = io.StringIO()
     try:
@@ -221,7 +251,8 @@ def _run_training(run_id: int) -> None:
         run_dir = TRAINING_DIR / f"run_{run.id}"
         run_dir.mkdir(parents=True, exist_ok=True)
 
-        data_yaml = _write_dataset(db, run_dir, projects)
+        data_yaml, eval_scope = _write_dataset(db, run_dir, projects, holdout)
+        run.eval_scope_json = json.dumps(eval_scope)
 
         base = run.base_model
         if not base:
@@ -253,7 +284,7 @@ def _run_training(run_id: int) -> None:
             if not best.exists():
                 raise RuntimeError("学習は完了しましたが best.pt が見つかりません")
 
-            # 蓄積データ（この run のデータセット）で新旧モデルを評価し、採用判定の材料にする
+            # 同じ評価用図面（data.yaml の val）で新旧モデルを評価し、採用判定の材料にする
             print(f"[training-run-{run.id}] evaluate candidate {best}", file=log_buf)
             eval_metrics = _eval_weights(best, data_yaml, run.imgsz)
             print(f"[training-run-{run.id}] evaluate baseline {base}", file=log_buf)
@@ -332,6 +363,7 @@ def serialize_run(run: TrainingRun) -> dict:
         "metrics": _loads_or_none(run.metrics_json),
         "baseline_metrics": _loads_or_none(run.baseline_metrics_json),
         "baseline_label": run.baseline_label,
+        "eval_scope": _loads_or_none(run.eval_scope_json),
         "decision": run.decision or None,
         "log_tail": run.log_tail,
         "started_at": run.started_at.isoformat() if run.started_at else None,

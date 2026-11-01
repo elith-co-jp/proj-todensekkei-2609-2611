@@ -228,6 +228,8 @@ class Prediction(Base):
     w = Column(Float, nullable=False)
     h = Column(Float, nullable=False)
     confidence = Column(Float, nullable=True)
+    kind = Column(String(20), nullable=False, default="symbol", server_default="symbol")
+    # kind: symbol=シンボル候補 / region=作図領域・DI 範囲などの大枠（シンボル件数に含めない）
     created_at = Column(DateTime, default=utc_now_naive)
 
     project = relationship("AnnotationProject", back_populates="predictions")
@@ -272,6 +274,7 @@ class TrainingRun(Base):
     decision = Column(String(20), nullable=False, default="")
     baseline_metrics_json = Column(Text, nullable=True)  # 旧モデルの評価指標
     baseline_label = Column(String(500), nullable=True)  # 旧モデルの表示名
+    eval_scope_json = Column(Text, nullable=True)  # 評価に使った図面の範囲（holdout / train）
     log_tail = Column(Text, nullable=True)
     started_at = Column(DateTime, default=utc_now_naive)
     finished_at = Column(DateTime, nullable=True)
