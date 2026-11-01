@@ -77,3 +77,14 @@ def test_rows_pointing_to_another_sheet_link_when_both_pages_are_exported():
     linked = contact_page["symbols"][0]["relay_row"]
     assert (linked["project_id"], linked["row"], linked["status"]) == (1, 0, "linked")
     assert coil_page["relay_table"]["links"][0]["row_links"][0]["project_id"] == 2
+
+def test_table_numbers_fill_the_unread_end_when_the_read_end_agrees():
+    read_one = contact("s1", "33HB FV2306", 10.0, 3.9, ["9", "P2"])
+    read_none = contact("s2", "33LA FV2306", 11.0, 3.9, ["P1", "P2"])
+    result = {"texts": border_labels(),
+              "relay_table": table(("33HB FV2306", "5-9-1", "a", "本", "10D"), ("33LA FV2306", "8-12-4", "b", "本", "11D"))}
+    link_relay_rows(result, [read_one, read_none], 1755, 1241)
+    assert [t["name"] for t in read_one["terminals"]] == ["9", "5"]
+    assert read_one["terminals"][1]["name_source"] == "relay_table"
+    assert [t["name"] for t in read_none["terminals"]] == ["P1", "P2"]
+    assert read_none["relay_row"]["table_terminal_numbers"] == ["12", "4"]

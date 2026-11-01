@@ -126,6 +126,7 @@ def apply_row(row: dict[str, str], index: int, match: dict[str, Any], symbol: di
               project_id: Any = None) -> dict[str, Any]:
     """結び付いた接点に表の端子番号と種類を照合した結果を付け、row_links の 1 件を返す。
 
+    片方の端だけ番号が読めて表の番号と合うとき、もう片方の端に表の残りの番号を付ける（name_source: relay_table）。
     種類は、器具番号が同じ接点が窓の中にそれ 1 つのときだけ表に合わせて直す。それ以外の食い違いは要確認。
     """
     link: dict[str, Any] = {"row": index, "position": row["position"], "sheet": row["sheet"], "symbol_id": None,
@@ -136,10 +137,14 @@ def apply_row(row: dict[str, str], index: int, match: dict[str, Any], symbol: di
     link["symbol_id"] = symbol["id"]
     reasons = [] if match["device_match"] else ["接点のラベルの器具番号が表と違う"]
     numbers = table_numbers(row)
-    read = [str(t.get("name")) for t in symbol.get("terminals") or [] if str(t.get("name") or "").isdigit()]
+    terminals = symbol.get("terminals") or []
+    read = [str(t.get("name")) for t in terminals if str(t.get("name") or "").isdigit()]
     terminal_check = None if not numbers else "未読" if not read else "一致" if set(read) <= set(numbers) else "不一致"
     if terminal_check == "不一致":
         reasons.append("端子番号が表と違う")
+    if terminal_check == "一致" and len(read) == 1 and len(terminals) == 2 and match["device_match"]:
+        unread = next(t for t in terminals if not str(t.get("name") or "").isdigit())
+        unread["name"], unread["name_source"] = next(n for n in numbers if n != read[0]), "relay_table"
     table_class = f"contact_{row['contact']}" if row.get("contact") in {"a", "b"} else None
     class_check = None
     if table_class:
