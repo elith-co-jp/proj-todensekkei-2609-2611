@@ -193,6 +193,7 @@ uvicorn main:app --port 8010               # http://localhost:8010 で UI と AP
 | `SEQANNO_DATA_DIR` | `./data` | DB と画像の保存先 |
 | `SEQANNO_DATABASE_URL` | `sqlite:///<data>/seqanno.db` | PostgreSQL 等へ差し替え可能（Docker は PostgreSQL） |
 | `SEQANNO_CORS_ORIGINS` | `http://localhost:5173,http://127.0.0.1:5173` | 許可オリジン |
+| `SEQANNO_OCR_REC_MODEL` | なし | 記号ごとの拡大読みに使う文字認識モデル（ONNX）。図面の字体に合わせて追加学習したモデル（`analysis/tools/ocr_finetune.py`）を指定する。なければ同梱のモデル |
 | `VITE_API_PROXY_TARGET` | `http://localhost:8010` | Vite 開発サーバーの API 接続先（`frontend/.env`） |
 
 ---
