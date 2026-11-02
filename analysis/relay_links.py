@@ -138,6 +138,16 @@ def apply_row(row: dict[str, str], index: int, match: dict[str, Any], symbol: di
     reasons = [] if match["device_match"] else ["接点のラベルの器具番号が表と違う"]
     numbers = table_numbers(row)
     terminals = symbol.get("terminals") or []
+    if match["device_match"] and match["unique"] and len(numbers) == len(terminals) == 2:
+        for terminal in terminals:
+            alternative = str(terminal.get("ocr_number_alternative") or "")
+            if not alternative or not alternative.isdigit() or str(terminal.get("name") or "") in numbers:
+                continue
+            candidate = [alternative if t is terminal else str(t.get("name") or "") for t in terminals]
+            if set(candidate) == set(numbers):
+                terminal["name"] = alternative
+                terminal["name_source"] = "relay_table_verified_ocr"
+                break
     read = [str(t.get("name")) for t in terminals if str(t.get("name") or "").isdigit()]
     terminal_check = None if not numbers else "未読" if not read else "一致" if set(read) <= set(numbers) else "不一致"
     if terminal_check == "不一致":

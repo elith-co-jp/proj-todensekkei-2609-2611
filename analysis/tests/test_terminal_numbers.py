@@ -59,6 +59,14 @@ def test_relay_table_confirms_a_full_page_ocr_number_cut_by_the_circle_rule():
     apply_row(row, 0, {"device_match": True, "unique": True}, symbol)
     assert [t.get("name") for t in symbol["terminals"]] == ["12", "8"]
     assert symbol["relay_row"]["terminal_check"] == "一致"
+    assert symbol["terminals"][0]["name_source"] == "relay_table_verified_ocr"
+
+    another = contact([*LABEL, item("8", 505, 272, 511, 283)])
+    another.update(id="s2", label="33LA EV2101A", type="contact_a")
+    attach_terminal_numbers([another], page)
+    apply_row(row, 0, {"device_match": True, "unique": False}, another)
+    assert [t.get("name") for t in another["terminals"]] == ["1", "8"]
+    assert another["relay_row"]["terminal_check"] == "不一致"
 
 
 def terminal(names_numbers):
