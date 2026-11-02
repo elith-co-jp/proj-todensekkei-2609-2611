@@ -1,7 +1,7 @@
 """Fine-tune the label OCR's text recognizer (PP-OCRv4 rec, ONNX) on drawing text lines, and write it back as ONNX.
 
-Input is ocr_finetune_data.py output. Lines from --train-split are trained on; lines from the other split
-score the model before and after (exact line match). The ONNX model is converted to PyTorch and trained
+Input is ocr_finetune_data.py output. Lines from --train-split are trained on; box-read lines from the other
+split score the model before and after (exact line match). The ONNX model is converted to PyTorch and trained
 with CTC loss; the trained weights are then written back into the original ONNX graph, so its dynamic
 shapes and metadata (RapidOCR reads the character list there) stay as they were. Batch-norm statistics
 stay frozen.
@@ -180,10 +180,8 @@ def main() -> None:
     parser.add_argument("--batch", type=int, default=32)
     parser.add_argument("--seed", type=int, default=2609)
     parser.add_argument("--limit", type=int, help="use only this many training lines (timing checks)")
-    parser.add_argument("--keep-lines", type=int, default=2000,
-                        help="lines already read right that join every corrected line in training, so the rest of the reading holds")
-    parser.add_argument("--drop-lines", type=int, default=1000,
-                        help="lines RapidOCR drops (connector dots, arcs) trained to read as nothing, so they stay dropped")
+    parser.add_argument("--page-lines", type=int, default=1000,
+                        help="whole-page lines already read right that join the box reads in training")
     args = parser.parse_args()
 
     import torch
@@ -196,26 +194,34 @@ def main() -> None:
     chars = characters(base)
     index = {c: i for i, c in enumerate(chars)}
     rows = [json.loads(line) for line in (args.lines / "lines.jsonl").read_text(encoding="utf-8").splitlines() if line]
+    for r in rows:
+        # Box-read lines the base model reads with confidence but no gold label covers (the terminal numbers
+        # beside a contact) are kept as read, so the fine-tuning does not unlearn them.
+        if r["target"] is None and r["source"] == "crop" and r["score"] >= 0.9 and r["ocr"]:
+            r["target"] = r["ocr"]
     rows = [r for r in rows if r["target"] is not None and all(c in index for c in r["target"])]
     for r in rows:
         r["img"] = np.asarray(Image.open(args.lines / "images" / r["image"]).convert("RGB"))
     train = [r for r in rows if args.train_split in ("all", r["split"])]
+    # The model reads only the 4x box reads, so every box-read line trains; whole-page lines add corrections and some
+    # plain reading. Lines the base model drops (a connector dot, the arc around it) train to read as nothing.
+    crop = [r for r in train if r["source"] == "crop"]
+    page_fixed = [r for r in train if r["source"] == "page" and r["target"] and r["ocr"] != r["target"]]
+    page_kept = [r for r in train if r["source"] == "page" and r["target"] and r["ocr"] == r["target"]]
+    random.shuffle(page_kept)
+    train = crop + page_fixed + page_kept[:args.page_lines]
     corrected = [r for r in train if r["target"] and r["ocr"] != r["target"]]
-    kept = [r for r in train if r["target"] and r["ocr"] == r["target"]]
     dropped = [r for r in train if not r["target"]]
-    random.shuffle(kept)
-    random.shuffle(dropped)
-    train = corrected + kept[:args.keep_lines] + dropped[:args.drop_lines]
     if args.limit:
         train = train[:args.limit]
-    held_all = [r for r in rows if args.train_split != "all" and r["split"] != args.train_split]
+    held_all = [r for r in rows if args.train_split != "all" and r["split"] != args.train_split and r["source"] == "crop"]
     held = [r for r in held_all if r["target"]]
     held_fixed = [r for r in held if r["ocr"] != r["target"]]
     held_dropped = [r for r in held_all if not r["target"]]
 
     net, trainable = to_torch(base)
     net = net.to(device).eval()
-    report = {"train_lines": len(train), "train_corrected": len(corrected), "train_dropped": min(len(dropped), args.drop_lines),
+    report = {"train_lines": len(train), "train_corrected": len(corrected), "train_dropped": len(dropped),
               "held_lines": len(held), "held_corrected": len(held_fixed), "trainable_constants": len(trainable)}
     if held:
         report["held_before"] = round(line_accuracy(net, held, chars, device), 4)
