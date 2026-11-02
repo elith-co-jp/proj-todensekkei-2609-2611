@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from analysis.relay_links import drawing_grid, grid_coordinates, link_document_relay_rows, link_relay_rows
+from services.structure_service import document_structure
 
 LETTERS = "ABCDEFGHJKLMNPQRSTUVWXYZ"
 
@@ -88,3 +89,19 @@ def test_table_numbers_fill_the_unread_end_when_the_read_end_agrees():
     assert read_one["terminals"][1]["name_source"] == "relay_table"
     assert [t["name"] for t in read_none["terminals"]] == ["P1", "P2"]
     assert read_none["relay_row"]["table_terminal_numbers"] == ["12", "4"]
+
+
+def test_document_export_refreshes_connection_names_after_relay_number_correction():
+    target = contact("s1", "33LA EV2101A", 10.0, 3.9, ["1", "8"])
+    target["terminals"][0]["ocr_number_alternative"] = "12"
+    contact_page = {
+        "sheet_no": "ER201", "source": {"project_id": 2}, "symbols": [target],
+        "drawing_grid": drawing_grid(border_labels(), 1755, 1241),
+        "from_to": {"connections": [{"from": {"symbol_id": "s1", "terminal_ref": "s1-P1", "terminal_name": "1"},
+                                    "to": {"symbol_id": "s1", "terminal_ref": "s1-P2", "terminal_name": "8"}}]},
+    }
+    coil_page = {"sheet_no": "ER200", "source": {"project_id": 1}, "symbols": [],
+                 "relay_table": table(("33LA EV2101A", "8-12-4", "a", "ER201", "10D"))}
+    document_structure([coil_page, contact_page])
+    assert target["terminals"][0]["name"] == "12"
+    assert contact_page["from_to"]["connections"][0]["from"]["terminal_name"] == "12"
