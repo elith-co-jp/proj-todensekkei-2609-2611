@@ -36,6 +36,7 @@ from run_yolo_e2e_pipeline import (
     DEFAULT_WIRE_TEXT_MASK,
     build_direct_from_to,
     enrich_symbols_and_graph,
+    load_crop_ocr_reader,
     load_symbol_ocr_reader,
     port_inference_config,
 )
@@ -118,6 +119,7 @@ def analyze_detections(
                 # 日本語の名称・注記は、ローカル LLM が設定されていればそれで、なければ同梱の日本語対応 OCR で読み直す。
                 page_image, symbols, region_boxes, reader, reader_from_env(), text_llm or name_ocr_reader(),
                 text_source="llm" if text_llm else "name_ocr",
+                crop_reader=load_crop_ocr_reader(reader),
             )
     except Exception:  # OCR failure must not discard successfully detected wires.
         logging.getLogger(__name__).exception("Symbol label OCR failed")

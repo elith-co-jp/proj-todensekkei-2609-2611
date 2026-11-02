@@ -716,10 +716,12 @@ def link_relay_table(rows: list[dict[str, str]], symbols: list[dict[str, Any]]) 
 def extract_text_structure(
     image: Image.Image, symbols: list[dict[str, Any]], regions: list[dict[str, Any]], reader: Any,
     label_reader: LabelReader | None = None, text_reader: LabelReader | None = None, text_source: str = "llm",
+    crop_reader: Any | None = None,
 ) -> dict[str, Any]:
     """構造 JSON に入れる文字の結果を作り、各記号のラベルを書き込む。
 
     ページ全体の OCR は 1 回だけ。コネクタ・接点・コイルは枠ごとの拡大 OCR も使う。
+    crop_reader があれば枠ごとの拡大 OCR だけをそれで読む（図面の字体に合わせた文字認識、#50）。
     label_reader があれば器具番号の形でない接点・コイルのラベルを、text_reader があれば日本語の名称・注記を読み直す。
     """
     width, height = image.size
@@ -730,7 +732,7 @@ def extract_text_structure(
         class_name = symbol.get("class_name") or ""
         label = symbol_label(items, symbol["bbox"], class_name, lexicon)
         if class_name in CROP_OCR_CLASSES:
-            crop_items = read_crop_text(image, symbol["bbox"], reader)
+            crop_items = read_crop_text(image, symbol["bbox"], crop_reader or reader)
             crop = symbol_label(crop_items, symbol["bbox"], class_name, lexicon)
             label = best_label(crop, label, lexicon)
             if class_name in TERMINAL_NUMBER_CLASSES:
