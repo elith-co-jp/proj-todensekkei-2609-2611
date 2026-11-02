@@ -274,6 +274,10 @@ def write_fold_dataset(root: Path, drawings: list[dict[str, Any]], train_sheets:
     for i, (png, label_text) in enumerate(extra):
         (images / f"extra_{i:04d}.png").write_bytes(png)
         (labels / f"extra_{i:04d}.txt").write_text(label_text, encoding="utf-8")
+        for degrees in RECIPE.get("rotated_copies", ()):
+            rotated_png, rotated = rotated_copy(png, label_text, degrees)
+            (images / f"extra_{i:04d}_r{degrees}.png").write_bytes(rotated_png)
+            (labels / f"extra_{i:04d}_r{degrees}.txt").write_text(rotated, encoding="utf-8")
     data_yaml = root / "data.yaml"
     data_yaml.write_text(
         json.dumps({"path": str(root), "train": "images/train", "val": "images/train",
