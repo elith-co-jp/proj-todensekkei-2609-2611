@@ -50,6 +50,19 @@ def document_structure(pages: list[dict]) -> dict:
     relays, linked_relays = link_cross_sheet_relays(pages)
     rows, linked_rows = link_document_relay_rows(
         [(page_sheet_number(p), (p.get("source") or {}).get("project_id"), p) for p in pages])
+    for page in pages:
+        symbols = {symbol["id"]: symbol for symbol in page.get("symbols", [])}
+        for connection in (page.get("from_to") or {}).get("connections", []):
+            for side in ("from", "to"):
+                endpoint = connection.get(side) or {}
+                symbol = symbols.get(endpoint.get("symbol_id"))
+                if symbol is None:
+                    continue
+                terminal = next((t for t in symbol.get("terminals", []) if t.get("ref") == endpoint.get("terminal_ref")), None)
+                if terminal is not None:
+                    endpoint["terminal_name"] = terminal.get("name") or ""
+                if "class_name" in endpoint:
+                    endpoint["class_name"] = symbol["class_name"]
     return {
         "schema_version": "todensekkei.document_structure.v1",
         "status": "partial" if any(p.get("status") == "partial" for p in pages) else "completed",

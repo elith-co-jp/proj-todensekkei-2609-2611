@@ -104,6 +104,7 @@ def test_card_frame_ports_on_the_same_line_bridge_a_contact_and_connector():
         {"type": "internal", "from": end("frame", 1), "to": end("frame", 2)},
         {"type": "wire", "from": end("frame", 2), "to": end("connector", 1)},
     ]}}
+    structure["symbols"][2]["bbox"]["x1"] = 145
     candidates = from_structure(structure, {"contact_a", "other", "connector"})
     plan = plan_import(candidates, [], [], W, H)
     assert len(plan.connections) == 3
@@ -111,6 +112,10 @@ def test_card_frame_ports_on_the_same_line_bridge_a_contact_and_connector():
     structure["symbols"][2]["bbox"]["x1"] = 300
     broad = from_structure(structure, {"contact_a", "other", "connector"})
     assert len(plan_import(broad, [], [], W, H).connections) == 2
+    structure["symbols"][2]["bbox"]["x1"] = 145
+    structure["symbols"][1]["status"] = "suppressed_text_zone"
+    suppressed = from_structure(structure, {"contact_a", "other", "connector"})
+    assert len(plan_import(suppressed, [], [], W, H).connections) == 2
 
 
 def test_import_into_empty_editor_adds_terminals_and_wires_as_ai_candidates(client):
