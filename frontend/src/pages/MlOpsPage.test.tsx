@@ -14,6 +14,7 @@ const api = vi.hoisted(() => ({
   listPredictions: vi.fn(),
   listTrainingRuns: vi.fn(),
   startTraining: vi.fn(),
+  runAnalysis: vi.fn(),
 }))
 vi.mock('../api/client', () => ({ api }))
 
@@ -64,6 +65,7 @@ beforeEach(() => {
   api.listPredictions.mockResolvedValue([])
   api.listTrainingRuns.mockResolvedValue([])
   api.startTraining.mockResolvedValue(trainingRun(20, { status: 'running' }))
+  api.runAnalysis.mockResolvedValue({ model, conf: 0.5, connector_conf: 0.6, results: [], detection_count: 0 })
 })
 
 afterEach(() => cleanup())
@@ -77,6 +79,15 @@ function openPage() {
 }
 
 describe('MlOpsPage 学習の評価範囲', () => {
+  it('ER 系のコネクタしきい値を解析に渡す', async () => {
+    api.mlStatus.mockResolvedValue({ ultralytics: true, active_model: model, model_count: 1, training_running: null })
+    const view = openPage()
+    const start = await view.findByRole('button', { name: 'AI 解析を実行' })
+    expect((view.getByLabelText('コネクタのしきい値') as HTMLInputElement).value).toBe('0.6')
+    fireEvent.click(start)
+    await waitFor(() => expect(api.runAnalysis).toHaveBeenCalledWith([], 0.5, 0.6))
+  })
+
   it('既定で未学習の図面で評価し、チェックを外すとその指定で学習を開始する', async () => {
     const view = openPage()
     const holdout = (await view.findByRole('checkbox', { name: '未学習の図面で評価する（推奨）' })) as HTMLInputElement

@@ -18,7 +18,7 @@ import {
 } from 'lucide-react'
 
 import { api } from '../api/client'
-import { DEFAULT_DETECTION_CONF } from '../api/defaults'
+import { DEFAULT_CONNECTOR_CONF, DEFAULT_DETECTION_CONF } from '../api/defaults'
 import { LoadingOverlay } from '../components/LoadingOverlay'
 import type {
   EvalScope,
@@ -109,6 +109,7 @@ export default function MlOpsPage() {
 
   // 推論パラメータ
   const [conf, setConf] = useState(DEFAULT_DETECTION_CONF)
+  const [connectorConf, setConnectorConf] = useState(DEFAULT_CONNECTOR_CONF)
   const [ids, setIds] = useState<Set<number>>(new Set())
   const [inferenceResult, setInferenceResult] = useState<InferenceRunResponse | null>(null)
   const [importResult, setImportResult] = useState<InferenceImportResult | null>(null)
@@ -172,7 +173,7 @@ export default function MlOpsPage() {
     setBusy('inference')
     setNotice(null)
     try {
-      const r = await api.runAnalysis(Array.from(ids), conf)
+      const r = await api.runAnalysis(Array.from(ids), conf, connectorConf)
       setInferenceResult(r)
       setImportResult(null)
       setJsonCache({})
@@ -553,8 +554,20 @@ export default function MlOpsPage() {
                     onChange={(e) => setConf(Number(e.target.value))}
                   />
                 </label>
+                <label className="text-[11px] text-slate-500">
+                  <span className="mb-1 block font-bold">コネクタのしきい値</span>
+                  <input
+                    type="number"
+                    className="field w-24"
+                    min={0}
+                    max={1}
+                    step={0.05}
+                    value={connectorConf}
+                    onChange={(e) => setConnectorConf(Number(e.target.value))}
+                  />
+                </label>
                 <p className="flex-1 text-[11px] leading-5 text-slate-400">
-                  しきい値以下の検出は捨てます。推論結果は図面ごとに保存され、エディタで確認・修正できます。
+                  ER 系の図面ではコネクタを 0.60 以上にすると誤検出が減りました。推論結果は図面ごとに保存され、エディタで確認・修正できます。
                 </p>
               </div>
               <label className="block">

@@ -151,9 +151,11 @@ def _run_inference(payload: InferenceRunRequest, db: Session, *, include_structu
         raise HTTPException(409, "別の解析を実行中です。完了してから再実行してください。")
     try:
         if include_structure:
-            results = run_inference(db, model, projects, conf=payload.conf, include_structure=True)
+            results = run_inference(db, model, projects, conf=payload.conf,
+                                    connector_conf=payload.connector_conf, include_structure=True)
         else:
-            results = run_inference(db, model, projects, conf=payload.conf)
+            results = run_inference(db, model, projects, conf=payload.conf,
+                                    connector_conf=payload.connector_conf)
     except RuntimeError as exc:
         db.rollback()
         raise HTTPException(400, str(exc)) from exc
@@ -166,6 +168,7 @@ def _run_inference(payload: InferenceRunRequest, db: Session, *, include_structu
     return {
         "model": serialize_model(model),
         "conf": payload.conf,
+        "connector_conf": payload.connector_conf,
         "results": results,
         "detection_count": sum(r["detections"] for r in results),
     }

@@ -188,6 +188,7 @@ export type StructureResult = {
 export type InferenceRunResponse = {
   model: MlModel
   conf: number
+  connector_conf?: number | null
   results: InferenceRunResult[]
   detection_count: number
 }

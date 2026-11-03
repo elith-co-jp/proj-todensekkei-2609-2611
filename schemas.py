@@ -98,6 +98,7 @@ class InferenceRunRequest(BaseModel):
 
     project_ids: list[int] = []  # 空 = 全プロジェクト
     conf: float = Field(default=DEFAULT_DETECTION_CONF, ge=0.0, le=1.0)
+    connector_conf: float | None = Field(default=None, ge=0.0, le=1.0)
 
 
 class TrainingRunRequest(BaseModel):
