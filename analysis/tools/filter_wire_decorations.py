@@ -106,7 +106,11 @@ def _card_boxes(symbols: list[dict[str, Any]]) -> list[Box]:
         if (s.get("class_name") or s.get("type")) != "other":
             continue
         box = Box(**{key: round(value) for key, value in s["bbox"].items()})
-        if sum(box.x0 <= x <= box.x1 and box.y0 <= y <= box.y1 for x, y in centers) >= CARD_FRAME_MIN_CONTACTS:
+        # Cards with DC inputs (+/-) hold no contacts; the card type read from the text in the box
+        # (DIO-400, 2B-2RSAM, ...) identifies them instead.
+        if s.get("other_kind") == "card" or (
+            sum(box.x0 <= x <= box.x1 and box.y0 <= y <= box.y1 for x, y in centers) >= CARD_FRAME_MIN_CONTACTS
+        ):
             cards.append(box)
     return cards
 
@@ -114,15 +118,20 @@ def _card_boxes(symbols: list[dict[str, Any]]) -> list[Box]:
 def _is_card_frame(binary: np.ndarray, line: LineSegment, cards: list[Box], scale: float) -> bool:
     if line.orientation != "h":
         return False
-    axis = (line.box.y0 + line.box.y1) // 2
+    # Merging can put the solid frame and the dash-dot card outline a few pixels above it in one
+    # box, so the box centre may miss the frame row. Judge the inkiest row of the box.
+    rows = range(max(0, line.box.y0), min(binary.shape[0], line.box.y1 + 1))
     margin = max(4, round(4 * scale))
     for box in cards:
-        if not (box.y0 <= axis <= box.y1 and line.box.x0 >= box.x0 - margin and line.box.x1 <= box.x1 + margin):
+        if not (line.box.x0 >= box.x0 - margin and line.box.x1 <= box.x1 + margin):
             continue
         inset = round(0.05 * (box.x1 - box.x0))
-        support = support_vector_for_span(binary, "h", axis, box.x0 + inset, box.x1 - inset, half_width=1)
-        if support.size and float(support.mean()) >= CARD_FRAME_MIN_INK:
-            return True
+        for axis in rows:
+            if not box.y0 <= axis <= box.y1:
+                continue
+            support = support_vector_for_span(binary, "h", axis, box.x0 + inset, box.x1 - inset, half_width=1)
+            if support.size and float(support.mean()) >= CARD_FRAME_MIN_INK:
+                return True
     return False
 
 
