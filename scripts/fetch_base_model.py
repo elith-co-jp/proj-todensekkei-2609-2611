@@ -1,6 +1,6 @@
 """Fetch the pinned model files bundled into the Windows exe (checksums are verified).
 
-- yolov8n.pt: the training base (Ultralytics, AGPL-3.0)
+- yolo11s.pt: the training base when no model is active (Ultralytics, AGPL-3.0)
 - ch_PP-OCRv5_rec_mobile.onnx: text recognition used to re-read Japanese names and notes
   (PaddleOCR PP-OCRv5 converted by RapidOCR, Apache-2.0)
 """
@@ -23,8 +23,8 @@ class Asset(NamedTuple):
 
 
 ASSETS = (
-    Asset("https://github.com/ultralytics/assets/releases/download/v8.3.0/yolov8n.pt",
-          "f59b3d833e2ff32e194b5bb8e08d211dc7c5bdf144b90d2c8412c47ccfc83b36", 20 * 1024 * 1024, "yolov8n.pt"),
+    Asset("https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo11s.pt",
+          "85a76fe86dd8afe384648546b56a7a78580c7cb7b404fc595f97969322d502d5", 32 * 1024 * 1024, "yolo11s.pt"),
     Asset("https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/master/onnx/PP-OCRv5/rec/ch_PP-OCRv5_rec_mobile.onnx",
           "5825fc7ebf84ae7a412be049820b4d86d77620f204a041697b0494669b1742c5", 32 * 1024 * 1024, "ch_PP-OCRv5_rec_mobile.onnx"),
 )

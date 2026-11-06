@@ -1,5 +1,7 @@
 import type {
   AiImportResult,
+  ClassStats,
+  HardDrawings,
   InferenceImportResult,
   InferenceRunResponse,
   MlModel,
@@ -243,4 +245,8 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ decision }),
     }),
+
+  trainingClassStats: () => req<ClassStats>('/api/ml/training/class-stats'),
+
+  trainingHardDrawings: () => req<HardDrawings>('/api/ml/training/hard-drawings'),
 }

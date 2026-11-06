@@ -20,6 +20,7 @@ import {
 import { api } from '../api/client'
 import { DEFAULT_CONNECTOR_CONF, DEFAULT_DETECTION_CONF } from '../api/defaults'
 import { LoadingOverlay } from '../components/LoadingOverlay'
+import { AdoptionReviewNote, PerClassComparison, TrainingDataPanel } from '../components/TrainingQuality'
 import type {
   EvalScope,
   InferenceImportResult,
@@ -452,6 +453,7 @@ export default function MlOpsPage() {
               採用すると次回以降の推論と学習のベースにこのモデルが使われます。
             </p>
             {pendingRun.eval_scope && <EvalScopeNote scope={pendingRun.eval_scope} />}
+            {pendingRun.review && <AdoptionReviewNote review={pendingRun.review} />}
             {pendingRun.metrics || pendingRun.baseline_metrics ? (
               <div className="overflow-x-auto rounded-2xl border border-slate-200">
                 <table className="w-full min-w-[520px] text-xs">
@@ -498,6 +500,7 @@ export default function MlOpsPage() {
                 評価指標を取得できませんでした。エディタで推論結果を確認して採用可否を判断してください。
               </p>
             )}
+            <PerClassComparison run={pendingRun} />
             <div className="flex flex-wrap gap-2">
               <button
                 type="button"
@@ -828,6 +831,8 @@ export default function MlOpsPage() {
                 {trainingRunning ? '学習を実行中…' : '学習を開始'}
               </button>
             </div>
+
+            <TrainingDataPanel refreshKey={projects} />
 
             {runs.length > 0 && (
               <div className="border-t border-slate-100 p-4 sm:p-5">
