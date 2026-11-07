@@ -34,10 +34,7 @@ def build_connection_candidates(graph: dict[str, Any], labels: list[dict[str, An
         to_labels = [label_text(labels_by_id[label_id]) for label_id in to_label_ids if label_id in labels_by_id]
         has_endpoint_labels = bool(from_labels and to_labels)
         confidence = float(wire.get("confidence", 0.4))
-        if has_endpoint_labels:
-            confidence = min(0.98, confidence + 0.08)
-        else:
-            confidence = max(0.25, confidence - 0.18)
+        confidence = min(0.98, confidence + 0.08) if has_endpoint_labels else max(0.25, confidence - 0.18)
 
         connections.append(
             {

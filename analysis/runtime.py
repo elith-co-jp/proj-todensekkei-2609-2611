@@ -7,7 +7,6 @@ reference connections are never used as inputs to production inference.
 from __future__ import annotations
 
 import logging
-import os
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -19,6 +18,7 @@ from analysis.name_ocr import default_reader as name_ocr_reader
 from analysis.relay_lamp import review_circles
 from analysis.relay_links import link_relay_rows
 from analysis.text_extraction import extract_text_structure
+from analysis.wiring import classes
 from analysis.wiring.assemble import build_final_output_from_analysis
 from analysis.wiring.connectivity import build_direct_from_to
 from analysis.wiring.detect import DEFAULT_WIRE_TEXT_MASK, analyze_image, make_binary_mask
@@ -27,9 +27,13 @@ from analysis.wiring.faint_lines import bridge_faint_wires
 from analysis.wiring.filter_wire_decorations import filter_wire_decorations, rapidocr_text_confirmation
 from analysis.wiring.linking import enrich_symbols_and_graph
 from analysis.wiring.ocr import load_crop_ocr_reader, load_symbol_ocr_reader
+from analysis.wiring.params import DEFAULT, WiringParams
 from analysis.wiring.ports import DEFAULT_INFERRED_TERMINAL_CLASSES, port_inference_config
 from analysis.wiring.revision_clouds import detect_clouds, erase_clouds
 from analysis.wiring.terminal_numbers import attach_terminal_numbers
+
+# 端子の位置の推定の設定（analysis.wiring.ports.default_configs の名前）。30 枚の正解データで選んだもの（DD-0007）。
+PORT_INFERENCE_CONFIG = "template_confident_relaxed_span_ink02"
 
 
 def _pixel_box(detection: dict[str, Any], width: int, height: int) -> dict[str, int]:
@@ -55,8 +59,9 @@ def analyze_detections(
     source: dict[str, Any],
     work_dir: Path,
     regions: list[dict[str, Any]] | None = None,
+    params: WiringParams = DEFAULT,
 ) -> dict[str, Any]:
-    """Reuse wire/port/from-to logic on exactly the image shown in the app."""
+    """アプリに表示している画像そのものから、配線・端子・端子間の接続を解析する。調整値は params（analysis.wiring.params）。"""
     with Image.open(image_path) as opened:
         image = opened.convert("RGB")
     width, height = image.size
@@ -135,23 +140,22 @@ def analyze_detections(
     dot_summary = annotate_dots(image, wired_symbols)
 
     payload = enrich_symbols_and_graph(
-        payload, wired_symbols, terminal_wire_threshold=10.0, terminal_node_threshold=28.0,
+        payload, wired_symbols, terminal_wire_threshold=params.link.terminal_wire_px,
+        terminal_node_threshold=params.link.terminal_node_px,
         terminal_source="inferred", inferred_terminal_classes=DEFAULT_INFERRED_TERMINAL_CLASSES,
-        inferred_terminal_config=port_inference_config("template_confident_relaxed_span_ink02"),
-        symbol_terminal_bridge_classes={
-            "contact_a", "contact_b", "solenoid", "relay_coil",
-            "lamp", "push_button", "diode", "junction",
-        },
+        inferred_terminal_config=port_inference_config(PORT_INFERENCE_CONFIG),
+        symbol_terminal_bridge_classes=set(classes.TWO_TERMINAL_DEVICES) | {classes.JUNCTION},
         junction_node_policy="all",
-        junction_node_classes={"junction"}, junction_node_threshold=24.0, source_image=image,
+        junction_node_classes={classes.JUNCTION}, junction_node_threshold=params.link.junction_node_px, source_image=image,
+        port_params=params.ports,
     )
     terminal_number_counts = attach_terminal_numbers(payload["symbols"], page_items=text_result.get("texts"))
     # リレー表の「本」の行を行列の位置の接点に結び付ける（#40 #44）。接点の種類を表に合わせて直すので from-to より先。
     relay_row_counts = link_relay_rows(text_result, payload["symbols"], width, height) if text_result else None
-    payload["from_to"] = build_direct_from_to(payload, source_image=image)
+    payload["from_to"] = build_direct_from_to(payload, source_image=image, params=params.bridge)
     # 細い線は 150 dpi のスキャンで途切れた薄い灰色になり、配線から落ちる。一直線に並んだ未接続の端子の間に
     # 薄い線があれば配線として足す（DD-0007 §4.22）。
-    faint_wires = bridge_faint_wires(payload, image) if os.environ.get("SEQANNO_FAINT_LINES", "1") != "0" else []
+    faint_wires = bridge_faint_wires(payload, image) if params.faint_lines else []
     for symbol in symbols:
         symbol.pop("text_items", None)
     payload["symbols"] = symbols

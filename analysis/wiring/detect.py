@@ -82,9 +82,7 @@ def _merge_parallel_boxes(
         component = int(component_labels[box.y0, box.x0]) if component_labels is not None else 0
         next_active: list[tuple[Box, dict[int, Box]]] = []
         for existing, components in active:
-            if orientation == "h" and existing.y1 + gap < box.y0:
-                merged.append((existing, components))
-            elif orientation == "v" and existing.x1 + gap < box.x0:
+            if orientation == "h" and existing.y1 + gap < box.y0 or orientation == "v" and existing.x1 + gap < box.x0:
                 merged.append((existing, components))
             else:
                 next_active.append((existing, components))
@@ -183,7 +181,7 @@ def line_mask(binary: np.ndarray, orientation: str) -> np.ndarray:
         bridge_kernels = ((1, 13), (1, 21), (1, 35), (1, 55))
 
     combined = np.zeros_like(binary)
-    for kernel_size, bridge_size in zip(kernels, bridge_kernels):
+    for kernel_size, bridge_size in zip(kernels, bridge_kernels, strict=False):
         bridge = cv2.getStructuringElement(cv2.MORPH_RECT, bridge_size)
         line_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, kernel_size)
         bridged = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, bridge, iterations=1)

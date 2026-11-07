@@ -9,64 +9,19 @@ from typing import Any
 
 from PIL import Image
 
+from analysis.wiring import classes
 from analysis.wiring.detect import make_binary_mask, support_vector_for_span
 from analysis.wiring.geometry import merged_span_length
+from analysis.wiring.params import DEFAULT, BridgeParams
 
-DIRECT_INTERNAL_BRIDGE_CLASSES = {
-    "contact_a", "contact_b", "solenoid", "relay_coil", "lamp", "push_button", "diode",
-}
-
-
-DIRECT_NODE_ANCHOR_CLASSES = {"connector", "junction", "power_bus", "terminal"}
-
-
-DIRECT_TERMINAL_GAP_BRIDGE_CLASSES = {
-    "connector", "contact_a", "contact_b", "junction", "solenoid",
-    "relay_coil", "lamp", "push_button", "diode", "power_bus",
-}
-
-
-DIRECT_TERMINAL_TERMINAL_BRIDGE_CLASSES = {"junction"}
-
-
-DIRECT_NODE_ANCHOR_THRESHOLD = 24.0
-
-
-DIRECT_TERMINAL_GAP_BRIDGE_MAX = 240.0
-
-
-DIRECT_WIRE_GAP_BRIDGE_MAX = 80.0
-
-
-DIRECT_GAP_BRIDGE_ALIGN_THRESHOLD = 28.0
-
-
-DIRECT_WIRE_GAP_TERMINAL_ANCHOR_THRESHOLD = 18.0
-
-
-# Two junction dots are joined only through a detected wire: a bridge between aligned dots chained
-# the separate staggered wires of one column group into a single net (ER21277).
-DIRECT_TERMINAL_TERMINAL_BRIDGE_MAX = 0.0
-
-
-DIRECT_ENDPOINT_BRIDGE_MAX = 60.0
-
-
-# Join a wire end to a nearby perpendicular wire only past that end, never back over its own span.
-DIRECT_WIRE_GAP_BRIDGE_OUTWARD_ONLY = True
-
-
-# Longest run of blank pixels (at 150 dpi) a wire-gap bridge may cross. Markers on a wire stay
-# under about 38 px; the space between a card's + and - dots is over 50 px. 0 disables the check.
-DIRECT_WIRE_GAP_BRIDGE_MAX_BLANK = 45.0
-
-
-# The same limit for a terminal joined to the end of a collinear wire up to DIRECT_TERMINAL_GAP_BRIDGE_MAX away.
-DIRECT_TERMINAL_GAP_BRIDGE_MAX_BLANK = 45.0
-
-
-# A missing wire never runs through the middle of a coil: such a bridge would short it.
-DIRECT_GAP_BRIDGE_DEVICE_CLASSES = {"relay_coil", "solenoid"}
+# 端子どうしを記号の中で結ぶ記号（2 端子の機器）。
+INTERNAL_BRIDGE_CLASSES = classes.TWO_TERMINAL_DEVICES
+# 端子が配線に結ばれていないとき、近くのノードに結ぶ記号。
+NODE_ANCHOR_CLASSES = classes.PASS_THROUGH
+# 端子が配線に結ばれていないとき、同じ向きの配線の端まで橋渡しする記号。
+TERMINAL_GAP_BRIDGE_CLASSES = classes.TWO_TERMINAL_DEVICES | (classes.PASS_THROUGH - {"terminal"})
+# 端子どうしを直接結ぶ記号（距離は BridgeParams.terminal_terminal_bridge_max_px）。
+TERMINAL_TERMINAL_BRIDGE_CLASSES = frozenset({classes.JUNCTION})
 
 
 def compact_label_candidate(candidate: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -216,33 +171,34 @@ def blank_run_measure(source_image: Image.Image) -> Callable[[tuple[float, float
 
 def build_direct_from_to(
     payload: dict[str, Any], source_image: Image.Image | None = None, trace: dict[str, Any] | None = None,
+    params: BridgeParams = DEFAULT.bridge,
 ) -> dict[str, Any]:
     terminal_records, terminal_by_key = build_direct_terminal_records(payload)
     bridge_stats: Counter[str] = Counter()
-    blank_run = blank_run_measure(source_image) if source_image is not None and DIRECT_WIRE_GAP_BRIDGE_MAX_BLANK > 0 else None
+    blank_run = blank_run_measure(source_image) if source_image is not None and params.wire_gap_bridge_max_blank_px > 0 else None
     pairs = build_predicted_graph_pairs(
         payload,
         terminal_records,
-        internal_bridge_classes=DIRECT_INTERNAL_BRIDGE_CLASSES,
-        node_anchor_classes=DIRECT_NODE_ANCHOR_CLASSES,
-        node_anchor_threshold=DIRECT_NODE_ANCHOR_THRESHOLD,
-        terminal_gap_bridge_classes=DIRECT_TERMINAL_GAP_BRIDGE_CLASSES,
-        terminal_gap_bridge_max=DIRECT_TERMINAL_GAP_BRIDGE_MAX,
-        wire_gap_bridge_max=DIRECT_WIRE_GAP_BRIDGE_MAX,
-        gap_bridge_align_threshold=DIRECT_GAP_BRIDGE_ALIGN_THRESHOLD,
-        wire_gap_bridge_terminal_anchor_threshold=DIRECT_WIRE_GAP_TERMINAL_ANCHOR_THRESHOLD,
-        terminal_terminal_bridge_classes=DIRECT_TERMINAL_TERMINAL_BRIDGE_CLASSES,
-        terminal_terminal_bridge_max=DIRECT_TERMINAL_TERMINAL_BRIDGE_MAX,
+        internal_bridge_classes=INTERNAL_BRIDGE_CLASSES,
+        node_anchor_classes=NODE_ANCHOR_CLASSES,
+        node_anchor_threshold=params.node_anchor_px,
+        terminal_gap_bridge_classes=TERMINAL_GAP_BRIDGE_CLASSES,
+        terminal_gap_bridge_max=params.terminal_gap_bridge_max_px,
+        wire_gap_bridge_max=params.wire_gap_bridge_max_px,
+        gap_bridge_align_threshold=params.gap_bridge_align_px,
+        wire_gap_bridge_terminal_anchor_threshold=params.wire_gap_terminal_anchor_px,
+        terminal_terminal_bridge_classes=TERMINAL_TERMINAL_BRIDGE_CLASSES,
+        terminal_terminal_bridge_max=params.terminal_terminal_bridge_max_px,
         gap_bridge_text_overlap_max=1.0,
         gap_bridge_symbol_overlap_max=1.0,
         nonconductive_anchor_policy="all",
         bridge_stats=bridge_stats,
-        endpoint_bridge_max=DIRECT_ENDPOINT_BRIDGE_MAX,
-        wire_gap_bridge_outward_only=DIRECT_WIRE_GAP_BRIDGE_OUTWARD_ONLY,
+        endpoint_bridge_max=params.endpoint_bridge_max_px,
+        wire_gap_bridge_outward_only=params.wire_gap_bridge_outward_only,
         gap_blank_run=blank_run,
-        wire_gap_bridge_max_blank=DIRECT_WIRE_GAP_BRIDGE_MAX_BLANK,
-        terminal_gap_bridge_max_blank=DIRECT_TERMINAL_GAP_BRIDGE_MAX_BLANK,
-        gap_bridge_device_classes=set(DIRECT_GAP_BRIDGE_DEVICE_CLASSES),
+        wire_gap_bridge_max_blank=params.wire_gap_bridge_max_blank_px,
+        terminal_gap_bridge_max_blank=params.terminal_gap_bridge_max_blank_px,
+        gap_bridge_device_classes=set(classes.COILS),
         trace=trace,
     )
     valid_pairs = sorted(
@@ -289,19 +245,19 @@ def build_direct_from_to(
         "connections": connections,
         "resolver": {
             "algorithm": "direct_wire_graph_traversal",
-            "internal_bridge_classes": sorted(DIRECT_INTERNAL_BRIDGE_CLASSES),
-            "node_anchor_classes": sorted(DIRECT_NODE_ANCHOR_CLASSES),
-            "node_anchor_threshold": DIRECT_NODE_ANCHOR_THRESHOLD,
-            "terminal_gap_bridge_classes": sorted(DIRECT_TERMINAL_GAP_BRIDGE_CLASSES),
-            "terminal_gap_bridge_max": DIRECT_TERMINAL_GAP_BRIDGE_MAX,
-            "wire_gap_bridge_max": DIRECT_WIRE_GAP_BRIDGE_MAX,
-            "gap_bridge_align_threshold": DIRECT_GAP_BRIDGE_ALIGN_THRESHOLD,
-            "wire_gap_terminal_anchor_threshold": DIRECT_WIRE_GAP_TERMINAL_ANCHOR_THRESHOLD,
-            "terminal_terminal_bridge_classes": sorted(DIRECT_TERMINAL_TERMINAL_BRIDGE_CLASSES),
-            "terminal_terminal_bridge_max": DIRECT_TERMINAL_TERMINAL_BRIDGE_MAX,
-            "wire_gap_bridge_outward_only": DIRECT_WIRE_GAP_BRIDGE_OUTWARD_ONLY,
-            "wire_gap_bridge_max_blank": DIRECT_WIRE_GAP_BRIDGE_MAX_BLANK if blank_run is not None else 0.0,
-            "terminal_gap_bridge_max_blank": DIRECT_TERMINAL_GAP_BRIDGE_MAX_BLANK if blank_run is not None else 0.0,
+            "internal_bridge_classes": sorted(INTERNAL_BRIDGE_CLASSES),
+            "node_anchor_classes": sorted(NODE_ANCHOR_CLASSES),
+            "node_anchor_threshold": params.node_anchor_px,
+            "terminal_gap_bridge_classes": sorted(TERMINAL_GAP_BRIDGE_CLASSES),
+            "terminal_gap_bridge_max": params.terminal_gap_bridge_max_px,
+            "wire_gap_bridge_max": params.wire_gap_bridge_max_px,
+            "gap_bridge_align_threshold": params.gap_bridge_align_px,
+            "wire_gap_terminal_anchor_threshold": params.wire_gap_terminal_anchor_px,
+            "terminal_terminal_bridge_classes": sorted(TERMINAL_TERMINAL_BRIDGE_CLASSES),
+            "terminal_terminal_bridge_max": params.terminal_terminal_bridge_max_px,
+            "wire_gap_bridge_outward_only": params.wire_gap_bridge_outward_only,
+            "wire_gap_bridge_max_blank": params.wire_gap_bridge_max_blank_px if blank_run is not None else 0.0,
+            "terminal_gap_bridge_max_blank": params.terminal_gap_bridge_max_blank_px if blank_run is not None else 0.0,
             "bridge_stats": dict(sorted(bridge_stats.items())),
         },
     }
@@ -470,9 +426,7 @@ def conductive_junction_nodes(payload: dict[str, Any]) -> set[str]:
             if str(node.get("type") or "") != "junction":
                 continue
             point = node_point(node)
-            if _wire_ends_at_node(wires, point[0], point[1]):
-                result.add(str(node["id"]))
-            elif any(
+            if _wire_ends_at_node(wires, point[0], point[1]) or any(
                 point_distance(point, junction_point) <= threshold
                 for junction_point in junction_points
             ):
@@ -836,12 +790,10 @@ def build_predicted_graph_pairs(
                     if wire_gap_bridge_outward_only and not leaves_wire_end(source_wire_id, source_orientation, point, projection):
                         stats["wire_gap_bridge_rejected_inward_count"] += 1
                         continue
-                    if not has_terminal_anchor(target_edge_id, projection):
-                        # A wire's own span END almost touching a perpendicular
-                        # wire is a drawn T-join — bridge it even without a
-                        # symbol terminal sitting on the junction point.
-                        if not (is_wire_end and gap <= endpoint_bridge_max):
-                            continue
+                    # A wire's own span END almost touching a perpendicular wire is a drawn T-join:
+                    # bridge it even without a symbol terminal sitting on the junction point.
+                    if not has_terminal_anchor(target_edge_id, projection) and not (is_wire_end and gap <= endpoint_bridge_max):
+                        continue
                     # Markers on a wire (numbered circles, wire-number boxes) leave short blanks;
                     # a long blank stretch is open paper, e.g. between the + and - dots of a card.
                     if gap_blank_run is not None and wire_gap_bridge_max_blank > 0 and gap_blank_run(point, projection) > wire_gap_bridge_max_blank:
@@ -996,7 +948,7 @@ def build_predicted_graph_pairs(
             *stops_by_edge.get(edge_id, []),
         ]
         items.sort(key=lambda item: (item[0], item[1]))
-        for (_left_t, left), (_right_t, right) in zip(items, items[1:]):
+        for (_left_t, left), (_right_t, right) in zip(items, items[1:], strict=False):
             add_graph_edge(left, right, "wire")
 
     add_terminal_terminal_bridges()
@@ -1048,7 +1000,7 @@ def build_predicted_graph_pairs(
             unique.sort(key=lambda item: (float(item["point"][1]), float(item["point"][0]), str(item["member_key"])))
         else:
             unique.sort(key=lambda item: (float(item["point"][0]), float(item["point"][1]), str(item["member_key"])))
-        for left, right in zip(unique, unique[1:]):
+        for left, right in zip(unique, unique[1:], strict=False):
             if left["member_key"] != right["member_key"]:
                 pairs.add(sorted_pair(str(left["member_key"]), str(right["member_key"])))
 

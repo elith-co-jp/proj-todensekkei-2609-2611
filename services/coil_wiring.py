@@ -12,7 +12,10 @@ from __future__ import annotations
 
 from typing import Any
 
-COIL_CLASSES = frozenset({"relay_coil", "solenoid", "lamp"})
+from analysis.wiring import classes
+
+# 取り決めの対象: コイルと表示灯（端子 2 個で、配線がその中で途切れて描かれる記号）。
+COIL_CLASSES = classes.COILS | {"lamp"}
 # 線がコイルの中心からこの割合（枠の短い辺に対して）より離れて通るときは、かすめているだけとみなす。
 CENTER_RATIO = 0.3
 INSET_PX = 1.0

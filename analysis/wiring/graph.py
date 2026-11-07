@@ -2,18 +2,8 @@
 
 from __future__ import annotations
 
+from analysis.wiring.params import DEFAULT, GraphParams
 from analysis.wiring.shapes import DetectedLabel, DetectedWire, LineSegment, line_axis, line_intersection
-
-# Wire rows are drawn about 11 px apart at 150 dpi (ER21276). Points closer than this are one node, and a
-# node belongs to a wire only within this distance across the wire; wider values joined the next row.
-NODE_MERGE_PX = 6
-
-
-ON_LINE_ACROSS_PX = 6
-
-
-# A wire meets another only this far past its detected end; 16-18 px reached the next row under a corner (ER21277).
-LINE_REACH_PX = 8
 
 
 def cluster_points(points: list[tuple[int, int]], tolerance: int = 12) -> list[tuple[int, int]]:
@@ -41,7 +31,9 @@ def point_on_line(point: tuple[int, int], line: LineSegment, tolerance: int = 16
     return abs(x - line_axis(line)) <= across and box.y0 - tolerance <= y <= box.y1 + tolerance
 
 
-def build_connection_graph(wires: list[DetectedWire], labels: list[DetectedLabel]) -> dict:
+def build_connection_graph(
+    wires: list[DetectedWire], labels: list[DetectedLabel], params: GraphParams = DEFAULT.graph,
+) -> dict:
     h_wires = [wire for wire in wires if wire.orientation == "h"]
     v_wires = [wire for wire in wires if wire.orientation == "v"]
     node_points: list[tuple[int, int]] = []
@@ -58,14 +50,14 @@ def build_connection_graph(wires: list[DetectedWire], labels: list[DetectedLabel
         h_line = LineSegment(h_wire.orientation, h_wire.box)
         for v_wire in v_wires:
             v_line = LineSegment(v_wire.orientation, v_wire.box)
-            point = line_intersection(h_line, v_line, tolerance=LINE_REACH_PX)
+            point = line_intersection(h_line, v_line, tolerance=params.line_reach_px)
             if point is None:
                 continue
             intersection_keys.add((round(point[0] / 12), round(point[1] / 12)))
             node_points.append(point)
 
     nodes: list[dict] = []
-    for index, point in enumerate(cluster_points(node_points, tolerance=NODE_MERGE_PX), start=1):
+    for index, point in enumerate(cluster_points(node_points, tolerance=params.node_merge_px), start=1):
         key = (round(point[0] / 12), round(point[1] / 12))
         nearby_labels = [
             label.id
@@ -90,10 +82,10 @@ def build_connection_graph(wires: list[DetectedWire], labels: list[DetectedLabel
     for wire in wires:
         line = LineSegment(wire.orientation, wire.box)
         points = [(node["x"], node["y"]) for node in nodes
-                  if point_on_line((node["x"], node["y"]), line, tolerance=LINE_REACH_PX, across=ON_LINE_ACROSS_PX)]
-        points = cluster_points(points, tolerance=NODE_MERGE_PX)
+                  if point_on_line((node["x"], node["y"]), line, tolerance=params.line_reach_px, across=params.on_line_across_px)]
+        points = cluster_points(points, tolerance=params.node_merge_px)
         points = sorted(points, key=lambda point: point[0] if wire.orientation == "h" else point[1])
-        for start, end in zip(points, points[1:]):
+        for start, end in zip(points, points[1:], strict=False):
             length = abs(end[0] - start[0]) + abs(end[1] - start[1])
             if length < 12:
                 continue

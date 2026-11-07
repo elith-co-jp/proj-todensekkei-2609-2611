@@ -1,14 +1,6 @@
 from __future__ import annotations
 
-# ruff: noqa: I001
-
-import sys
 import unittest
-from pathlib import Path
-
-
-TOOLS_DIR = Path(__file__).resolve().parents[1] / "tools"
-sys.path.insert(0, str(TOOLS_DIR))
 
 from analysis.wiring.connectivity import build_direct_from_to
 

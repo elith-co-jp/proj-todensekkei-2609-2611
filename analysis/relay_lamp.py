@@ -15,9 +15,10 @@ import cv2
 import numpy as np
 
 from analysis.text_extraction import normalize, same_relay_device
+from analysis.wiring import classes
 
 CIRCLE_CLASSES = ("relay_coil", "lamp")
-CONTACT_CLASSES = {"contact_a", "contact_b"}
+CONTACT_CLASSES = classes.CONTACTS
 CLASS_LABELS = {"relay_coil": "リレーコイル", "lamp": "表示灯"}
 NEAR_PX = 40
 X_MIN_COVER = 0.85

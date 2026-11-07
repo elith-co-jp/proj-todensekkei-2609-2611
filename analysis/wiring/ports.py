@@ -2,15 +2,17 @@
 
 from __future__ import annotations
 
-import os
 from collections import defaultdict
 from typing import Any
 
 from PIL import Image
 
+from analysis.wiring import classes
 from analysis.wiring.geometry import clamp, wire_axis_and_range
+from analysis.wiring.params import DEFAULT, PortParams
 
-EXPLICIT_NODE_CLASSES = ("connector", "junction", "terminal", "power_bus")
+# 中心に 1 つの端子を置く記号。
+EXPLICIT_NODE_CLASSES = classes.PASS_THROUGH
 
 
 # Classes whose terminals sit where a wire stops inside the box (the + and - dots of a card),
@@ -33,11 +35,6 @@ CONTACT_EDGE_FALLBACK = True
 # (ER21282: a box drawn around each contact doubles as its wiring). A two-port contact sits on one line,
 # so when ports land on parallel lines, keep the line deepest inside the box.
 CONTACT_KEEPS_INNERMOST_LINE = True
-
-
-# A junction (dot or wire bend) lies on one horizontal and one vertical line. Lines farther from its
-# centre than the nearest one plus this tolerance are neighbouring parallel wires (ER21276).
-JUNCTION_AXIS_TOLERANCE_PX = 3.0
 
 
 def point_ink_ratio(image: Image.Image, point: tuple[float, float], radius: int) -> float:
@@ -84,6 +81,7 @@ def infer_ports_for_symbol(
     source_image: Image.Image,
     *,
     config: dict[str, Any],
+    params: PortParams = DEFAULT.ports,
 ) -> list[dict[str, Any]]:
     box = symbol["bbox"]
     x0, y0, x1, y1 = map(float, (box["x0"], box["y0"], box["x1"], box["y1"]))
@@ -205,7 +203,7 @@ def infer_ports_for_symbol(
         nearest = {o: min((abs(c["wire_axis"] - centre[o]) for c in candidates if c["wire_orientation"] == o), default=None)
                    for o in ("v", "h")}
         candidates = [c for c in candidates
-                      if abs(c["wire_axis"] - centre[c["wire_orientation"]]) <= nearest[c["wire_orientation"]] + JUNCTION_AXIS_TOLERANCE_PX]
+                      if abs(c["wire_axis"] - centre[c["wire_orientation"]]) <= nearest[c["wire_orientation"]] + params.junction_axis_tolerance_px]
 
     if CONTACT_KEEPS_INNERMOST_LINE and class_name in {"contact_a", "contact_b"} and not four_port and candidates:
         def cross(candidate: dict[str, Any]) -> float:
@@ -256,7 +254,7 @@ def infer_ports_for_symbol(
         if previous is None or float(candidate["ink_ratio"]) > float(previous["ink_ratio"]):
             deduped[key] = candidate
     if CONTACT_EDGE_FALLBACK and mode == "template" and class_name in {"contact_a", "contact_b"} and not four_port and len(deduped) < 2:
-        return infer_ports_for_symbol(symbol, wires, source_image, config={**config, "mode": "bbox_edge", "edge_on_span": True})
+        return infer_ports_for_symbol(symbol, wires, source_image, config={**config, "mode": "bbox_edge", "edge_on_span": True}, params=params)
     return sorted(deduped.values(), key=lambda item: (str(item["wire_id"]), item["point"][1], item["point"][0]))
 
 
@@ -373,44 +371,15 @@ def terminal_points_for_symbol(
     ]
 
 
-# 端子が 2 個に満たない接点・コイルは、記号の枠の上下（接点は左右も）から外へ伸びる線を画像で探して端子にし、
-# 線をたどって最初に当たる配線につなぐ（DD-0009 §8）。短い引き出し線や信頼度の低い縦線は配線として
-# 検出されず、端子が付かないため回路から外れていた。
-LINE_PORT_CLASSES = frozenset({"contact_a", "contact_b", "relay_coil", "solenoid"})
+# 端子が 2 個に満たないとき、画像の線から 2 端子を決める記号（DD-0009 §8）。短い引き出し線や信頼度の低い縦線は
+# 配線として検出されず、端子が付かないため回路から外れていた。
+LINE_PORT_CLASSES = classes.CONTACTS | classes.COILS
+# 細い点線のような薄い灰色の線（ER21256 のコイルの上下）は二値化で消える。コイルに限り灰色の濃さで線を探す（DD-0009 §9）。
+FAINT_PORT_CLASSES = classes.COILS
 
 
-LINE_PORT_MIN_RUN = 10      # 枠の外へ続く線の長さの下限（150 dpi の px）。文字の画は短い
-
-
-LINE_PORT_PROBE = 40        # 端子の位置を選ぶときに見る長さ
-
-
-LINE_PORT_TRACE_MAX = 400   # 配線を探してたどる長さの上限
-
-
-LINE_PORT_GAP = 2           # たどるときに許す途切れ
-
-
-LINE_PORTS_ENABLED = os.environ.get("SEQANNO_LINE_PORTS", "1") != "0"
-
-
-# 細い点線のような薄い灰色の線（ER21256 のコイルの上下）は二値化で消える。コイルに限り、灰色の濃さで線を探す。
-# 灰色が FAINT_GRAY 未満の画素を線とみなし、枠の外の LINE_PORT_PROBE px のうち FAINT_COVERAGE 以上の行に
-# 線がある列を端子の位置にする（近くの文字「14」「13」の列は 0.25 前後、線の列は 0.45 以上だった）。
-FAINT_GRAY = 240
-
-
-FAINT_COVERAGE = 0.35
-
-
-FAINT_GAP = 6
-
-
-FAINT_PORT_CLASSES = frozenset({"relay_coil", "solenoid"})
-
-
-def _ink_run(mask: Any, x: int, y: int, dx: int, dy: int, limit: int, gap: int = LINE_PORT_GAP) -> int:
-    """(x, y) から (dx, dy) の向きに続くインクの長さ。線の太さの揺れに 1 px、途切れに LINE_PORT_GAP px を許す。"""
+def _ink_run(mask: Any, x: int, y: int, dx: int, dy: int, limit: int, gap: int) -> int:
+    """(x, y) から (dx, dy) の向きに続くインクの長さ。線の太さの揺れに 1 px、途切れに gap px を許す。"""
     height, width = mask.shape[:2]
     run = miss = 0
     for i in range(1, limit + 1):
@@ -429,7 +398,7 @@ def _ink_run(mask: Any, x: int, y: int, dx: int, dy: int, limit: int, gap: int =
 
 def _trace_to_wire(
     mask: Any, start: tuple[int, int], step: tuple[int, int], wires: list[dict[str, Any]],
-    other_boxes: list[dict[str, Any]], dot_boxes: list[dict[str, Any]], gap: int = LINE_PORT_GAP,
+    other_boxes: list[dict[str, Any]], dot_boxes: list[dict[str, Any]], gap: int, params: PortParams,
 ) -> str | None:
     """端子から外へ線をたどり、最初に当たる配線の ID。黒丸の無い交差（線が向こうへ続く）は通り過ぎ、
     黒丸（分岐点）の上で当たった配線はそこでつながっているとみなす。
@@ -441,7 +410,7 @@ def _trace_to_wire(
     dx, dy = step
     x, y = start
     miss = 0
-    for i in range(0, LINE_PORT_TRACE_MAX + 1):
+    for i in range(0, params.line_trace_max_px + 1):
         px, py = x + dx * i, y + dy * i
         if not (0 <= px < width and 0 <= py < height):
             return None
@@ -457,7 +426,7 @@ def _trace_to_wire(
             on_dot = any(b["x0"] - 2 <= px <= b["x1"] + 2 and b["y0"] - 2 <= py <= b["y1"] + 2 for b in dot_boxes)
             thickness = (box["y1"] - box["y0"]) if dx == 0 else (box["x1"] - box["x0"])
             beyond = int(thickness) + 4
-            if not on_dot and _ink_run(mask, px + dx * beyond, py + dy * beyond, dx, dy, 8) >= 6:
+            if not on_dot and _ink_run(mask, px + dx * beyond, py + dy * beyond, dx, dy, 8, params.line_gap_px) >= 6:
                 continue
             return str(wire["id"])
         inked = mask[py, max(0, px - 1):px + 2].any() if dx == 0 else mask[max(0, py - 1):py + 2, px].any()
@@ -470,15 +439,18 @@ def _trace_to_wire(
     return None
 
 
-def _faint_coil_column(faint: Any, x0: int, y0: int, x1: int, y1: int) -> int | None:
-    """コイルの中央の半分の列から、枠の上下の外に薄い線が続く列。無ければ None。"""
+def _faint_coil_column(faint: Any, x0: int, y0: int, x1: int, y1: int, params: PortParams) -> int | None:
+    """コイルの中央の半分の列から、枠の上下の外に薄い線が続く列。無ければ None。
+
+    枠の外の line_probe_px の行のうち faint_coverage 以上の行に線がある列（近くの文字の列は 0.25 前後）。
+    """
     height = faint.shape[0]
-    top = faint[max(0, y0 - LINE_PORT_PROBE):max(0, y0 - 2)]
-    bottom = faint[min(height, y1 + 2):min(height, y1 + LINE_PORT_PROBE)]
+    top = faint[max(0, y0 - params.line_probe_px):max(0, y0 - 2)]
+    bottom = faint[min(height, y1 + 2):min(height, y1 + params.line_probe_px)]
     if not len(top) or not len(bottom):
         return None
     quarter = (x1 - x0) // 4
-    best: tuple[float, list[int]] = (FAINT_COVERAGE, [])
+    best: tuple[float, list[int]] = (params.faint_coverage, [])
     for c in range(x0 + quarter, x1 - quarter + 1):
         score = min(top[:, max(0, c - 1):c + 2].any(axis=1).mean(), bottom[:, max(0, c - 1):c + 2].any(axis=1).mean())
         if score > best[0] + 1e-9:
@@ -490,44 +462,46 @@ def _faint_coil_column(faint: Any, x0: int, y0: int, x1: int, y1: int) -> int | 
 
 def line_ports(
     symbol: dict[str, Any], mask: Any, wires: list[dict[str, Any]], symbols: list[dict[str, Any]],
-    faint: Any | None = None,
+    faint: Any | None = None, params: PortParams = DEFAULT.ports,
 ) -> list[dict[str, Any]]:
-    """枠の両側から外へ続く線を探して 2 端子にする。見つからなければ空。
+    """枠の両側から外へ続く線を探して 2 端子にし、線をたどって最初に当たる配線を端子の配線にする。見つからなければ空。
 
-    faint（灰色が FAINT_GRAY 未満の画素）を渡すと、コイルで線が見つからないときに薄い線を探してたどる。
+    faint（灰色が params.faint_gray 未満の画素）を渡すと、コイルで線が見つからないときに薄い線を探してたどる。
     """
     box = symbol["bbox"]
     x0, y0, x1, y1 = (int(round(float(box[k]))) for k in ("x0", "y0", "x1", "y1"))
-    axes = ["v"] if symbol.get("class_name") in {"relay_coil", "solenoid"} else ["v", "h"]
+    axes = ["v"] if symbol.get("class_name") in classes.COILS else ["v", "h"]
     # 線の太さの揺れを 1 px 許して見るので、同じ強さの列が線の幅だけ続く。その真ん中を端子の位置にする。
     best_score, best_axis, best_columns = 0, "v", []
     for axis in axes:
         lo, hi = (x0 + 2, x1 - 2) if axis == "v" else (y0 + 2, y1 - 2)
         for c in range(lo, hi + 1):
             if axis == "v":
-                runs = (_ink_run(mask, c, y0, 0, -1, LINE_PORT_PROBE), _ink_run(mask, c, y1, 0, 1, LINE_PORT_PROBE))
+                runs = (_ink_run(mask, c, y0, 0, -1, params.line_probe_px, params.line_gap_px),
+                        _ink_run(mask, c, y1, 0, 1, params.line_probe_px, params.line_gap_px))
             else:
-                runs = (_ink_run(mask, x0, c, -1, 0, LINE_PORT_PROBE), _ink_run(mask, x1, c, 1, 0, LINE_PORT_PROBE))
+                runs = (_ink_run(mask, x0, c, -1, 0, params.line_probe_px, params.line_gap_px),
+                        _ink_run(mask, x1, c, 1, 0, params.line_probe_px, params.line_gap_px))
             score = min(runs)
-            if score < LINE_PORT_MIN_RUN or score < best_score:
+            if score < params.line_min_run_px or score < best_score:
                 continue
             if score > best_score or axis != best_axis or c != best_columns[-1] + 1:
                 best_score, best_axis, best_columns = score, axis, [c]
             else:
                 best_columns.append(c)
-    trace_mask, gap = mask, LINE_PORT_GAP
+    trace_mask, gap = mask, params.line_gap_px
     if best_columns:
         axis, c = best_axis, best_columns[len(best_columns) // 2]
     elif faint is not None and symbol.get("class_name") in FAINT_PORT_CLASSES:
-        found = _faint_coil_column(faint, x0, y0, x1, y1)
+        found = _faint_coil_column(faint, x0, y0, x1, y1, params)
         if found is None:
             return []
-        axis, c, trace_mask, gap = "v", found, faint, FAINT_GAP
+        axis, c, trace_mask, gap = "v", found, faint, params.faint_gap_px
     else:
         return []
     live = [s for s in symbols if s is not symbol and not (s.get("dot_role") or {}).get("suppressed")]
-    others = [s["bbox"] for s in live if s.get("class_name") != "junction"]
-    dots = [s["bbox"] for s in live if s.get("class_name") == "junction"]
+    others = [s["bbox"] for s in live if s.get("class_name") != classes.JUNCTION]
+    dots = [s["bbox"] for s in live if s.get("class_name") == classes.JUNCTION]
     ends = [((c, y0), (0, -1)), ((c, y1), (0, 1))] if axis == "v" else [((x0, c), (-1, 0)), ((x1, c), (1, 0))]
     return [
         {
@@ -535,7 +509,7 @@ def line_ports(
             "terminal_name": f"P{index}",
             "point": [float(point[0]), float(point[1])],
             "source": "line_port",
-            "wire_id_hint": _trace_to_wire(trace_mask, point, step, wires, others, dots, gap),
+            "wire_id_hint": _trace_to_wire(trace_mask, point, step, wires, others, dots, gap, params),
             "wire_orientation": axis,
             "traced": True,
         }

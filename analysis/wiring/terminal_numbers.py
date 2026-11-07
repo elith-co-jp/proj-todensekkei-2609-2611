@@ -12,12 +12,14 @@ import re
 import unicodedata
 from typing import Any
 
+from analysis.wiring import classes
+
 DEVICE = re.compile(r"[A-Z0-9-]*[A-Z][A-Z0-9-]*")
 NUMBER = re.compile(r"\d{1,4}")
 # Tightly packed terminal blocks fuse a pin number with the next terminal's name ("17CN2").
 FUSED_NUMBER = re.compile(r"(\d{1,4})[A-Z].*")
 DEVICE_PARTS = re.compile(r"(\d*[A-Z]+)([A-Z0-9]*)")
-CONTACT_CLASSES = {"contact_a", "contact_b"}
+CONTACT_CLASSES = classes.CONTACTS
 # A contact's lower number is printed right after the left neighbour's label and is read fused with it ("(ER21271)6").
 CONTACT_NUMBER = re.compile(r"(?:.*\))?(\d{1,4})[.,]?")
 PAGE_PAD_PX = 8

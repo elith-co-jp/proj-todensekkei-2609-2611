@@ -13,6 +13,8 @@ from typing import Any
 import numpy as np
 from PIL import Image
 
+from analysis.wiring import classes
+
 # Sizes at 150 dpi (1755 px wide pages); scaled by page width.
 GREY_MAX = 245          # ink of any tone (the scan background is 255)
 DARK_MAX = 128          # a dark line between unconnected terminals was left out on purpose
@@ -24,12 +26,11 @@ HALF_WIDTH = 3
 MIN_GREY_SHARE = 0.3
 MAX_DARK_SHARE = 0.35
 MAX_WHITE_RUN = 24      # longest dropout along the line
-PASS_CLASSES = frozenset({"connector", "junction", "terminal", "power_bus"})
+PASS_CLASSES = classes.PASS_THROUGH
 # Devices are passed through only between their two terminals. A connector box holds its labels beside the
 # dot, so a horizontal line leaving the dot through its own box runs over text.
-DEVICE_CLASSES = frozenset({"contact_a", "contact_b", "relay_coil", "solenoid", "lamp", "push_button", "diode"})
-END_CLASSES = frozenset({"contact_a", "contact_b", "relay_coil", "solenoid", "connector", "junction",
-                         "power_bus", "terminal", "lamp", "push_button", "diode"})
+DEVICE_CLASSES = classes.TWO_TERMINAL_DEVICES
+END_CLASSES = classes.TWO_TERMINAL_DEVICES | classes.PASS_THROUGH
 
 
 def _class(symbol: dict[str, Any]) -> str:

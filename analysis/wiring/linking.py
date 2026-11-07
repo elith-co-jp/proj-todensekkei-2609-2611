@@ -8,7 +8,7 @@ from typing import Any
 import numpy as np
 from PIL import Image
 
-from analysis.wiring.connectivity import DIRECT_GAP_BRIDGE_DEVICE_CLASSES
+from analysis.wiring import classes
 from analysis.wiring.detect import make_binary_mask
 from analysis.wiring.geometry import (
     box_center,
@@ -18,10 +18,9 @@ from analysis.wiring.geometry import (
     point_to_wire_distance,
     wire_bbox,
 )
+from analysis.wiring.params import DEFAULT, PortParams
 from analysis.wiring.ports import (
-    FAINT_GRAY,
     LINE_PORT_CLASSES,
-    LINE_PORTS_ENABLED,
     is_four_port_symbol,
     line_ports,
     terminal_points_for_symbol,
@@ -32,7 +31,7 @@ BOX_PORTS_SKIP_COIL_INTERIOR = True
 
 # Classes whose electrical port is wherever a wire meets the box; when such a
 # symbol has no terminal link, attach it to every wire touching its bbox.
-TOUCHING_WIRE_FALLBACK_CLASSES = {"connector", "junction", "power_bus", "terminal"}
+TOUCHING_WIRE_FALLBACK_CLASSES = classes.PASS_THROUGH
 
 
 def nearest_wire_for_point(
@@ -71,6 +70,7 @@ def enrich_symbols_and_graph(
     junction_node_classes: set[str],
     junction_node_threshold: float,
     source_image: Image.Image,
+    port_params: PortParams = DEFAULT.ports,
 ) -> dict[str, Any]:
     width = int(payload["image_size"]["width"])
     height = int(payload["image_size"]["height"])
@@ -86,7 +86,7 @@ def enrich_symbols_and_graph(
     # A wire end inside a coil or solenoid belongs to that device, never to a box drawn around it.
     coil_boxes = [
         s["bbox"] for s in symbols
-        if str(s.get("class_name") or "") in DIRECT_GAP_BRIDGE_DEVICE_CLASSES and not (s.get("dot_role") or {}).get("suppressed")
+        if str(s.get("class_name") or "") in classes.COILS and not (s.get("dot_role") or {}).get("suppressed")
     ] if BOX_PORTS_SKIP_COIL_INTERIOR else []
     line_mask = None
     faint_mask = None
@@ -111,14 +111,14 @@ def enrich_symbols_and_graph(
                 if not any(b["x0"] <= t["point"][0] <= b["x1"] and b["y0"] <= t["point"][1] <= b["y1"] for b in coil_boxes)
             ]
         if (
-            LINE_PORTS_ENABLED and symbol.get("class_name") in LINE_PORT_CLASSES
+            port_params.line_ports and symbol.get("class_name") in LINE_PORT_CLASSES
             and not is_four_port_symbol(str(symbol.get("class_name")), bbox, float(inferred_terminal_config["four_port_height_px"]))
             and len([t for t in terminal_points if t.get("terminal_ref")]) < 2
         ):
             if line_mask is None:
                 line_mask = make_binary_mask(source_image)
-                faint_mask = np.asarray(source_image.convert("L")) < FAINT_GRAY
-            terminal_points = line_ports(symbol, line_mask, wires, symbols, faint_mask) or terminal_points
+                faint_mask = np.asarray(source_image.convert("L")) < port_params.faint_gray
+            terminal_points = line_ports(symbol, line_mask, wires, symbols, faint_mask, port_params) or terminal_points
         symbol["terminals"] = [
             {
                 "ref": terminal.get("terminal_ref"),
