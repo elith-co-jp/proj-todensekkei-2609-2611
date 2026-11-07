@@ -24,6 +24,7 @@ import os
 import pickle
 import re
 import sys
+import threading
 import time
 import unicodedata
 from collections import Counter
@@ -108,7 +109,7 @@ class _MemoOCR:
         if path.exists():
             return pickle.loads(path.read_bytes())
         result = self.reader(pixels, **kwargs)
-        tmp = path.with_suffix(f".{id(self)}.tmp")
+        tmp = path.with_suffix(f".{os.getpid()}.{threading.get_ident()}.tmp")
         tmp.write_bytes(pickle.dumps(result))
         tmp.replace(path)
         return result
@@ -118,6 +119,8 @@ def _init_worker(overrides: list[str], ocr_threads: int, ocr_cache: str | None) 
     """Apply MODULE.NAME=VALUE ablations, cap OCR threads so parallel workers do not oversubscribe, memoize OCR."""
     import analysis.runtime as runtime
 
+    # 図面はプロセスで並べるので、1 図面の中の OCR はスレッドで並べない（analysis.parallel）。
+    os.environ.setdefault("SEQANNO_OCR_WORKERS", "1")
     for item in overrides:
         target, value = item.split("=", 1)
         module_name, name = target.rsplit(".", 1)
