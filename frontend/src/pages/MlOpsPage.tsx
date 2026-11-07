@@ -18,7 +18,9 @@ import {
 } from 'lucide-react'
 
 import { api } from '../api/client'
+import { DEFAULT_CONNECTOR_CONF, DEFAULT_DETECTION_CONF } from '../api/defaults'
 import { LoadingOverlay } from '../components/LoadingOverlay'
+import { AdoptionReviewNote, PerClassComparison, TrainingDataPanel } from '../components/TrainingQuality'
 import type {
   EvalScope,
   InferenceImportResult,
@@ -107,7 +109,8 @@ export default function MlOpsPage() {
   const [busy, setBusy] = useState<string | null>(null)
 
   // 推論パラメータ
-  const [conf, setConf] = useState(0.25)
+  const [conf, setConf] = useState(DEFAULT_DETECTION_CONF)
+  const [connectorConf, setConnectorConf] = useState(DEFAULT_CONNECTOR_CONF)
   const [ids, setIds] = useState<Set<number>>(new Set())
   const [inferenceResult, setInferenceResult] = useState<InferenceRunResponse | null>(null)
   const [importResult, setImportResult] = useState<InferenceImportResult | null>(null)
@@ -171,7 +174,7 @@ export default function MlOpsPage() {
     setBusy('inference')
     setNotice(null)
     try {
-      const r = await api.runAnalysis(Array.from(ids), conf)
+      const r = await api.runAnalysis(Array.from(ids), conf, connectorConf)
       setInferenceResult(r)
       setImportResult(null)
       setJsonCache({})
@@ -450,6 +453,7 @@ export default function MlOpsPage() {
               採用すると次回以降の推論と学習のベースにこのモデルが使われます。
             </p>
             {pendingRun.eval_scope && <EvalScopeNote scope={pendingRun.eval_scope} />}
+            {pendingRun.review && <AdoptionReviewNote review={pendingRun.review} />}
             {pendingRun.metrics || pendingRun.baseline_metrics ? (
               <div className="overflow-x-auto rounded-2xl border border-slate-200">
                 <table className="w-full min-w-[520px] text-xs">
@@ -496,6 +500,7 @@ export default function MlOpsPage() {
                 評価指標を取得できませんでした。エディタで推論結果を確認して採用可否を判断してください。
               </p>
             )}
+            <PerClassComparison run={pendingRun} />
             <div className="flex flex-wrap gap-2">
               <button
                 type="button"
@@ -552,8 +557,20 @@ export default function MlOpsPage() {
                     onChange={(e) => setConf(Number(e.target.value))}
                   />
                 </label>
+                <label className="text-[11px] text-slate-500">
+                  <span className="mb-1 block font-bold">コネクタのしきい値</span>
+                  <input
+                    type="number"
+                    className="field w-24"
+                    min={0}
+                    max={1}
+                    step={0.05}
+                    value={connectorConf}
+                    onChange={(e) => setConnectorConf(Number(e.target.value))}
+                  />
+                </label>
                 <p className="flex-1 text-[11px] leading-5 text-slate-400">
-                  しきい値以下の検出は捨てます。推論結果は図面ごとに保存され、エディタで確認・修正できます。
+                  ER 系の図面ではコネクタを 0.60 以上にすると誤検出が減りました。推論結果は図面ごとに保存され、エディタで確認・修正できます。
                 </p>
               </div>
               <label className="block">
@@ -814,6 +831,8 @@ export default function MlOpsPage() {
                 {trainingRunning ? '学習を実行中…' : '学習を開始'}
               </button>
             </div>
+
+            <TrainingDataPanel refreshKey={projects} />
 
             {runs.length > 0 && (
               <div className="border-t border-slate-100 p-4 sm:p-5">

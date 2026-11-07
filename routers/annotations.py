@@ -40,6 +40,7 @@ from services.annotation_service import (
     store_image_bytes,
 )
 from services.export_service import import_zip, write_export_zip
+from services.page_orientation import upright_page
 from services.pdf_service import render_pdf_pages
 from services.sheet_number_service import suggest_sheet_numbers
 
@@ -113,6 +114,7 @@ async def create_project(
     if not files:
         raise HTTPException(400, "画像が含まれていません")
     created = []
+    turned: list[dict[str, int]] = []
     for f in files:
         raw = await f.read()
         name = safe_upload_name(f, "図面")
@@ -125,6 +127,8 @@ async def create_project(
             pages = render_pdf_pages(raw) if is_pdf else [raw]
             stem = name.rsplit(".", 1)[0] or "図面"
             for index, page in enumerate(pages, start=1):
+                # 横書き（ページ全体を 90° 回して描いた）図面は縦向きに直して保存する（#42）。
+                page, turn = upright_page(page)
                 digest, w, h = store_image_bytes(page)
                 page_name = f"{stem} - {index:03d}" if is_pdf else stem
                 image_name = f"{stem}_page_{index:03d}.png" if is_pdf else name
@@ -135,9 +139,12 @@ async def create_project(
                     image_width=w,
                     image_height=h,
                     status="draft",
+                    note=f"横書きの図面のため、登録時に {turn}° 回して縦向きにしました" if turn else None,
                 )
                 db.add(p)
                 db.flush()
+                if turn:
+                    turned.append({"project_id": p.id, "degrees": turn})
                 db.add(
                     AnnotationImage(
                         project_id=p.id,
@@ -152,7 +159,7 @@ async def create_project(
             db.rollback()
             raise HTTPException(400, str(exc)) from exc
     db.commit()
-    return {"project_ids": [p.id for p in created], "count": len(created)}
+    return {"project_ids": [p.id for p in created], "count": len(created), "turned": turned}
 
 
 @router.get("/projects")

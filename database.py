@@ -56,6 +56,9 @@ def _migrate_columns() -> None:
         statements.append(
             "ALTER TABLE annotation_symbols ADD COLUMN confidence FLOAT"
         )
+    for table in ("symbol_terminals", "connections"):
+        if "origin" not in {c["name"] for c in inspector.get_columns(table)}:
+            statements.append(f"ALTER TABLE {table} ADD COLUMN origin VARCHAR(20) NOT NULL DEFAULT 'manual'")
     run_cols = {c["name"] for c in inspector.get_columns("training_runs")}
     if "decision" not in run_cols:
         statements.append(

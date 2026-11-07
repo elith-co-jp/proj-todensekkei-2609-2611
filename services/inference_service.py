@@ -88,6 +88,7 @@ def run_inference(
     projects: list[AnnotationProject],
     conf: float,
     *,
+    connector_conf: float | None = None,
     include_structure: bool = False,
 ) -> list[dict]:
     """登録済みモデルで推論し、結果を predictions テーブルへ保存する。"""
@@ -101,6 +102,8 @@ def run_inference(
         raise RuntimeError("モデルファイルが見つかりません。モデルを再登録してください。")
 
     from ultralytics import YOLO  # 重量級のため遅延 import
+
+    from analysis.runtime import page_for_detection
 
     detector = YOLO(str(path))
     class_by_index = _class_by_yolo_index(db)
@@ -117,7 +120,7 @@ def run_inference(
             if not src.exists():
                 skipped_images += 1
                 continue
-            results = detector.predict(str(src), conf=conf, verbose=False)
+            results = detector.predict(page_for_detection(src), conf=conf, verbose=False)
             for result in results:
                 boxes = result.boxes
                 if boxes is None or boxes.xywhn is None:
@@ -137,6 +140,13 @@ def run_inference(
                         else:
                             cls = class_by_index.get(int(cls_index))
                     if cls is None:
+                        continue
+                    if (
+                        cls.key == "connector"
+                        and connector_conf is not None
+                        and score is not None
+                        and score < connector_conf
+                    ):
                         continue
                     cx, cy, w, h = sanitize_box(cx, cy, w, h)
                     if w <= 0 or h <= 0:
@@ -160,7 +170,8 @@ def run_inference(
             from services.structure_service import analyze_project
 
             symbol_detections = [d for d in detections if detection_kind(d["w"], d["h"]) == "symbol"]
-            structure = analyze_project(project, model, symbol_detections)
+            region_detections = [d for d in detections if detection_kind(d["w"], d["h"]) == "region"]
+            structure = analyze_project(project, model, symbol_detections, region_detections)
         counts = _record_predictions(
             db, project, detections, model, model_label=model.name
         )

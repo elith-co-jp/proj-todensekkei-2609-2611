@@ -77,13 +77,22 @@ def project_image_stem(project: AnnotationProject, image: AnnotationImage) -> st
     return f"p{project.id}_{stem}"
 
 
-def build_label_content(db: Session, project: AnnotationProject) -> str:
-    """YOLO のラベルテキスト（`class_id cx cy w h`、小数 6 桁）。"""
+# 配線の折れ点の目印（その他／分岐点）。from-to の経路のために付けた枠で記号ではない。
+WIRE_BEND_LABEL = "分岐点"
+
+
+def build_label_content(db: Session, project: AnnotationProject, *, skip_wire_bends: bool = False) -> str:
+    """YOLO のラベルテキスト（`class_id cx cy w h`、小数 6 桁）。
+
+    skip_wire_bends=True は配線の折れ点の目印を出さない（アプリの学習用。DD-0007 の交差検証で検出 F1 が上がった）。
+    """
     cls_by_id = {c.id: c for c in classes_ordered(db)}
     lines = []
     for s in sorted(project.symbols, key=lambda s: s.ref):
         cls = cls_by_id.get(s.class_id)
         if cls is None:
+            continue
+        if skip_wire_bends and cls.key == "other" and (s.label or "").strip() == WIRE_BEND_LABEL:
             continue
         lines.append(f"{cls.yolo_index} {s.cx:.6f} {s.cy:.6f} {s.w:.6f} {s.h:.6f}")
     return "\n".join(lines) + ("\n" if lines else "")
@@ -250,7 +259,7 @@ bundle.json
 classes.txt / data.yaml / dataset/
     YOLO 学習用。全画像を dataset/images/train に出力する（val 分割はしない）。
     ultralytics でそのまま学習できる。
-        yolo detect train data=data.yaml model=yolov8n.pt
+        yolo detect train data=data.yaml model=yolo11s.pt
     class id は classes.txt の行番号（0 始まり）と一致する。
 
 connections/connections.csv
@@ -397,6 +406,7 @@ def _restore_project_from_bundle(db: Session, proj: dict, images: dict[str, byte
                 name=str(t.get("name") or ""),
                 tx=float(t.get("tx") or 0.0),
                 ty=float(t.get("ty") or 0.0),
+                origin=t.get("origin") or "manual",
             )
             db.add(term)
             db.flush()
@@ -421,6 +431,7 @@ def _restore_project_from_bundle(db: Session, proj: dict, images: dict[str, byte
                 kind=c.get("kind") or "wire",
                 external_ref=c.get("external_ref"),
                 note=c.get("note"),
+                origin=c.get("origin") or "manual",
             )
         )
     return p

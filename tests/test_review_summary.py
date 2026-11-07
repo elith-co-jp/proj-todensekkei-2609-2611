@@ -89,6 +89,7 @@ def test_review_summary_api_reports_training_effect(client):
         "relabeled": 0,
         "deleted": 1,
         "manual_added": 1,
+        "wiring": None,
     }
     assert client.get(f"/api/ml/projects/{pid}/review-summary").json() == expected
 

@@ -33,6 +33,7 @@ class TerminalPayload(BaseModel):
     name: str = Field(min_length=1, max_length=50)
     tx: float
     ty: float
+    origin: SymbolOrigin = "manual"
 
 
 class SymbolPayload(BaseModel):
@@ -59,6 +60,7 @@ class ConnectionPayload(BaseModel):
     kind: ConnectionKind = "wire"
     external_ref: str | None = None
     note: str | None = None
+    origin: SymbolOrigin = "manual"
 
 
 class AnnotationUpdatePayload(BaseModel):
@@ -87,11 +89,16 @@ class YoloExportRequest(BaseModel):
 
 
 # ---------- AI 改善サイクル（推論・学習） ----------
+# 検出の確信度のしきい値の既定値。図面単位の交差検証で F1 が最も高かった値（DD-0007）。
+DEFAULT_DETECTION_CONF = 0.5
+
+
 class InferenceRunRequest(BaseModel):
     """対象プロジェクトへ active モデルで推論を実行する。"""
 
     project_ids: list[int] = []  # 空 = 全プロジェクト
-    conf: float = Field(default=0.25, ge=0.0, le=1.0)
+    conf: float = Field(default=DEFAULT_DETECTION_CONF, ge=0.0, le=1.0)
+    connector_conf: float | None = Field(default=None, ge=0.0, le=1.0)
 
 
 class TrainingRunRequest(BaseModel):
@@ -101,7 +108,7 @@ class TrainingRunRequest(BaseModel):
     only_done: bool = True  # True なら status=done の図面のみを学習データに使う
     epochs: int = Field(default=100, ge=1, le=1000)
     imgsz: int = Field(default=1280, ge=320, le=4096)
-    base_model: str | None = None  # None = active モデル（無ければ yolov8n.pt）
+    base_model: str | None = None  # None = active モデル（無ければ yolo11s.pt）
     holdout: bool = True  # True なら一部の図面を学習に使わず、新旧モデルの評価専用にする
 
 

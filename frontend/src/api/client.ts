@@ -1,4 +1,7 @@
 import type {
+  AiImportResult,
+  ClassStats,
+  HardDrawings,
   InferenceImportResult,
   InferenceRunResponse,
   MlModel,
@@ -14,6 +17,8 @@ import type {
   StructureResult,
   TrainingRun,
 } from '../types'
+
+import { DEFAULT_DETECTION_CONF } from './defaults'
 
 const BASE = import.meta.env.VITE_API_BASE ?? ''
 
@@ -167,18 +172,18 @@ export const api = {
 
   modelDownloadUrl: (id: number) => `${BASE}/api/ml/models/${id}/download`,
 
-  runInference: (projectIds: number[], conf?: number) =>
+  runInference: (projectIds: number[], conf = DEFAULT_DETECTION_CONF, connectorConf: number | null = null) =>
     req<InferenceRunResponse>('/api/ml/inference/run', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ project_ids: projectIds, conf: conf ?? 0.25 }),
+      body: JSON.stringify({ project_ids: projectIds, conf, connector_conf: connectorConf }),
     }),
 
-  runAnalysis: (projectIds: number[], conf = 0.25) =>
+  runAnalysis: (projectIds: number[], conf = DEFAULT_DETECTION_CONF, connectorConf: number | null = null) =>
     req<InferenceRunResponse>('/api/ml/analysis/run', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ project_ids: projectIds, conf }),
+      body: JSON.stringify({ project_ids: projectIds, conf, connector_conf: connectorConf }),
     }),
 
   getStructure: (projectId: number) =>
@@ -208,6 +213,14 @@ export const api = {
   getReviewSummary: (projectId: number) =>
     req<ReviewSummary>(`/api/ml/projects/${projectId}/review-summary`),
 
+  /** エディタの現在の内容（未保存を含む）を送り、足す AI の候補だけを受け取る。サーバーには保存しない */
+  aiImport: (projectId: number, payload: unknown) =>
+    req<AiImportResult>(`/api/ml/projects/${projectId}/ai-import`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    }),
+
   startTraining: (opts: {
     project_ids?: number[]
     only_done?: boolean
@@ -232,4 +245,8 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ decision }),
     }),
+
+  trainingClassStats: () => req<ClassStats>('/api/ml/training/class-stats'),
+
+  trainingHardDrawings: () => req<HardDrawings>('/api/ml/training/hard-drawings'),
 }

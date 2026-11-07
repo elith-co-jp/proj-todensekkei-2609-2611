@@ -42,22 +42,24 @@ def test_import_separates_region_frames_from_symbol_counts(client):
     assert client.get("/api/stats").json()["prediction_count"] == 2
 
 
-def test_structure_analysis_receives_symbols_only(client, monkeypatch):
+def test_structure_analysis_receives_region_frames_separately(client, monkeypatch):
     from services import structure_service
 
     pid = create_project(client)
     _upload_model(client)
     _fake_detector(monkeypatch, xywhn=[list(SYMBOL), list(DRAWING_FRAME)])
-    seen = []
+    seen, seen_regions = [], []
 
-    def analyze(project, model, detections):
+    def analyze(project, model, detections, regions=None):
         seen.extend(detections)
+        seen_regions.extend(regions or [])
         return _result(project.id)
 
     monkeypatch.setattr(structure_service, "analyze_project", analyze)
     res = client.post("/api/ml/analysis/run", json={"project_ids": [pid]})
     assert res.status_code == 200, res.text
     assert [d["w"] for d in seen] == [0.05]
+    assert [r["w"] for r in seen_regions] == [0.95]
     entry = res.json()["results"][0]
     assert (entry["detections"], entry["region_count"]) == (1, 1)
     assert res.json()["detection_count"] == 1

@@ -14,7 +14,7 @@ from tests.conftest import SAMPLE_ANNOTATION, create_project
 from tests.test_ml_cycle import _predictions_zip, _upload_model
 
 
-def _fake_detector(monkeypatch, *, empty=False, xywhn=None):
+def _fake_detector(monkeypatch, *, empty=False, xywhn=None, confidences=None):
     import services.inference_service as inference
 
     class Array:
@@ -26,7 +26,7 @@ def _fake_detector(monkeypatch, *, empty=False, xywhn=None):
 
     rows = [] if empty else (xywhn or [[0.2, 0.5, 0.1, 0.1]])
     boxes = SimpleNamespace(
-        xywhn=Array(rows), conf=Array([0.9] * len(rows)), cls=Array([0] * len(rows)),
+        xywhn=Array(rows), conf=Array(confidences or [0.9] * len(rows)), cls=Array([0] * len(rows)),
     )
     detector = SimpleNamespace(names={0: "connector"}, predict=lambda *a, **k: [SimpleNamespace(boxes=boxes)])
     monkeypatch.setattr(inference, "ultralytics_available", lambda: True)
@@ -61,6 +61,56 @@ def test_structure_missing_and_export_rejects_missing_pages(client):
     assert result.json()["summary"]["wire_count"] == 1
 
 
+def test_export_links_sheet_references_to_the_exported_drawings(client):
+    source, target = create_project(client), create_project(client, "second.png")
+    assert client.put(f"/api/projects/{source}/meta", json={"sheet_no": "ER21216"}).status_code == 200
+    refs = [
+        {"target_sheet": "ER21212", "kind": "wire", "text": "(ER21212)"},
+        {"target_sheet": "ER21212-1", "kind": "wire", "text": "(ER21212-1)"},
+        {"target_sheet": "ER29999", "kind": "relay", "text": "(ER29999)"},
+    ]
+    with database.SessionLocal() as db:
+        db.add(StructurePrediction(project_id=source, payload_json=json.dumps({**_result(source), "sheet_references": refs})))
+        # シート番号が未入力の図面は、自動読取の 1 位で照合する
+        db.add(StructurePrediction(project_id=target, payload_json=json.dumps(
+            {**_result(target), "sheet_number_candidates": [{"text": "ER21212", "score": 0.99}]})))
+        db.commit()
+
+    exported = client.post("/api/ml/analysis/export", json={"project_ids": [source, target]}).json()
+    linked = [r["target_project_id"] for r in exported["pages"][0]["sheet_references"]]
+    assert linked == [target, target, None]
+    assert exported["pages"][0]["sheet_no"] == "ER21216"
+    assert (exported["summary"]["sheet_reference_count"], exported["summary"]["resolved_sheet_reference_count"]) == (3, 2)
+
+
+def test_export_links_contacts_to_the_coil_and_relay_table_on_the_referenced_drawing(client):
+    contact_page, coil_page = create_project(client), create_project(client, "second.png")
+    # 電線番号がくっついたラベル（128 33HB）でも器具番号で照合する
+    contact = {"id": "symbol_001", "class_name": "contact_a", "label": "128 33HB HV305 (ER21236)"}
+    other = {"id": "symbol_002", "class_name": "contact_a", "label": "43U AMESD (ER29999)"}
+    refs = [
+        {"target_sheet": "ER21236", "kind": "relay", "symbol_id": "symbol_001", "text": "(ER21236)"},
+        {"target_sheet": "ER29999", "kind": "relay", "symbol_id": "symbol_002", "text": "(ER29999)"},
+    ]
+    coils = [{"id": "symbol_007", "class_name": "relay_coil", "label": "33HB HV305"},
+             {"id": "symbol_008", "class_name": "relay_coil", "label": "33LA HV305"}]
+    rows = [{"device": "33LA HV305", "terminal": "5-9-1"}, {"device": "33HB HV305", "terminal": "5-9-1"}]
+    with database.SessionLocal() as db:
+        db.add(StructurePrediction(project_id=contact_page, payload_json=json.dumps(
+            {**_result(contact_page), "symbols": [contact, other], "sheet_references": refs})))
+        db.add(StructurePrediction(project_id=coil_page, payload_json=json.dumps({
+            **_result(coil_page), "symbols": coils, "relay_table": {"rows": rows, "links": []},
+            "sheet_number_candidates": [{"text": "ER21236", "score": 0.99}],
+        })))
+        db.commit()
+
+    exported = client.post("/api/ml/analysis/export", json={"project_ids": [contact_page, coil_page]}).json()
+    linked, unresolved = exported["pages"][0]["symbols"]
+    assert linked["relay_link"] == {"project_id": coil_page, "coil_symbol_ids": ["symbol_007"], "relay_table_rows": [1]}
+    assert "relay_link" not in unresolved
+    assert (exported["summary"]["cross_sheet_relay_count"], exported["summary"]["linked_cross_sheet_relay_count"]) == (2, 1)
+
+
 def test_integrated_run_preserves_annotations_and_uses_detector_names(client, monkeypatch):
     from services import structure_service
 
@@ -72,7 +122,7 @@ def test_integrated_run_preserves_annotations_and_uses_detector_names(client, mo
     _fake_detector(monkeypatch)
     seen = []
 
-    def analyze(project, model, detections):
+    def analyze(project, model, detections, regions=None):
         seen.extend(detections)
         return _result(project.id)
 
@@ -89,6 +139,21 @@ def test_integrated_run_preserves_annotations_and_uses_detector_names(client, mo
     assert client.delete(f"/api/projects/{project_id}").status_code == 200
     with database.SessionLocal() as db:
         assert db.get(StructurePrediction, project_id) is None
+
+
+def test_connector_floor_filters_only_low_confidence_connector(client, monkeypatch):
+    project_id = create_project(client)
+    _upload_model(client)
+    _fake_detector(monkeypatch, xywhn=[[0.2, 0.5, 0.1, 0.1], [0.8, 0.5, 0.1, 0.1]],
+                   confidences=[0.55, 0.7])
+
+    result = client.post("/api/ml/inference/run", json={
+        "project_ids": [project_id], "conf": 0.5, "connector_conf": 0.6,
+    })
+    assert result.status_code == 200, result.text
+    assert result.json()["detection_count"] == 1
+    predictions = client.get(f"/api/ml/projects/{project_id}/predictions").json()
+    assert predictions["count"] == 1
 
 
 @pytest.mark.parametrize("mode", ["inference", "import"])

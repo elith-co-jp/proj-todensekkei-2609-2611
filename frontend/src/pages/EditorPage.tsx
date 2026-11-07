@@ -23,15 +23,16 @@ import {
 } from '../utils/workspace'
 
 import {
+  aiImportAddedCount,
+  aiImportNotice,
   buildAnnotationPayload,
   buildMetaForm,
   clamp01,
   classRank,
   fitInside,
-  INFERENCE_CENTER_TOLERANCE,
-  INFERENCE_SIZE_TOLERANCE,
   isAnnotationPayload,
   isMetaForm,
+  mergeAiImport,
   MIN_BOX,
   nextSymbolRef,
   SAVE_STATUS_LABELS,
@@ -554,67 +555,19 @@ export default function EditorPage() {
     }
   }
 
-  /* AI 推論結果を編集対象のシンボルとして取り込む（破線表示・人が修正して蓄積）*/
+  /* AI の結果（シンボル・端子・配線）を確認用の候補として足す（破線表示・人が修正して蓄積）*/
   const applyPredictions = async () => {
     if (aiApplying) return
     setAiApplying(true)
     try {
-      const data = await api.getPredictions(projectId)
-      const regionNote = data.region_count
-        ? `／領域枠 ${data.region_count} 件はシンボル対象外として除外`
-        : ''
-      if (data.count === 0) {
-        setNotice(
-          regionNote
-            ? `取り込める検出がありませんでした${regionNote}`
-            : 'この図面の推論結果がありません。「AI 改善サイクル」で推論を実行してください',
-        )
-        return
+      const result = await api.aiImport(projectId, buildAnnotationPayload(symbols, connections))
+      if (aiImportAddedCount(result) > 0) {
+        const merged = mergeAiImport(symbols, connections, result)
+        pushHistory()
+        setSymbols(merged.symbols)
+        setConnections(merged.connections)
       }
-      const classKeys = new Set(classes.map((c) => c.key))
-      const next = [...symbols]
-      let added = 0
-      let skipped = 0
-      for (const d of data.detections) {
-        if (!classKeys.has(d.class_key)) continue
-        const dup = next.some(
-          (s) =>
-            s.class_key === d.class_key &&
-            Math.abs(s.cx - d.cx) < INFERENCE_CENTER_TOLERANCE &&
-            Math.abs(s.cy - d.cy) < INFERENCE_CENTER_TOLERANCE &&
-            Math.abs(s.w - d.w) < INFERENCE_SIZE_TOLERANCE &&
-            Math.abs(s.h - d.h) < INFERENCE_SIZE_TOLERANCE,
-        )
-        if (dup) {
-          skipped += 1
-          continue
-        }
-        next.push({
-          ref: nextSymbolRef(next),
-          class_key: d.class_key,
-          label: null,
-          cx: d.cx,
-          cy: d.cy,
-          w: d.w,
-          h: d.h,
-          note: null,
-          origin: 'inference',
-          confidence: d.confidence,
-          terminals: [],
-        })
-        added += 1
-      }
-      if (added === 0) {
-        setNotice((skipped > 0 ? '推論結果はすべて取り込み済みです' : '取り込める検出がありませんでした') + regionNote)
-        return
-      }
-      pushHistory()
-      setSymbols(next)
-      setNotice(
-        `AI 検出を ${added} 件取り込みました（破線枠）。内容を確認・修正して保存してください` +
-          (skipped > 0 ? `／${skipped} 件は既存と重複したためスキップ` : '') +
-          regionNote,
-      )
+      setNotice(aiImportNotice(result))
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {

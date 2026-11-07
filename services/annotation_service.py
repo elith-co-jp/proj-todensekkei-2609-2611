@@ -167,6 +167,7 @@ def replace_annotations(db: Session, project: AnnotationProject, payload) -> dic
                 name=t.name.strip() or str(t_index),
                 tx=max(0.0, min(1.0, float(t.tx))),
                 ty=max(0.0, min(1.0, float(t.ty))),
+                origin=t.origin,
             )
             db.add(term)
             db.flush()
@@ -196,6 +197,7 @@ def replace_annotations(db: Session, project: AnnotationProject, payload) -> dic
                 kind=(c.kind or "wire"),
                 external_ref=(c.external_ref or None),
                 note=(c.note or None),
+                origin=c.origin,
             )
         )
 
@@ -233,7 +235,7 @@ def serialize_project(db: Session, project: AnnotationProject, with_image_meta: 
                 "origin": s.origin or "manual",
                 "confidence": s.confidence,
                 "terminals": [
-                    {"ref": terminal_ref(s, t), "name": t.name, "tx": t.tx, "ty": t.ty}
+                    {"ref": terminal_ref(s, t), "name": t.name, "tx": t.tx, "ty": t.ty, "origin": t.origin or "manual"}
                     for t in sorted(s.terminals, key=lambda t: t.id)
                 ],
             }
@@ -256,6 +258,7 @@ def serialize_project(db: Session, project: AnnotationProject, with_image_meta: 
                 "kind": c.kind,
                 "external_ref": c.external_ref,
                 "note": c.note,
+                "origin": c.origin or "manual",
             }
         )
 

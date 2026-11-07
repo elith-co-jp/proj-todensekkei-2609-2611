@@ -1,15 +1,33 @@
-"""Fetch the pinned Ultralytics YOLOv8n training base for Windows packaging."""
+"""Fetch the pinned model files bundled into the Windows exe (checksums are verified).
+
+- yolo11s.pt: the training base when no model is active (Ultralytics, AGPL-3.0)
+- ch_PP-OCRv5_rec_mobile.onnx: text recognition used to re-read Japanese names and notes
+  (PaddleOCR PP-OCRv5 converted by RapidOCR, Apache-2.0)
+"""
 
 from __future__ import annotations
 
 import hashlib
 import urllib.request
 from pathlib import Path
+from typing import NamedTuple
 
-URL = "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolov8n.pt"
-SHA256 = "f59b3d833e2ff32e194b5bb8e08d211dc7c5bdf144b90d2c8412c47ccfc83b36"
-MAX_BYTES = 20 * 1024 * 1024
-DEST = Path(__file__).resolve().parents[1] / ".build-assets" / "yolov8n.pt"
+BUILD_ASSETS = Path(__file__).resolve().parents[1] / ".build-assets"
+
+
+class Asset(NamedTuple):
+    url: str
+    sha256: str
+    max_bytes: int
+    name: str
+
+
+ASSETS = (
+    Asset("https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo11s.pt",
+          "85a76fe86dd8afe384648546b56a7a78580c7cb7b404fc595f97969322d502d5", 32 * 1024 * 1024, "yolo11s.pt"),
+    Asset("https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/master/onnx/PP-OCRv5/rec/ch_PP-OCRv5_rec_mobile.onnx",
+          "5825fc7ebf84ae7a412be049820b4d86d77620f204a041697b0494669b1742c5", 32 * 1024 * 1024, "ch_PP-OCRv5_rec_mobile.onnx"),
+)
 
 
 def _digest(path: Path) -> str:
@@ -20,27 +38,33 @@ def _digest(path: Path) -> str:
     return digest.hexdigest()
 
 
-def main() -> None:
-    DEST.parent.mkdir(parents=True, exist_ok=True)
-    if DEST.is_file() and _digest(DEST) == SHA256:
+def fetch(asset: Asset) -> None:
+    dest = BUILD_ASSETS / asset.name
+    if dest.is_file() and _digest(dest) == asset.sha256:
         return
-
-    temporary = DEST.with_suffix(".download")
+    temporary = dest.with_suffix(".download")
     temporary.unlink(missing_ok=True)
     try:
-        with urllib.request.urlopen(URL, timeout=60) as source, temporary.open("wb") as output:
+        with urllib.request.urlopen(asset.url, timeout=60) as source, temporary.open("wb") as output:
             total = 0
             while chunk := source.read(1024 * 1024):
                 total += len(chunk)
-                if total > MAX_BYTES:
-                    raise ValueError("Base model exceeds the expected size")
+                if total > asset.max_bytes:
+                    raise ValueError(f"{asset.name} exceeds the expected size")
                 output.write(chunk)
-        if _digest(temporary) != SHA256:
-            raise ValueError("Base model checksum does not match the pinned release")
-        temporary.replace(DEST)
+        if _digest(temporary) != asset.sha256:
+            raise ValueError(f"{asset.name} checksum does not match the pinned release")
+        temporary.replace(dest)
     finally:
         temporary.unlink(missing_ok=True)
 
 
+def main() -> None:
+    BUILD_ASSETS.mkdir(parents=True, exist_ok=True)
+    for asset in ASSETS:
+        fetch(asset)
+
+
 if __name__ == "__main__":
     main()
+
