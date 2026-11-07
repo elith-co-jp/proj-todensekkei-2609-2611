@@ -201,6 +201,7 @@ def wire_nodes(
         out["recall"].update({"gold": 1, "hit": int(recalled(edge)),
                               "gold_region_terminal": int(bool(edge & region_keys))})
     out["coils"] = Counter()
+    out["coil_details"] = []
     for s in project["symbols"]:
         terms = [endpoint_key(s["ref"], t["ref"]) for t in s.get("terminals") or []]
         on_coil = [e for e in gold_wires if s["ref"] in {parse_member(k)[0] for k in e}]
@@ -210,6 +211,12 @@ def wire_nodes(
         shorted = bool(ai_of_gold.get(terms[0], set()) & ai_of_gold.get(terms[1], set()))
         out["coils"].update({"gold": 1, "complete": int(complete), "shorted": int(shorted),
                              "usable": int(complete and not shorted)})
+        if not complete or shorted:
+            out["coil_details"].append({
+                "ref": s["ref"], "label": s.get("label") or "", "complete": complete, "shorted": shorted,
+                "box": [round(v) for v in (s["cx"] * width, s["cy"] * height, s["w"] * width, s["h"] * height)],
+                "imported_terminals": [k for k in terms if k in ai_of_gold],
+                "missed": [sorted(e) for e in on_coil if not recalled(e)]})
     for edge in conv_wires:
         a, b = sorted(edge)
         if a in gold_pos and b in gold_pos and any(_crosses(gold_pos[a], gold_pos[b], box) for box in unwired_boxes):
@@ -332,6 +339,7 @@ def score_drawing(drawing: dict[str, Any], structure: dict[str, Any], class_keys
                       "fn": len(gold_net_pairs - import_net_pairs)},
         "wire_nodes": {"recall": dict(nodes["recall"]), "precision": dict(nodes["precision"])},
         "coils": dict(nodes["coils"]),
+        "coil_details": nodes["coil_details"],
         "wire_errors": {"missed": nodes["missed"], "wrong": nodes["wrong"]},
         "not_judged": not_judged,
         "fp_reasons": dict(fp),

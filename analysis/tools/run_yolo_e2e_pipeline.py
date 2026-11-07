@@ -11,6 +11,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 from PIL import Image, ImageDraw
 
 from analyze_pdf_structure import WIRE_GEOMETRY_REVISION, analyze_page, make_binary_mask, support_vector_for_span
@@ -1091,9 +1092,16 @@ LINE_PORT_PROBE = 40        # 端子の位置を選ぶときに見る長さ
 LINE_PORT_TRACE_MAX = 400   # 配線を探してたどる長さの上限
 LINE_PORT_GAP = 2           # たどるときに許す途切れ
 LINE_PORTS_ENABLED = os.environ.get("SEQANNO_LINE_PORTS", "1") != "0"
+# 細い点線のような薄い灰色の線（ER21256 のコイルの上下）は二値化で消える。コイルに限り、灰色の濃さで線を探す。
+# 灰色が FAINT_GRAY 未満の画素を線とみなし、枠の外の LINE_PORT_PROBE px のうち FAINT_COVERAGE 以上の行に
+# 線がある列を端子の位置にする（近くの文字「14」「13」の列は 0.25 前後、線の列は 0.45 以上だった）。
+FAINT_GRAY = 240
+FAINT_COVERAGE = 0.35
+FAINT_GAP = 6
+FAINT_PORT_CLASSES = frozenset({"relay_coil", "solenoid"})
 
 
-def _ink_run(mask: Any, x: int, y: int, dx: int, dy: int, limit: int) -> int:
+def _ink_run(mask: Any, x: int, y: int, dx: int, dy: int, limit: int, gap: int = LINE_PORT_GAP) -> int:
     """(x, y) から (dx, dy) の向きに続くインクの長さ。線の太さの揺れに 1 px、途切れに LINE_PORT_GAP px を許す。"""
     height, width = mask.shape[:2]
     run = miss = 0
@@ -1106,14 +1114,14 @@ def _ink_run(mask: Any, x: int, y: int, dx: int, dy: int, limit: int) -> int:
             run, miss = i, 0
         else:
             miss += 1
-            if miss > LINE_PORT_GAP:
+            if miss > gap:
                 break
     return run
 
 
 def _trace_to_wire(
     mask: Any, start: tuple[int, int], step: tuple[int, int], wires: list[dict[str, Any]],
-    other_boxes: list[dict[str, Any]], dot_boxes: list[dict[str, Any]],
+    other_boxes: list[dict[str, Any]], dot_boxes: list[dict[str, Any]], gap: int = LINE_PORT_GAP,
 ) -> str | None:
     """端子から外へ線をたどり、最初に当たる配線の ID。黒丸の無い交差（線が向こうへ続く）は通り過ぎ、
     黒丸（分岐点）の上で当たった配線はそこでつながっているとみなす。
@@ -1149,15 +1157,37 @@ def _trace_to_wire(
             miss = 0
         else:
             miss += 1
-            if miss > LINE_PORT_GAP:
+            if miss > gap:
                 return None
     return None
 
 
+def _faint_coil_column(faint: Any, x0: int, y0: int, x1: int, y1: int) -> int | None:
+    """コイルの中央の半分の列から、枠の上下の外に薄い線が続く列。無ければ None。"""
+    height = faint.shape[0]
+    top = faint[max(0, y0 - LINE_PORT_PROBE):max(0, y0 - 2)]
+    bottom = faint[min(height, y1 + 2):min(height, y1 + LINE_PORT_PROBE)]
+    if not len(top) or not len(bottom):
+        return None
+    quarter = (x1 - x0) // 4
+    best: tuple[float, list[int]] = (FAINT_COVERAGE, [])
+    for c in range(x0 + quarter, x1 - quarter + 1):
+        score = min(top[:, max(0, c - 1):c + 2].any(axis=1).mean(), bottom[:, max(0, c - 1):c + 2].any(axis=1).mean())
+        if score > best[0] + 1e-9:
+            best = (score, [c])
+        elif abs(score - best[0]) <= 1e-9 and best[1] and c == best[1][-1] + 1:
+            best[1].append(c)
+    return best[1][len(best[1]) // 2] if best[1] else None
+
+
 def line_ports(
     symbol: dict[str, Any], mask: Any, wires: list[dict[str, Any]], symbols: list[dict[str, Any]],
+    faint: Any | None = None,
 ) -> list[dict[str, Any]]:
-    """枠の両側から外へ続く線を探して 2 端子にする。見つからなければ空。"""
+    """枠の両側から外へ続く線を探して 2 端子にする。見つからなければ空。
+
+    faint（灰色が FAINT_GRAY 未満の画素）を渡すと、コイルで線が見つからないときに薄い線を探してたどる。
+    """
     box = symbol["bbox"]
     x0, y0, x1, y1 = (int(round(float(box[k]))) for k in ("x0", "y0", "x1", "y1"))
     axes = ["v"] if symbol.get("class_name") in {"relay_coil", "solenoid"} else ["v", "h"]
@@ -1177,9 +1207,16 @@ def line_ports(
                 best_score, best_axis, best_columns = score, axis, [c]
             else:
                 best_columns.append(c)
-    if not best_columns:
+    trace_mask, gap = mask, LINE_PORT_GAP
+    if best_columns:
+        axis, c = best_axis, best_columns[len(best_columns) // 2]
+    elif faint is not None and symbol.get("class_name") in FAINT_PORT_CLASSES:
+        found = _faint_coil_column(faint, x0, y0, x1, y1)
+        if found is None:
+            return []
+        axis, c, trace_mask, gap = "v", found, faint, FAINT_GAP
+    else:
         return []
-    axis, c = best_axis, best_columns[len(best_columns) // 2]
     live = [s for s in symbols if s is not symbol and not (s.get("dot_role") or {}).get("suppressed")]
     others = [s["bbox"] for s in live if s.get("class_name") != "junction"]
     dots = [s["bbox"] for s in live if s.get("class_name") == "junction"]
@@ -1190,7 +1227,7 @@ def line_ports(
             "terminal_name": f"P{index}",
             "point": [float(point[0]), float(point[1])],
             "source": "line_port",
-            "wire_id_hint": _trace_to_wire(mask, point, step, wires, others, dots),
+            "wire_id_hint": _trace_to_wire(trace_mask, point, step, wires, others, dots, gap),
             "wire_orientation": axis,
             "traced": True,
         }
@@ -1207,6 +1244,18 @@ def nearest_wire_for_point(
         return None, float("inf")
     best_wire = min(wires, key=lambda wire: point_to_wire_distance(point, wire))
     return best_wire, point_to_wire_distance(point, best_wire)
+
+
+def _hinted_device_port(symbol: dict[str, Any], point: tuple[float, float], wire: dict[str, Any] | None) -> bool:
+    """接点・コイルの枠の中の端子が、推定に使った線の軸の上にあるか（線の先の延長を含む）。"""
+    if wire is None or symbol.get("class_name") not in LINE_PORT_CLASSES:
+        return False
+    box, wbox = symbol["bbox"], wire.get("bbox") or {}
+    if not (box["x0"] - 1 <= point[0] <= box["x1"] + 1 and box["y0"] - 1 <= point[1] <= box["y1"] + 1) or not wbox:
+        return False
+    if wire.get("orientation") == "v":
+        return wbox["x0"] - 2 <= point[0] <= wbox["x1"] + 2
+    return wbox["y0"] - 2 <= point[1] <= wbox["y1"] + 2
 
 
 def enrich_symbols_and_graph(
@@ -1241,6 +1290,7 @@ def enrich_symbols_and_graph(
         if str(s.get("class_name") or "") in DIRECT_GAP_BRIDGE_DEVICE_CLASSES and not (s.get("dot_role") or {}).get("suppressed")
     ] if BOX_PORTS_SKIP_COIL_INTERIOR else []
     line_mask = None
+    faint_mask = None
     for symbol in symbols:
         if (symbol.get("dot_role") or {}).get("suppressed"):
             symbol.update(terminals=[], nearby_node_ids=[], terminal_wire_ids=[], terminal_links=[],
@@ -1268,7 +1318,8 @@ def enrich_symbols_and_graph(
         ):
             if line_mask is None:
                 line_mask = make_binary_mask(source_image)
-            terminal_points = line_ports(symbol, line_mask, wires, symbols) or terminal_points
+                faint_mask = np.asarray(source_image.convert("L")) < FAINT_GRAY
+            terminal_points = line_ports(symbol, line_mask, wires, symbols, faint_mask) or terminal_points
         symbol["terminals"] = [
             {
                 "ref": terminal.get("terminal_ref"),
@@ -1316,8 +1367,14 @@ def enrich_symbols_and_graph(
                 wire_distance = point_to_wire_distance(point, nearest_wire)
             else:
                 nearest_wire, wire_distance = nearest_wire_for_point(point, wires)
-            # 画像の線をたどった端子（line_ports）は、離れた先の配線にもつなぐ。
-            if nearest_wire is not None and (wire_distance <= terminal_wire_threshold or (terminal.get("traced") and hinted_wire_id)):
+            # 画像の線をたどった端子（line_ports）は、離れた先の配線にもつなぐ。接点・コイルの枠の中の端子で、
+            # 近くに結べる点も無いものは、推定に使った線が枠の中で終わっていても（線の先にある下側の端子、
+            # ER21293）その線につなぐ。線の上の位置で端の先に並ぶので、端からの橋渡しはこの端子から出る。
+            node_reachable = nearest_node is not None and nearest_node[0] <= terminal_node_threshold
+            on_own_wire = bool(hinted_wire_id) and not node_reachable and _hinted_device_port(symbol, point, nearest_wire)
+            if nearest_wire is not None and (
+                wire_distance <= terminal_wire_threshold or (terminal.get("traced") and hinted_wire_id) or on_own_wire
+            ):
                 if nearest_wire["id"] not in terminal_wire_ids:
                     terminal_wire_ids.append(nearest_wire["id"])
                 link = {

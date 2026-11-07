@@ -53,3 +53,19 @@ def test_line_through_a_dot_joins_the_wire_at_the_dot():
     ports = line_ports(coil, mask, wires, [coil, dot])
     assert [p["wire_id_hint"] for p in ports] == ["cross", "bottom"]
 
+
+def test_faint_dotted_line_gives_a_coil_its_ports():
+    """二値化で消える薄い点線（ER21256）でも、灰色の濃さで見ればコイルの上下の線が分かる。"""
+    mask, wires, coil = _page()
+    mask[40:81, 99:102] = False
+    mask[120:161, 99:102] = False
+    mask[39:42, 20:181] = mask[59:62, 20:181] = mask[159:162, 20:181] = True   # 横線は残す
+    faint = mask.copy()
+    for y in list(range(42, 80, 3)) + list(range(121, 159, 3)):
+        faint[y:y + 2, 100] = True          # 2 px 描いて 1 px 空く点線
+    faint[70:74, 85:88] = True               # 線の脇の文字の一画
+    assert line_ports(coil, mask, wires, [coil]) == []
+    ports = line_ports(coil, mask, wires, [coil], faint)
+    assert [p["point"] for p in ports] == [[100.0, 80.0], [100.0, 120.0]]
+    assert [p["wire_id_hint"] for p in ports] == ["top", "bottom"]
+

@@ -820,16 +820,38 @@ def build_predicted_graph_pairs(
                     return True
             return False
 
+        def past_end_stop(edge_id: str, end_point: tuple[float, float], end_t: float) -> str | None:
+            """The terminal stop lying on this edge beyond its end point, farthest out (None when there is none)."""
+            segment = edge_segments[edge_id]
+            other = segment["end"] if end_t == 0.0 else segment["start"]
+            direction = (end_point[0] - other[0], end_point[1] - other[1])
+            norm = (direction[0] ** 2 + direction[1] ** 2) ** 0.5 or 1.0
+            best: tuple[float, str] | None = None
+            for t, stop_id in stops_by_edge.get(edge_id, []):
+                if stop_id not in terminal_by_stop or abs(t - end_t) > 1e-9:
+                    continue
+                sx, sy = coords[stop_id]
+                out = ((sx - end_point[0]) * direction[0] + (sy - end_point[1]) * direction[1]) / norm
+                if out > 2.0 and (best is None or out > best[0]):
+                    best = (out, stop_id)
+            return best[1] if best else None
+
         best_by_endpoint: dict[str, tuple[float, str, float, tuple[float, float], str]] = {}
         for source_edge_id, source in edge_segments.items():
             source_wire_id = str(source.get("wire_id") or "")
             source_orientation = str(source["orientation"])
             if source_orientation not in {"h", "v"}:
                 continue
-            for endpoint_key, point, end_node in (
-                (graph_node_id(str(source["from_node_id"]), source_wire_id), source["start"], source["from_node_id"]),
-                (graph_node_id(str(source["to_node_id"]), source_wire_id), source["end"], source["to_node_id"]),
+            for endpoint_key, point, end_node, end_t in (
+                (graph_node_id(str(source["from_node_id"]), source_wire_id), source["start"], source["from_node_id"], 0.0),
+                (graph_node_id(str(source["to_node_id"]), source_wire_id), source["end"], source["to_node_id"], 1.0),
             ):
+                # A wire detected into a coil can end inside it, short of the coil's far terminal. That terminal
+                # sits on the wire past its end, so a bridge leaving the end starts from the terminal; leaving the
+                # end node itself would skip the coil and join both its sides (ER21280).
+                beyond = past_end_stop(source_edge_id, point, end_t)
+                if beyond is not None:
+                    endpoint_key, point = beyond, coords[beyond]
                 is_wire_end = str(nodes_by_id.get(str(end_node), {}).get("type") or "") == "endpoint"
                 px, py = point
                 for target_edge_id, target in edge_segments.items():
