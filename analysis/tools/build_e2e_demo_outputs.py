@@ -13,7 +13,8 @@ from typing import Any
 import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
-from analysis.wiring.assemble import build_connection_candidates, build_final_output_from_analysis, label_text, load_json  # noqa: E402
+from analysis.wiring.assemble import build_connection_candidates, label_text  # noqa: E402
+from wire_detection_lab import build_final_output_from_analysis, load_json  # noqa: E402
 from analysis.wiring.geometry import wire_points  # noqa: E402
 
 

@@ -7,7 +7,6 @@ reference connections are never used as inputs to production inference.
 from __future__ import annotations
 
 import logging
-import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -19,9 +18,9 @@ from analysis.relay_lamp import review_circles
 from analysis.relay_links import link_relay_rows
 from analysis.text_extraction import extract_text_structure
 from analysis.wiring import classes
-from analysis.wiring.assemble import build_final_output_from_analysis
+from analysis.wiring.assemble import structure_from_detection
 from analysis.wiring.connectivity import build_direct_from_to
-from analysis.wiring.detect import DEFAULT_WIRE_TEXT_MASK, analyze_image, make_binary_mask
+from analysis.wiring.detect import detect_wiring, make_binary_mask
 from analysis.wiring.dot_roles import annotate_dots
 from analysis.wiring.faint_lines import bridge_faint_wires
 from analysis.wiring.filter_wire_decorations import filter_wire_decorations, rapidocr_text_confirmation
@@ -57,17 +56,68 @@ def analyze_detections(
     detections: list[dict[str, Any]],
     *,
     source: dict[str, Any],
-    work_dir: Path,
     regions: list[dict[str, Any]] | None = None,
     params: WiringParams = DEFAULT,
 ) -> dict[str, Any]:
-    """アプリに表示している画像そのものから、配線・端子・端子間の接続を解析する。調整値は params（analysis.wiring.params）。"""
+    """アプリに表示している画像そのものから、配線・端子・端子間の接続を解析する。調整値は params（analysis.wiring.params）。
+
+    段の順: 記号 → 雲マーク → 配線の検出 → 文字の読み取り → 円形の記号の確認 → 罫線の除外 → 黒丸の役割
+    → 端子と配線の結び付け → 端子番号・リレー表 → 端子間の接続 → 薄い線 → 仕上げ。
+    """
     with Image.open(image_path) as opened:
-        image = opened.convert("RGB")
-    width, height = image.size
+        page_image = opened.convert("RGB")
+    width, height = page_image.size
+    symbols = _symbols_from_detections(detections, width, height)
+
+    # 雲マーク（#41）: 雲マークの線を消した画像で配線を読み、文字は元の画像で読む。記号の枠の中は消さない。
+    page_binary = make_binary_mask(page_image)
+    clouds = detect_clouds(page_binary)
+    image = erase_clouds(page_image, clouds, [s["bbox"] for s in symbols])
+
+    payload = structure_from_detection(detect_wiring(image), source)
+    warnings: list[str] = []
+    reader, engine, text_result = _read_text(page_image, symbols, regions or [], warnings)
+    wired_symbols = [s for s in symbols if not s.get("text_zone")]
+    # リレーと表示灯（#39）: 円形の記号を、円の中の×印・近くの文字・リレー表・同じ器具の接点で確かめる。
+    circle_review = review_circles(page_binary, symbols, text_result)
+
+    payload = filter_wire_decorations(
+        payload, image, wired_symbols,
+        confirm_text=rapidocr_text_confirmation(reader) if reader is not None and engine == "rapidocr" else None,
+    )
+    if payload["quality"]["wire_decoration_filter"]["label_rule_ocr_failed"]:
+        warnings.append("罫線の文字確認に失敗したため、判定できない罫線は配線候補として残しています。")
+    # 配線の前に: enrich_symbols_and_graph はここで印を付けた重複の黒丸を飛ばす。
+    dot_summary = annotate_dots(image, wired_symbols)
+    payload = _link_terminals(payload, wired_symbols, image, params)
+    terminal_number_counts = attach_terminal_numbers(payload["symbols"], page_items=text_result.get("texts"))
+    # リレー表の「本」の行を行列の位置の接点に結び付ける（#40 #44）。接点の種類を表に合わせて直すので from-to より先。
+    relay_row_counts = link_relay_rows(text_result, payload["symbols"], width, height) if text_result else None
+    payload["from_to"] = build_direct_from_to(payload, source_image=image, params=params.bridge)
+    # 細い線は 150 dpi のスキャンで途切れた薄い灰色になり、配線から落ちる。一直線に並んだ未接続の端子の間に
+    # 薄い線があれば配線として足す（DD-0007 §4.22）。
+    faint_wires = bridge_faint_wires(payload, image) if params.faint_lines else []
+
+    for symbol in symbols:
+        symbol.pop("text_items", None)
+    payload["symbols"] = symbols
+    payload.update(text_result)
+    payload["regions"] = [*(payload["regions"] if isinstance(payload.get("regions"), list) else []), *clouds.regions]
+    if dot_summary is not None:
+        payload["dot_roles"] = dot_summary
+    if terminal_number_counts is not None:
+        payload["quality"]["terminal_numbers"] = terminal_number_counts
+    if relay_row_counts is not None:
+        payload["quality"]["relay_rows_by_position"] = relay_row_counts
+    _finish(payload, symbols, wired_symbols, text_result, engine, warnings, circle_review, len(faint_wires))
+    return payload
+
+
+def _symbols_from_detections(detections: list[dict[str, Any]], width: int, height: int) -> list[dict[str, Any]]:
+    """YOLO の検出（中心・幅・高さの比率）を、画素の枠を持つ記号にする。"""
     symbols = []
     for index, detection in enumerate(detections, 1):
-        cx, cy, w, h = (float(detection[key]) for key in ("cx", "cy", "w", "h"))
+        cx, cy = float(detection["cx"]), float(detection["cy"])
         symbols.append({
             "id": f"symbol_{index:03d}",
             "type": detection["class_key"],
@@ -78,31 +128,23 @@ def analyze_detections(
             "confidence": detection.get("confidence"),
             "status": "detected_by_yolo",
         })
+    return symbols
 
-    # --- 雲マーク（#41）: 雲マークの線を消した画像で配線を読み、文字は元の画像で読む。記号の枠の中は消さない。
-    # 雲マークは regions[] に出す。
-    clouds = detect_clouds(make_binary_mask(image))
-    page_image, image = image, erase_clouds(image, clouds, [s["bbox"] for s in symbols])
-    # --- ここまで雲マーク
 
-    work_dir.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="analysis-", dir=work_dir) as tmp:
-        analyze_image(
-            image, 1, 150, Path(tmp), False, DEFAULT_WIRE_TEXT_MASK,
-            write_debug_images=False,
-        )
-        payload = build_final_output_from_analysis(Path(tmp) / "page_001", "registered_image")
-    # Do not export temporary paths or treat a project number as a PDF page number.
-    payload["source"] = source
-    warnings = []
-    reader = None
-    # --- 文字の読み取り（#38 #41 #43 #44 #45）: ページ OCR 1 回で全記号のラベル・リレー表・
-    # シート間参照・シート番号候補・領域の種類を作る。リレー表・表題欄の中の検出は配線に使わない。
-    text_result: dict[str, Any] = {}
+def _read_text(
+    page_image: Image.Image, symbols: list[dict[str, Any]], regions: list[dict[str, Any]], warnings: list[str],
+) -> tuple[Any, str, dict[str, Any]]:
+    """文字の読み取り（#38 #41 #43 #44 #45）: ページ OCR 1 回で全記号のラベル・リレー表・シート間参照・
+    シート番号候補・領域の種類を作る。リレー表・表題欄の中の記号は文字として扱い、配線に使わない（text_zone）。
+
+    OCR に失敗しても、検出できた配線は捨てない。戻り値は (ページの OCR, エンジン名, 文字の結果)。
+    """
+    width, height = page_image.size
     region_boxes = [
         {"id": f"region_{index:03d}", "bbox": _pixel_box(r, width, height), "confidence": r.get("confidence")}
-        for index, r in enumerate(regions or [], 1)
+        for index, r in enumerate(regions, 1)
     ]
+    reader, engine, text_result = None, "none", {}
     try:
         reader, engine, warning = load_symbol_ocr_reader("rapidocr", "en")
         if warning:
@@ -115,31 +157,21 @@ def analyze_detections(
                 text_source="llm" if text_llm else "name_ocr",
                 crop_reader=load_crop_ocr_reader(reader),
             )
-    except Exception:  # OCR failure must not discard successfully detected wires.
+    except Exception:  # noqa: BLE001  OCR の失敗で、検出できた配線を捨てない。
         logging.getLogger(__name__).exception("Symbol label OCR failed")
         engine, text_result = "none", {}
         warnings.append("ラベル読み取りに失敗しました。シンボル・配線の結果は確認できます。")
     for symbol in symbols:
         if symbol.get("text_zone"):
             symbol["status"] = "suppressed_text_zone"
-    wired_symbols = [s for s in symbols if not s.get("text_zone")]
-    # --- ここまで文字の読み取り
+    return reader, engine, text_result
 
-    # --- リレーと表示灯（#39）: 円形の記号を、円の中の×印・近くの文字・リレー表・同じ器具の接点で確かめる。
-    circle_review = review_circles(make_binary_mask(page_image), symbols, text_result)
-    # --- ここまでリレーと表示灯
 
-    payload = filter_wire_decorations(
-        payload, image, wired_symbols,
-        confirm_text=rapidocr_text_confirmation(reader) if reader is not None and engine == "rapidocr" else None,
-    )
-    if payload["quality"]["wire_decoration_filter"]["label_rule_ocr_failed"]:
-        warnings.append("罫線の文字確認に失敗したため、判定できない罫線は配線候補として残しています。")
-
-    # Before wiring: enrich_symbols_and_graph skips the duplicate dot boxes marked here.
-    dot_summary = annotate_dots(image, wired_symbols)
-
-    payload = enrich_symbols_and_graph(
+def _link_terminals(
+    payload: dict[str, Any], wired_symbols: list[dict[str, Any]], image: Image.Image, params: WiringParams,
+) -> dict[str, Any]:
+    """記号の端子を決め、配線・ノードに結ぶ（analysis.wiring.ports・linking）。"""
+    return enrich_symbols_and_graph(
         payload, wired_symbols, terminal_wire_threshold=params.link.terminal_wire_px,
         terminal_node_threshold=params.link.terminal_node_px,
         terminal_source="inferred", inferred_terminal_classes=DEFAULT_INFERRED_TERMINAL_CLASSES,
@@ -149,24 +181,14 @@ def analyze_detections(
         junction_node_classes={classes.JUNCTION}, junction_node_threshold=params.link.junction_node_px, source_image=image,
         port_params=params.ports,
     )
-    terminal_number_counts = attach_terminal_numbers(payload["symbols"], page_items=text_result.get("texts"))
-    # リレー表の「本」の行を行列の位置の接点に結び付ける（#40 #44）。接点の種類を表に合わせて直すので from-to より先。
-    relay_row_counts = link_relay_rows(text_result, payload["symbols"], width, height) if text_result else None
-    payload["from_to"] = build_direct_from_to(payload, source_image=image, params=params.bridge)
-    # 細い線は 150 dpi のスキャンで途切れた薄い灰色になり、配線から落ちる。一直線に並んだ未接続の端子の間に
-    # 薄い線があれば配線として足す（DD-0007 §4.22）。
-    faint_wires = bridge_faint_wires(payload, image) if params.faint_lines else []
-    for symbol in symbols:
-        symbol.pop("text_items", None)
-    payload["symbols"] = symbols
-    payload.update(text_result)
-    payload["regions"] = [*(payload["regions"] if isinstance(payload.get("regions"), list) else []), *clouds.regions]
-    if dot_summary is not None:
-        payload["dot_roles"] = dot_summary
-    if terminal_number_counts is not None:
-        payload["quality"]["terminal_numbers"] = terminal_number_counts
-    if relay_row_counts is not None:
-        payload["quality"]["relay_rows_by_position"] = relay_row_counts
+
+
+
+def _finish(
+    payload: dict[str, Any], symbols: list[dict[str, Any]], wired_symbols: list[dict[str, Any]],
+    text_result: dict[str, Any], engine: str, warnings: list[str], circle_review: Any, faint_wire_count: int,
+) -> None:
+    """構造 JSON の版・状態・能力・注記・品質の集計を書く。"""
     payload.update({
         "schema_version": "todensekkei.sequence_extraction.v1",
         "status": "partial" if warnings else "completed",
@@ -197,7 +219,6 @@ def analyze_detections(
         },
         "text_zone_suppressed_count": len(symbols) - len(wired_symbols),
         "circle_review": circle_review,
-        "faint_wire_count": len(faint_wires),
+        "faint_wire_count": faint_wire_count,
         "terminal_source": "inferred", "annotation_assistance": False,
     })
-    return payload

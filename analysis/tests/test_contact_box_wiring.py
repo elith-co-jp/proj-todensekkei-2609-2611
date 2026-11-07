@@ -5,23 +5,20 @@ from __future__ import annotations
 # ruff: noqa: I001
 
 import sys
-import tempfile
 from pathlib import Path
 
 from PIL import Image, ImageDraw
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 
-from analysis.wiring.detect import Box, LineSegment, analyze_image, merge_candidate_lines
-from analysis.wiring.assemble import build_final_output_from_analysis
+from analysis.wiring.detect import Box, LineSegment, detect_wiring, merge_candidate_lines
+from analysis.wiring.assemble import structure_from_detection
 from analysis.wiring.ports import infer_ports_for_symbol
 from analysis.wiring.ports import port_inference_config
 
 
 def wires_of(image: Image.Image) -> list[dict]:
-    with tempfile.TemporaryDirectory() as tmp:
-        analyze_image(image, 1, 150, Path(tmp), False, "components", write_debug_images=False)
-        return build_final_output_from_analysis(Path(tmp) / "page_001", "registered_image")["wires"]
+    return structure_from_detection(detect_wiring(image), {})["wires"]
 
 
 def horizontal_at(wires: list[dict], y: float) -> list[dict]:

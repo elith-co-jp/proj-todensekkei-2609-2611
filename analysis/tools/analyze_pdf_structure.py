@@ -16,7 +16,7 @@ import cv2
 import numpy as np
 import pymupdf
 from PIL import Image, ImageDraw, ImageFont, ImageOps
-from analysis.wiring.detect import analyze_image  # noqa: E402
+from wire_detection_lab import analyze_image  # noqa: E402
 
 
 DEFAULT_PDF_PATH = Path("private/inputs/reference/reference.pdf")

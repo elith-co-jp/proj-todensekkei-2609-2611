@@ -346,7 +346,7 @@ def run_structure(drawing: dict[str, Any], pred: list[dict[str, Any]], work: Pat
          "class_label": p["class_name"], "confidence": p["confidence"]}
         for p in pred if p["kind"] == "symbol"
     ]
-    return analyze_detections(image_path, detections, source={"sheet": drawing["sheet"]}, work_dir=work)
+    return analyze_detections(image_path, detections, source={"sheet": drawing["sheet"]})
 
 
 def summarize(per_drawing: list[dict[str, Any]]) -> dict[str, Any]:

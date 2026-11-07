@@ -16,7 +16,8 @@ from PIL import Image, ImageDraw, ImageFont
 
 from analyze_annotation_graph import endpoint_key, load_zip_payload
 from analyze_pdf_structure import render_page
-from analysis.wiring.detect import Box, DetectedWire, LineSegment, center_in_box, detect_regions, filter_line_segments, is_left_voltage_arrow, is_near_outer_frame, is_right_reference_block_line, line_axis, line_from_box, line_ink_coverage, line_intersection, line_span, make_binary_mask, merge_candidate_lines, scan_line_segments, split_lines_by_ink_support, support_vector_for_span, write_json
+from analysis.wiring.detect import Box, DetectedWire, LineSegment, center_in_box, detect_regions, filter_line_segments, is_left_voltage_arrow, is_near_outer_frame, is_right_reference_block_line, line_axis, line_from_box, line_ink_coverage, line_intersection, line_span, make_binary_mask, merge_candidate_lines, scan_line_segments, split_lines_by_ink_support, support_vector_for_span
+from wire_detection_lab import write_json
 from analysis.wiring.graph import build_connection_graph
 
 

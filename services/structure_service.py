@@ -9,7 +9,6 @@ from sqlalchemy.orm import Session
 
 from analysis.relay_links import link_document_relay_rows
 from analysis.text_extraction import same_relay_device
-from database import DATA_DIR
 from models import AnnotationProject, MlModel, StructurePrediction
 from services.annotation_service import image_path
 
@@ -29,7 +28,6 @@ def analyze_project(
             "name": project.name, "image_sha256": image.sha256,
             "model_sha256": model.sha256, "model_name": model.name,
         },
-        work_dir=DATA_DIR / "analysis_tmp",
         regions=regions,
     )
 

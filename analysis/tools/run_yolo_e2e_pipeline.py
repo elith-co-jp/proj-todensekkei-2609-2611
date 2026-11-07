@@ -21,7 +21,7 @@ from analysis.wiring.detect import make_binary_mask, support_vector_for_span
 from analyze_annotation_graph import load_zip_payload, symbol_bbox
 from analysis.wiring.connectivity import build_predicted_graph_pairs
 from build_e2e_demo_outputs import DEFAULT_ANALYSIS_ROOT, DEFAULT_PDF_PATH, PDF_ENV_VAR, draw_reconstruction, draw_wire_support_diff, load_font, write_json, write_visual_outputs
-from analysis.wiring.assemble import build_final_output_from_analysis, load_json
+from wire_detection_lab import build_final_output_from_analysis, load_json
 from analysis.wiring.geometry import wire_points
 from evaluate_yolo_label_ocr import (
     OCR_ALLOWLIST,
