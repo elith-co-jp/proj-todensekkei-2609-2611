@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import _repo_path  # noqa: F401  (リポジトリの直下を import できるようにする)
+
 import argparse
 import copy
 import csv
@@ -13,7 +15,8 @@ from typing import Any
 from PIL import Image, ImageDraw
 
 from analyze_annotation_graph import build_project_graph, load_zip_payload, parse_member, symbol_bbox
-from build_e2e_demo_outputs import load_font, wire_points
+from build_e2e_demo_outputs import load_font
+from analysis.wiring.geometry import wire_points
 
 
 FONT_XS = load_font(12)

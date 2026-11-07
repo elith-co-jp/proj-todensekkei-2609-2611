@@ -7,12 +7,9 @@ import pytest
 @pytest.fixture
 def detector():
     pytest.importorskip("cv2")
-    from analysis import runtime
+    from analysis.wiring import detect
 
-    assert runtime is not None
-    import analyze_pdf_structure
-
-    return analyze_pdf_structure
+    return detect
 
 
 @pytest.mark.parametrize("orientation", ["h", "v"])

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import pytest
@@ -44,8 +45,9 @@ def test_adapter_reuses_wire_detector_and_removes_temp_files(tmp_path, monkeypat
 
 def test_image_and_pdf_entry_points_produce_identical_wire_geometry(tmp_path, monkeypatch):
     runtime = _runtime()
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "analysis" / "tools"))  # PDF の入口は CLI 側にある
     import analyze_pdf_structure as detector
-    from build_e2e_demo_outputs import build_final_output_from_analysis
+    from analysis.wiring.assemble import build_final_output_from_analysis
 
     image = Image.new("RGB", (1200, 800), "white")
     draw = ImageDraw.Draw(image)

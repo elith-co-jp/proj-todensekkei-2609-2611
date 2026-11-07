@@ -15,12 +15,8 @@ from PIL import Image
 TOOLS_DIR = Path(__file__).resolve().parents[1] / "tools"
 sys.path.insert(0, str(TOOLS_DIR))
 
-from run_yolo_e2e_pipeline import (
-    _analysis_cache_key,
-    draw_wire_overlay,
-    ensure_analysis_outputs,
-    load_symbol_ocr_reader,
-)
+from run_yolo_e2e_pipeline import _analysis_cache_key, draw_wire_overlay, ensure_analysis_outputs
+from analysis.wiring.ocr import load_symbol_ocr_reader
 
 
 class WirePipelineTests(unittest.TestCase):

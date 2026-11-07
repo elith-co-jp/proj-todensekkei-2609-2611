@@ -6,10 +6,7 @@ from PIL import Image, ImageDraw
 
 @pytest.fixture
 def bridge():
-    from analysis import runtime  # Register the shared CLI module path.
-
-    assert runtime is not None
-    from faint_lines import bridge_faint_wires
+    from analysis.wiring.faint_lines import bridge_faint_wires
 
     return bridge_faint_wires
 

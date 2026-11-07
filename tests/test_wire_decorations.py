@@ -9,10 +9,7 @@ from PIL import Image, ImageDraw
 @pytest.fixture
 def detector():
     pytest.importorskip("cv2")
-    from analysis import runtime  # Register the shared CLI module path.
-
-    assert runtime is not None
-    from filter_wire_decorations import filter_wire_decorations
+    from analysis.wiring.filter_wire_decorations import filter_wire_decorations
 
     return filter_wire_decorations
 
@@ -242,7 +239,7 @@ def test_no_wires_is_valid(detector):
     ],
 )
 def test_gap_repair_cannot_reintroduce_rejected_stroke(detector, points, blocked):
-    from build_from_to_review_outputs import build_predicted_graph_pairs
+    from analysis.wiring.connectivity import build_predicted_graph_pairs
 
     records = [
         {"id": str(i), "member_key": str(i), "symbol_id": str(i), "class_name": "junction", "point": point}

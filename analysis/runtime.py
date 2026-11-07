@@ -1,4 +1,4 @@
-"""Application adapter for the existing standalone analysis tools.
+"""図面の画像と記号の検出から構造 JSON を作る（アプリの解析の入口）。配線解析の各段は analysis.wiring にある。
 
 Only an image and detector predictions enter this path. Manual annotations and
 reference connections are never used as inputs to production inference.
@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import logging
 import os
-import sys
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -20,29 +19,17 @@ from analysis.name_ocr import default_reader as name_ocr_reader
 from analysis.relay_lamp import review_circles
 from analysis.relay_links import link_relay_rows
 from analysis.text_extraction import extract_text_structure
-
-# The CLI tools use sibling imports. Keep that entry point intact; PyInstaller
-# resolves the same imports via its tools pathex, without shipping private data.
-_TOOLS = Path(__file__).resolve().parent / "tools"
-if str(_TOOLS) not in sys.path:
-    sys.path.append(str(_TOOLS))
-
-from analyze_pdf_structure import analyze_image, make_binary_mask
-from build_e2e_demo_outputs import build_final_output_from_analysis
-from dot_roles import annotate_dots
-from faint_lines import bridge_faint_wires
-from filter_wire_decorations import filter_wire_decorations, rapidocr_text_confirmation
-from revision_clouds import detect_clouds, erase_clouds
-from run_yolo_e2e_pipeline import (
-    DEFAULT_INFERRED_TERMINAL_CLASSES,
-    DEFAULT_WIRE_TEXT_MASK,
-    build_direct_from_to,
-    enrich_symbols_and_graph,
-    load_crop_ocr_reader,
-    load_symbol_ocr_reader,
-    port_inference_config,
-)
-from terminal_numbers import attach_terminal_numbers
+from analysis.wiring.assemble import build_final_output_from_analysis
+from analysis.wiring.connectivity import build_direct_from_to
+from analysis.wiring.detect import DEFAULT_WIRE_TEXT_MASK, analyze_image, make_binary_mask
+from analysis.wiring.dot_roles import annotate_dots
+from analysis.wiring.faint_lines import bridge_faint_wires
+from analysis.wiring.filter_wire_decorations import filter_wire_decorations, rapidocr_text_confirmation
+from analysis.wiring.linking import enrich_symbols_and_graph
+from analysis.wiring.ocr import load_crop_ocr_reader, load_symbol_ocr_reader
+from analysis.wiring.ports import DEFAULT_INFERRED_TERMINAL_CLASSES, port_inference_config
+from analysis.wiring.revision_clouds import detect_clouds, erase_clouds
+from analysis.wiring.terminal_numbers import attach_terminal_numbers
 
 
 def _pixel_box(detection: dict[str, Any], width: int, height: int) -> dict[str, int]:

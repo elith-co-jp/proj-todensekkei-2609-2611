@@ -11,7 +11,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 
-from run_yolo_e2e_pipeline import line_ports
+from analysis.wiring.ports import line_ports
 
 
 def _wire(wid, orientation, x0, y0, x1, y1):

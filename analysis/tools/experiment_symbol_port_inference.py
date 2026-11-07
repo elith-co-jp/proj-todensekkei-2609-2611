@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import _repo_path  # noqa: F401  (リポジトリの直下を import できるようにする)
+
 import argparse
 import csv
 import json
@@ -11,28 +13,12 @@ from typing import Any
 from PIL import Image, ImageDraw
 
 from analyze_annotation_graph import load_zip_payload, symbol_bbox
-from build_e2e_demo_outputs import load_font, wire_points
+from build_e2e_demo_outputs import load_font
+from analysis.wiring.geometry import wire_points
+from analysis.wiring.ports import default_configs, infer_ports_for_symbol  # noqa: E402
 
 
 TARGET_PARENT_CLASSES = ("contact_a", "contact_b", "solenoid", "relay_coil")
-EXPLICIT_NODE_CLASSES = ("connector", "junction", "terminal", "power_bus")
-# Classes whose terminals sit where a wire stops inside the box (the + and - dots of a card),
-# not at fixed fractions of the box. Empty disables these ports.
-WIRE_END_PORT_CLASSES: frozenset[str] = frozenset({"other"})
-# A two-port contact sits on a wire that runs through its box; a wire passing just beside the box
-# (axis_padding_px allows it) belongs to the next contact when the box also covers the label.
-CONTACT_PREFERS_WIRES_INSIDE_BOX = True
-# Card input contacts are two open circles with a gap: the template points fall in the blank gap and
-# fail the ink check. Such a contact takes its ports at the box edges instead, only where a wire
-# reaches the edge; a point off the wire would attach to whatever node lies within reach.
-CONTACT_EDGE_FALLBACK = True
-# A contact boxed together with its label can also cover the return wire drawn just beside the label
-# (ER21282: a box drawn around each contact doubles as its wiring). A two-port contact sits on one line,
-# so when ports land on parallel lines, keep the line deepest inside the box.
-CONTACT_KEEPS_INNERMOST_LINE = True
-# A junction (dot or wire bend) lies on one horizontal and one vertical line. Lines farther from its
-# centre than the nearest one plus this tolerance are neighbouring parallel wires (ER21276).
-JUNCTION_AXIS_TOLERANCE_PX = 3.0
 
 FONT_XS = load_font(12)
 FONT_SM = load_font(15)
@@ -113,241 +99,20 @@ def box_tuple(box: dict[str, int | float]) -> tuple[int, int, int, int]:
     )
 
 
-def clamp(value: float, lo: float, hi: float) -> float:
-    return max(lo, min(hi, value))
 
 
-def wire_span(wire: dict[str, Any]) -> tuple[float, float, float, float]:
-    start, end = wire_points(wire)
-    return float(start[0]), float(start[1]), float(end[0]), float(end[1])
 
 
-def wire_axis_and_range(wire: dict[str, Any]) -> tuple[str, float, float, float]:
-    x0, y0, x1, y1 = wire_span(wire)
-    orientation = str(wire.get("orientation") or "")
-    if orientation == "h" or abs(y0 - y1) <= abs(x0 - x1):
-        return "h", (y0 + y1) / 2, min(x0, x1), max(x0, x1)
-    return "v", (x0 + x1) / 2, min(y0, y1), max(y0, y1)
 
 
-def point_ink_ratio(image: Image.Image, point: tuple[float, float], radius: int) -> float:
-    gray = image.convert("L")
-    x, y = int(round(point[0])), int(round(point[1]))
-    x0 = max(0, x - radius)
-    y0 = max(0, y - radius)
-    x1 = min(gray.width, x + radius + 1)
-    y1 = min(gray.height, y + radius + 1)
-    if x0 >= x1 or y0 >= y1:
-        return 0.0
-    crop = gray.crop((x0, y0, x1, y1))
-    histogram = crop.histogram()
-    dark_pixels = sum(histogram[:180])
-    return dark_pixels / max(1, crop.width * crop.height)
 
 
-def expected_ratios(class_name: str, box: dict[str, int | float], four_port_height_px: float) -> list[float]:
-    height = float(box["y1"]) - float(box["y0"])
-    if class_name in {"contact_a", "contact_b"} and height >= four_port_height_px:
-        return [0.2, 0.4, 0.6, 0.8]
-    if class_name in {"contact_a", "contact_b"}:
-        return [0.32, 0.68]
-    if class_name in {"solenoid", "relay_coil"}:
-        return [0.15, 0.85]
-    return [0.32, 0.68]
 
 
-def is_four_port_symbol(class_name: str, box: dict[str, int | float], four_port_height_px: float) -> bool:
-    height = float(box["y1"]) - float(box["y0"])
-    return class_name in {"contact_a", "contact_b"} and height >= four_port_height_px
 
 
-def candidate_key(candidate: dict[str, Any], grid: float = 3.0) -> tuple[int, int]:
-    return (
-        round(float(candidate["point"][0]) / grid),
-        round(float(candidate["point"][1]) / grid),
-    )
 
 
-def infer_ports_for_symbol(
-    symbol: dict[str, Any],
-    wires: list[dict[str, Any]],
-    source_image: Image.Image,
-    *,
-    config: dict[str, Any],
-) -> list[dict[str, Any]]:
-    box = symbol["bbox"]
-    x0, y0, x1, y1 = map(float, (box["x0"], box["y0"], box["x1"], box["y1"]))
-    width = max(1.0, x1 - x0)
-    height = max(1.0, y1 - y0)
-    class_name = str(symbol.get("class_name") or symbol.get("type") or "")
-    margin_px = float(config["margin_px"])
-    axis_padding_px = float(config["axis_padding_px"])
-    min_wire_confidence = float(config["min_wire_confidence"])
-    min_visible_coverage = float(config["min_visible_coverage"])
-    ink_radius = int(config["ink_radius"])
-    min_ink_ratio = float(config["min_ink_ratio"])
-    mode = str(config["mode"])
-    ratios = expected_ratios(class_name, box, float(config["four_port_height_px"]))
-    four_port = is_four_port_symbol(class_name, box, float(config["four_port_height_px"]))
-    require_point_on_wire_span = bool(config.get("require_point_on_wire_span", True))
-    two_port_contact_orientation = str(config.get("two_port_contact_orientation", "all"))
-    contact_outer_terminal_margin_px = float(config.get("contact_outer_terminal_margin_px", 0.0))
-    contact_max_wire_axes = int(config.get("contact_max_wire_axes", 0) or 0)
-    contact_min_terminal_rel_x = config.get("contact_min_terminal_rel_x")
-    contact_max_terminal_rel_x = config.get("contact_max_terminal_rel_x")
-    wire_end_ports = class_name in config.get("wire_end_port_classes", WIRE_END_PORT_CLASSES)
-
-    candidates: list[dict[str, Any]] = []
-    for wire in wires:
-        if float(wire.get("confidence", 0.0)) < min_wire_confidence:
-            continue
-        if float(wire.get("visible_coverage") or 0.0) < min_visible_coverage:
-            continue
-        orientation, axis, span_start, span_end = wire_axis_and_range(wire)
-        if class_name in {"solenoid", "relay_coil"} and orientation != "v":
-            continue
-        if class_name in {"contact_a", "contact_b"} and not four_port and two_port_contact_orientation == "vertical" and orientation != "v":
-            continue
-
-        if orientation == "v":
-            if not (x0 - axis_padding_px <= axis <= x1 + axis_padding_px):
-                continue
-            overlap = min(span_end, y1 + margin_px) - max(span_start, y0 - margin_px)
-            if overlap <= 0:
-                continue
-            inner_ends = [(clamp(axis, x0, x1), end) for end in (span_start, span_end) if y0 + margin_px <= end <= y1 - margin_px]
-            if mode == "bbox_edge":
-                points = [(clamp(axis, x0, x1), y0), (clamp(axis, x0, x1), y1)]
-                if config.get("edge_on_span"):
-                    points = [p for p in points if span_start - margin_px <= p[1] <= span_end + margin_px]
-            elif class_name in {"contact_a", "contact_b"} and contact_outer_terminal_margin_px > 0 and not four_port:
-                y_values = [y0 - contact_outer_terminal_margin_px, y0 + 0.32 * height, y0 + 0.68 * height, y1 + contact_outer_terminal_margin_px]
-                points = [
-                    (clamp(axis, x0, x1), y)
-                    for y in y_values
-                    if not require_point_on_wire_span or span_start - margin_px <= y <= span_end + margin_px
-                ]
-            else:
-                points = [
-                    (clamp(axis, x0, x1), y0 + ratio * height)
-                    for ratio in ratios
-                    if not require_point_on_wire_span or span_start - margin_px <= y0 + ratio * height <= span_end + margin_px
-                ]
-            side = "vertical_axis"
-        else:
-            if not (y0 - axis_padding_px <= axis <= y1 + axis_padding_px):
-                continue
-            overlap = min(span_end, x1 + margin_px) - max(span_start, x0 - margin_px)
-            if overlap <= 0:
-                continue
-            inner_ends = [(end, clamp(axis, y0, y1)) for end in (span_start, span_end) if x0 + margin_px <= end <= x1 - margin_px]
-            if mode == "bbox_edge":
-                points = [(x0, clamp(axis, y0, y1)), (x1, clamp(axis, y0, y1))]
-                if config.get("edge_on_span"):
-                    points = [p for p in points if span_start - margin_px <= p[0] <= span_end + margin_px]
-            elif class_name in {"contact_a", "contact_b"} and contact_outer_terminal_margin_px > 0 and not four_port:
-                x_values = [x0 - contact_outer_terminal_margin_px, x0 + 0.32 * width, x0 + 0.68 * width, x1 + contact_outer_terminal_margin_px]
-                points = [
-                    (x, clamp(axis, y0, y1))
-                    for x in x_values
-                    if not require_point_on_wire_span or span_start - margin_px <= x <= span_end + margin_px
-                ]
-            else:
-                points = [
-                    (x0 + ratio * width, clamp(axis, y0, y1))
-                    for ratio in ratios
-                    if not require_point_on_wire_span or span_start - margin_px <= x0 + ratio * width <= span_end + margin_px
-                ]
-            side = "horizontal_axis"
-        if wire_end_ports:
-            points = [*points, *inner_ends]
-
-        for point in points:
-            ink_ratio = point_ink_ratio(source_image, point, ink_radius)
-            if ink_ratio < min_ink_ratio:
-                continue
-            candidates.append(
-                {
-                    "symbol_id": symbol.get("id"),
-                    "gold_ref": symbol.get("gold_ref"),
-                    "class_name": class_name,
-                    "label": symbol.get("label") or "",
-                    "point": [round(point[0], 1), round(point[1], 1)],
-                    "wire_id": wire.get("id"),
-                    "wire_orientation": orientation,
-                    "wire_axis": axis,
-                    "wire_confidence": wire.get("confidence"),
-                    "wire_visible_coverage": wire.get("visible_coverage"),
-                    "reason": f"{mode}:{side}",
-                    "ink_ratio": round(ink_ratio, 4),
-                    "wire_inside_box": (x0 <= axis <= x1) if orientation == "v" else (y0 <= axis <= y1),
-                }
-            )
-
-    if CONTACT_PREFERS_WIRES_INSIDE_BOX and class_name in {"contact_a", "contact_b"} and not four_port:
-        inside = [candidate for candidate in candidates if candidate["wire_inside_box"]]
-        candidates = inside or candidates
-
-    if class_name == "junction" and candidates:
-        # 分岐点は横線 1 本と縦線 1 本の上にしか乗らない。枠に触れる隣の平行な線（約 11 px 間隔）は別の配線
-        # なので、向きごとに中心に最も近い線だけにする（DD-0009 §8）。
-        centre = {"v": (x0 + x1) / 2, "h": (y0 + y1) / 2}
-        nearest = {o: min((abs(c["wire_axis"] - centre[o]) for c in candidates if c["wire_orientation"] == o), default=None)
-                   for o in ("v", "h")}
-        candidates = [c for c in candidates
-                      if abs(c["wire_axis"] - centre[c["wire_orientation"]]) <= nearest[c["wire_orientation"]] + JUNCTION_AXIS_TOLERANCE_PX]
-
-    if CONTACT_KEEPS_INNERMOST_LINE and class_name in {"contact_a", "contact_b"} and not four_port and candidates:
-        def cross(candidate: dict[str, Any]) -> float:
-            return float(candidate["point"][0] if candidate["wire_orientation"] == "v" else candidate["point"][1])
-
-        def depth(candidate: dict[str, Any]) -> float:
-            lo, hi = (x0, x1) if candidate["wire_orientation"] == "v" else (y0, y1)
-            return min(cross(candidate) - lo, hi - cross(candidate))
-
-        deepest = max(candidates, key=depth)
-        # 2 端子の接点は 1 本の線の上にある。枠の辺をかすめる別の向きの線（ラベルの下線・隣の横線）の端子は捨てる。
-        candidates = [c for c in candidates
-                      if c["wire_orientation"] == deepest["wire_orientation"] and abs(cross(c) - cross(deepest)) <= 3]
-
-    if class_name in {"contact_a", "contact_b"} and (
-        contact_min_terminal_rel_x is not None or contact_max_terminal_rel_x is not None
-    ):
-        filtered_candidates = []
-        for candidate in candidates:
-            rel_x = (float(candidate["point"][0]) - x0) / width
-            if contact_min_terminal_rel_x is not None and rel_x < float(contact_min_terminal_rel_x):
-                continue
-            if contact_max_terminal_rel_x is not None and rel_x > float(contact_max_terminal_rel_x):
-                continue
-            filtered_candidates.append(candidate)
-        candidates = filtered_candidates
-
-    if class_name in {"contact_a", "contact_b"} and not four_port and contact_max_wire_axes > 0:
-        by_wire: dict[str, list[dict[str, Any]]] = defaultdict(list)
-        for candidate in candidates:
-            by_wire[str(candidate.get("wire_id") or "")].append(candidate)
-        ranked_wires = sorted(
-            by_wire.items(),
-            key=lambda item: (
-                -sum(float(candidate.get("ink_ratio") or 0.0) for candidate in item[1]),
-                -max(float(candidate.get("wire_visible_coverage") or 0.0) for candidate in item[1]),
-                -len(item[1]),
-                item[0],
-            ),
-        )
-        allowed_wire_ids = {wire_id for wire_id, _items in ranked_wires[:contact_max_wire_axes]}
-        candidates = [candidate for candidate in candidates if str(candidate.get("wire_id") or "") in allowed_wire_ids]
-
-    deduped: dict[tuple[int, int], dict[str, Any]] = {}
-    for candidate in candidates:
-        key = candidate_key(candidate)
-        previous = deduped.get(key)
-        if previous is None or float(candidate["ink_ratio"]) > float(previous["ink_ratio"]):
-            deduped[key] = candidate
-    if CONTACT_EDGE_FALLBACK and mode == "template" and class_name in {"contact_a", "contact_b"} and not four_port and len(deduped) < 2:
-        return infer_ports_for_symbol(symbol, wires, source_image, config={**config, "mode": "bbox_edge", "edge_on_span": True})
-    return sorted(deduped.values(), key=lambda item: (str(item["wire_id"]), item["point"][1], item["point"][0]))
 
 
 def match_candidates(
@@ -625,35 +390,6 @@ def run_config(
     return result
 
 
-def default_configs() -> list[dict[str, Any]]:
-    base = {
-        "margin_px": 8,
-        "axis_padding_px": 14,
-        "min_wire_confidence": 0.0,
-        "min_visible_coverage": 0.0,
-        "ink_radius": 4,
-        "min_ink_ratio": 0.0,
-        "four_port_height_px": 65,
-        "require_point_on_wire_span": True,
-        "two_port_contact_orientation": "all",
-    }
-    return [
-        {**base, "name": "bbox_edge_loose", "mode": "bbox_edge"},
-        {**base, "name": "template_loose", "mode": "template"},
-        {**base, "name": "template_confident", "mode": "template", "min_wire_confidence": 0.7, "min_visible_coverage": 0.75},
-        {**base, "name": "template_ink02", "mode": "template", "min_ink_ratio": 0.02},
-        {**base, "name": "template_confident_ink02", "mode": "template", "min_wire_confidence": 0.7, "min_visible_coverage": 0.75, "min_ink_ratio": 0.02},
-        {**base, "name": "template_confident_relaxed_span_ink02", "mode": "template", "min_wire_confidence": 0.7, "min_visible_coverage": 0.75, "min_ink_ratio": 0.02, "require_point_on_wire_span": False},
-        {**base, "name": "template_confident_v2_vertical_ink02", "mode": "template", "min_wire_confidence": 0.7, "min_visible_coverage": 0.75, "min_ink_ratio": 0.02, "two_port_contact_orientation": "vertical"},
-        {**base, "name": "template_confident_v2_vertical_relaxed_span_ink02", "mode": "template", "min_wire_confidence": 0.7, "min_visible_coverage": 0.75, "min_ink_ratio": 0.02, "two_port_contact_orientation": "vertical", "require_point_on_wire_span": False},
-        {**base, "name": "template_confident_relaxed_span_ink02_contact_left65", "mode": "template", "min_wire_confidence": 0.7, "min_visible_coverage": 0.75, "min_ink_ratio": 0.02, "require_point_on_wire_span": False, "contact_max_terminal_rel_x": 0.65},
-        {**base, "name": "template_confident_v2_vertical_relaxed_span_ink02_contact_two_port", "mode": "template", "min_wire_confidence": 0.7, "min_visible_coverage": 0.75, "min_ink_ratio": 0.02, "two_port_contact_orientation": "vertical", "require_point_on_wire_span": False, "four_port_height_px": 9999},
-        {**base, "name": "template_confident_v2_vertical_relaxed_span_ink02_contact_one_axis", "mode": "template", "min_wire_confidence": 0.7, "min_visible_coverage": 0.75, "min_ink_ratio": 0.02, "two_port_contact_orientation": "vertical", "require_point_on_wire_span": False, "four_port_height_px": 9999, "contact_max_wire_axes": 1},
-        {**base, "name": "template_ink", "mode": "template", "min_ink_ratio": 0.05},
-        {**base, "name": "template_confident_ink", "mode": "template", "min_wire_confidence": 0.7, "min_visible_coverage": 0.75, "min_ink_ratio": 0.05},
-        {**base, "name": "template_confident_relaxed_span_contact_outer8_ink02", "mode": "template", "min_wire_confidence": 0.7, "min_visible_coverage": 0.75, "min_ink_ratio": 0.02, "require_point_on_wire_span": False, "contact_outer_terminal_margin_px": 8},
-        {**base, "name": "template_confident_relaxed_span_contact_outer12_ink02", "mode": "template", "min_wire_confidence": 0.7, "min_visible_coverage": 0.75, "min_ink_ratio": 0.02, "require_point_on_wire_span": False, "contact_outer_terminal_margin_px": 12},
-    ]
 
 
 def parse_args() -> argparse.Namespace:
