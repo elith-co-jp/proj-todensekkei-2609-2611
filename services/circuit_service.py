@@ -7,8 +7,8 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from models import AnnotationProject
-from services.annotation_service import serialize_project
 from services import circuit_model
+from services.annotation_service import serialize_project
 from services.circuit_model import SUPPLY_V, Circuit, build_circuit, export_netlist, simulate
 from services.structure_service import get_structure
 

@@ -15,19 +15,20 @@ from typing import Any
 
 import cv2
 import numpy as np
-from analyze_pdf_structure import (
+from PIL import Image, ImageOps
+
+from analysis.wiring.assemble import build_connection_candidates
+from analysis.wiring.detect import (
     Box,
     DetectedLabel,
     DetectedWire,
     LineSegment,
-    build_connection_graph,
     line_ink_coverage,
     line_span,
     make_binary_mask,
     support_vector_for_span,
 )
-from build_e2e_demo_outputs import build_connection_candidates
-from PIL import Image, ImageOps
+from analysis.wiring.graph import build_connection_graph
 
 
 @dataclass(frozen=True)

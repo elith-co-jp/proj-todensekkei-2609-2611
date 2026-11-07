@@ -23,6 +23,8 @@ Example:
 
 from __future__ import annotations
 
+import _repo_path  # noqa: F401  (リポジトリの直下を import できるようにする)
+
 import argparse
 import io
 import json
@@ -49,7 +51,7 @@ from eval_wiring_cv import (  # noqa: E402
     structure_predictions,
 )
 from holdout_cv import gold_items, load_gold, score_symbols  # noqa: E402
-from run_yolo_e2e_pipeline import build_direct_from_to  # noqa: E402
+from analysis.wiring.connectivity import build_direct_from_to
 
 WIRE_GAP_PX = 20.0
 AXIS_TOLERANCE_PX = 4.0

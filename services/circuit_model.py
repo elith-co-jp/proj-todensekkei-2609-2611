@@ -22,7 +22,9 @@ from typing import Any
 
 import numpy as np
 
-PASS_CLASSES = frozenset({"connector", "junction", "terminal", "power_bus"})
+from analysis.wiring import classes
+
+PASS_CLASSES = classes.PASS_THROUGH
 CONTACT_CLASSES = {"contact_a": "a", "contact_b": "b"}
 LOAD_CLASSES = frozenset({"relay_coil", "solenoid", "lamp", "diode"})
 SUPPLY_V = 110.0

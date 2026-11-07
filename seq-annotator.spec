@@ -59,7 +59,7 @@ for pkg in ("ultralytics", "torchvision", "rapidocr_onnxruntime", "onnxruntime")
 
 a = Analysis(
     ["desktop.py"],
-    pathex=[str(spec_dir), str(spec_dir / "analysis" / "tools")],
+    pathex=[str(spec_dir)],
     binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,

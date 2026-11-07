@@ -3,9 +3,7 @@
 import pytest
 
 pytest.importorskip("cv2")
-from analysis import runtime  # noqa: E402,F401  registers the analysis tool imports
-
-from build_from_to_review_outputs import build_predicted_graph_pairs  # noqa: E402
+from analysis.wiring.connectivity import build_predicted_graph_pairs  # noqa: E402
 
 OPTIONS = {
     "internal_bridge_classes": set(),
@@ -77,8 +75,8 @@ def test_wire_crossing_a_line_without_a_dot_is_not_joined_to_it_from_its_far_end
 def test_card_terminal_where_a_wire_stops_inside_the_box_becomes_a_port():
     from PIL import Image, ImageDraw
 
-    from experiment_symbol_port_inference import infer_ports_for_symbol
-    from run_yolo_e2e_pipeline import port_inference_config
+    from analysis.wiring.ports import infer_ports_for_symbol
+    from analysis.wiring.ports import port_inference_config
 
     image = Image.new("RGB", (300, 300), "white")
     draw = ImageDraw.Draw(image)
@@ -103,7 +101,7 @@ def test_dot_roles_follow_the_ink():
     import numpy as np
     from PIL import Image, ImageDraw
 
-    from dot_roles import assign_dot_roles
+    from analysis.wiring.dot_roles import assign_dot_roles
 
     image = Image.new("L", (400, 200), 255)
     draw = ImageDraw.Draw(image)
@@ -133,7 +131,7 @@ def test_dot_roles_follow_the_ink():
     assert roles["terminal"]["role"] == "terminal"
 
 def test_terminal_numbers_pair_device_names_with_pins_by_row():
-    from terminal_numbers import connector_numbers
+    from analysis.wiring.terminal_numbers import connector_numbers
 
     def fragment(text, x, y):
         return {"text": text, "bbox": [[x - 8, y - 6], [x + 8, y - 6], [x + 8, y + 6], [x - 8, y + 6]]}
@@ -160,8 +158,8 @@ def test_terminal_numbers_pair_device_names_with_pins_by_row():
 def _contact_ports(draw_contact, monkeypatch, **switches):
     from PIL import Image, ImageDraw
 
-    import experiment_symbol_port_inference as ports
-    from run_yolo_e2e_pipeline import port_inference_config
+    from analysis.wiring import ports
+    from analysis.wiring.ports import port_inference_config
 
     for name, value in switches.items():
         monkeypatch.setattr(ports, name, value)

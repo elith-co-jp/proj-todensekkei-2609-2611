@@ -15,7 +15,7 @@ import cv2
 import numpy as np
 from PIL import Image
 
-from analyze_pdf_structure import make_binary_mask
+from analysis.wiring.detect import make_binary_mask
 
 DOT_CLASSES = ("junction", "connector")
 DIRECTIONS = {"up": (0, -1), "down": (0, 1), "left": (-1, 0), "right": (1, 0)}
