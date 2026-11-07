@@ -259,7 +259,7 @@ bundle.json
 classes.txt / data.yaml / dataset/
     YOLO 学習用。全画像を dataset/images/train に出力する（val 分割はしない）。
     ultralytics でそのまま学習できる。
-        yolo detect train data=data.yaml model=yolov8n.pt
+        yolo detect train data=data.yaml model=yolo11s.pt
     class id は classes.txt の行番号（0 始まり）と一致する。
 
 connections/connections.csv

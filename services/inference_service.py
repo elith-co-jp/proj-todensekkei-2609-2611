@@ -88,6 +88,7 @@ def run_inference(
     projects: list[AnnotationProject],
     conf: float,
     *,
+    connector_conf: float | None = None,
     include_structure: bool = False,
 ) -> list[dict]:
     """登録済みモデルで推論し、結果を predictions テーブルへ保存する。"""
@@ -139,6 +140,13 @@ def run_inference(
                         else:
                             cls = class_by_index.get(int(cls_index))
                     if cls is None:
+                        continue
+                    if (
+                        cls.key == "connector"
+                        and connector_conf is not None
+                        and score is not None
+                        and score < connector_conf
+                    ):
                         continue
                     cx, cy, w, h = sanitize_box(cx, cy, w, h)
                     if w <= 0 or h <= 0:

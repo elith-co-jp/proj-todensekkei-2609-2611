@@ -125,6 +125,24 @@ def test_inference_without_ultralytics(client, monkeypatch):
     assert "yolo predict" in res.json()["detail"]  # 外部実行への誘導
 
 
+def test_analysis_passes_connector_confidence_floor(client, monkeypatch):
+    import routers.ml as ml
+
+    pid = create_project(client)
+    _upload_model(client)
+    calls = []
+
+    def fake_run(db, model, projects, conf, *, connector_conf, include_structure):
+        calls.append((conf, connector_conf, include_structure, [p.id for p in projects]))
+        return []
+
+    monkeypatch.setattr(ml, "run_inference", fake_run)
+    res = client.post("/api/ml/analysis/run", json={"project_ids": [pid], "conf": 0.5, "connector_conf": 0.6})
+    assert res.status_code == 200, res.text
+    assert calls == [(0.5, 0.6, True, [pid])]
+    assert res.json()["connector_conf"] == 0.6
+
+
 def test_import_predictions_zip_and_json(client):
     pid = create_project(client)
     classes = client.get("/api/classes").json()
@@ -262,7 +280,7 @@ def test_training_runs_list(client):
 def test_frozen_training_uses_bundled_base_model(tmp_path, monkeypatch):
     from services import training_service
 
-    bundled = tmp_path / "models" / "yolov8n.pt"
+    bundled = tmp_path / "models" / "yolo11s.pt"
     bundled.parent.mkdir()
     bundled.write_bytes(b"test weight")
     monkeypatch.setattr(training_service, "resource_base", lambda: tmp_path)

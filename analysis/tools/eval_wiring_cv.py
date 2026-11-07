@@ -20,6 +20,7 @@ import hashlib
 import importlib
 import itertools
 import json
+import os
 import pickle
 import re
 import sys
@@ -135,7 +136,22 @@ def _init_worker(overrides: list[str], ocr_threads: int, ocr_cache: str | None) 
             reader = _MemoOCR(reader, Path(ocr_cache))
         return reader, "rapidocr", None
 
+    def limited_crop_reader(page_reader: Any) -> Any:
+        """Same choice as the app (run_yolo_e2e_pipeline.load_crop_ocr_reader), with its own OCR cache."""
+        from rapidocr_onnxruntime import RapidOCR
+
+        rec_model = os.environ.get("SEQANNO_OCR_REC_MODEL")
+        if not rec_model:
+            return page_reader
+        reader = RapidOCR(rec_model_path=rec_model, **{f"{part}_intra_op_num_threads": ocr_threads for part in ("det", "cls", "rec")})
+        if ocr_cache:
+            cache = Path(ocr_cache) / Path(rec_model).stem
+            cache.mkdir(parents=True, exist_ok=True)
+            reader = _MemoOCR(reader, cache)
+        return reader
+
     runtime.load_symbol_ocr_reader = limited_reader
+    runtime.load_crop_ocr_reader = limited_crop_reader
 
     from analysis import name_ocr
 

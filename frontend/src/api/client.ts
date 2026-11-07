@@ -1,5 +1,7 @@
 import type {
   AiImportResult,
+  ClassStats,
+  HardDrawings,
   InferenceImportResult,
   InferenceRunResponse,
   MlModel,
@@ -170,18 +172,18 @@ export const api = {
 
   modelDownloadUrl: (id: number) => `${BASE}/api/ml/models/${id}/download`,
 
-  runInference: (projectIds: number[], conf = DEFAULT_DETECTION_CONF) =>
+  runInference: (projectIds: number[], conf = DEFAULT_DETECTION_CONF, connectorConf: number | null = null) =>
     req<InferenceRunResponse>('/api/ml/inference/run', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ project_ids: projectIds, conf }),
+      body: JSON.stringify({ project_ids: projectIds, conf, connector_conf: connectorConf }),
     }),
 
-  runAnalysis: (projectIds: number[], conf = DEFAULT_DETECTION_CONF) =>
+  runAnalysis: (projectIds: number[], conf = DEFAULT_DETECTION_CONF, connectorConf: number | null = null) =>
     req<InferenceRunResponse>('/api/ml/analysis/run', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ project_ids: projectIds, conf }),
+      body: JSON.stringify({ project_ids: projectIds, conf, connector_conf: connectorConf }),
     }),
 
   getStructure: (projectId: number) =>
@@ -243,4 +245,8 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ decision }),
     }),
+
+  trainingClassStats: () => req<ClassStats>('/api/ml/training/class-stats'),
+
+  trainingHardDrawings: () => req<HardDrawings>('/api/ml/training/hard-drawings'),
 }

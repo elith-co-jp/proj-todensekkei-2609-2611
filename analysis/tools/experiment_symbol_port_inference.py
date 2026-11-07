@@ -26,6 +26,10 @@ CONTACT_PREFERS_WIRES_INSIDE_BOX = True
 # fail the ink check. Such a contact takes its ports at the box edges instead, only where a wire
 # reaches the edge; a point off the wire would attach to whatever node lies within reach.
 CONTACT_EDGE_FALLBACK = True
+# A contact boxed together with its label can also cover the return wire drawn just beside the label
+# (ER21282: a box drawn around each contact doubles as its wiring). A two-port contact sits on one line,
+# so when ports land on parallel lines, keep the line deepest inside the box.
+CONTACT_KEEPS_INNERMOST_LINE = True
 
 FONT_XS = load_font(12)
 FONT_SM = load_font(15)
@@ -279,6 +283,18 @@ def infer_ports_for_symbol(
     if CONTACT_PREFERS_WIRES_INSIDE_BOX and class_name in {"contact_a", "contact_b"} and not four_port:
         inside = [candidate for candidate in candidates if candidate["wire_inside_box"]]
         candidates = inside or candidates
+
+    if CONTACT_KEEPS_INNERMOST_LINE and class_name in {"contact_a", "contact_b"} and not four_port and candidates:
+        def cross(candidate: dict[str, Any]) -> float:
+            return float(candidate["point"][0] if candidate["wire_orientation"] == "v" else candidate["point"][1])
+
+        def depth(candidate: dict[str, Any]) -> float:
+            lo, hi = (x0, x1) if candidate["wire_orientation"] == "v" else (y0, y1)
+            return min(cross(candidate) - lo, hi - cross(candidate))
+
+        deepest = max(candidates, key=depth)
+        candidates = [c for c in candidates
+                      if c["wire_orientation"] != deepest["wire_orientation"] or abs(cross(c) - cross(deepest)) <= 3]
 
     if class_name in {"contact_a", "contact_b"} and (
         contact_min_terminal_rel_x is not None or contact_max_terminal_rel_x is not None

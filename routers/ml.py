@@ -37,6 +37,7 @@ from services.model_service import (
 )
 from services.review_service import project_review_summary
 from services.structure_service import document_structure, get_structure
+from services.training_data_service import class_stats, hard_drawings
 from services.training_service import running_training, serialize_run, start_training
 
 router = APIRouter(prefix="/api/ml", tags=["ml"])
@@ -151,9 +152,11 @@ def _run_inference(payload: InferenceRunRequest, db: Session, *, include_structu
         raise HTTPException(409, "別の解析を実行中です。完了してから再実行してください。")
     try:
         if include_structure:
-            results = run_inference(db, model, projects, conf=payload.conf, include_structure=True)
+            results = run_inference(db, model, projects, conf=payload.conf,
+                                    connector_conf=payload.connector_conf, include_structure=True)
         else:
-            results = run_inference(db, model, projects, conf=payload.conf)
+            results = run_inference(db, model, projects, conf=payload.conf,
+                                    connector_conf=payload.connector_conf)
     except RuntimeError as exc:
         db.rollback()
         raise HTTPException(400, str(exc)) from exc
@@ -166,6 +169,7 @@ def _run_inference(payload: InferenceRunRequest, db: Session, *, include_structu
     return {
         "model": serialize_model(model),
         "conf": payload.conf,
+        "connector_conf": payload.connector_conf,
         "results": results,
         "detection_count": sum(r["detections"] for r in results),
     }
@@ -249,6 +253,18 @@ def ai_import(project_id: int, payload: AnnotationUpdatePayload, db: Session = D
 
 
 # ---------------------------------------------------------------- 学習
+@router.get("/training/class-stats")
+def training_class_stats(db: Session = Depends(get_db)):
+    """学習に使う図面のクラス別の正解件数。件数の少ないクラスを示す（#24）。"""
+    return class_stats(db)
+
+
+@router.get("/training/hard-drawings")
+def training_hard_drawings(db: Session = Depends(get_db)):
+    """AI の検出と直した後の正解の食い違いが大きい完了の図面（難例）。一致の低い順（#24）。"""
+    return hard_drawings(db)
+
+
 @router.post("/training/run")
 def training_run(payload: TrainingRunRequest, db: Session = Depends(get_db)):
     try:

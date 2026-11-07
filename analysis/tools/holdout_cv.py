@@ -274,6 +274,15 @@ def write_fold_dataset(root: Path, drawings: list[dict[str, Any]], train_sheets:
     for i, (png, label_text) in enumerate(extra):
         (images / f"extra_{i:04d}.png").write_bytes(png)
         (labels / f"extra_{i:04d}.txt").write_text(label_text, encoding="utf-8")
+        for degrees in RECIPE.get("rotated_copies", ()):
+            rotated_png, rotated = rotated_copy(png, label_text, degrees)
+            (images / f"extra_{i:04d}_r{degrees}.png").write_bytes(rotated_png)
+            (labels / f"extra_{i:04d}_r{degrees}.txt").write_text(rotated, encoding="utf-8")
+    scan_copies = int(RECIPE.get("synthetic_scan_copies", 0))
+    if scan_copies:
+        from synthetic_scan_data import add_scan_copies
+
+        add_scan_copies(images, labels, index_of["contact_b"], scan_copies, seed=int(RECIPE["seed"]))
     data_yaml = root / "data.yaml"
     data_yaml.write_text(
         json.dumps({"path": str(root), "train": "images/train", "val": "images/train",
@@ -295,6 +304,17 @@ def train_fold(recipe: dict[str, Any], data_yaml: Path, out: Path) -> Path:
         seed=recipe["seed"], deterministic=True, val=False, plots=False, project=str(out), name="train",
         exist_ok=True, verbose=False, workers=recipe.get("workers", 2), **recipe.get("train_args", {}),
     )
+    return weights
+
+
+def fine_tune_weights(source: Path, folds: list[list[str]], fold_index: int) -> Path:
+    """Only a cross-fitted model trained without this fold may initialize its fine-tune."""
+    summary = json.loads((source / "summary.json").read_text(encoding="utf-8"))
+    if summary.get("mode") != "cross-validation" or summary.get("folds") != folds:
+        raise ValueError("fine-tune source must use the same drawing-level cross-validation folds")
+    weights = source / f"fold{fold_index}" / "train" / "weights" / "last.pt"
+    if not weights.is_file():
+        raise FileNotFoundError(weights)
     return weights
 
 
@@ -455,9 +475,13 @@ def main() -> None:
     parser.add_argument("--rescore", action="store_true", help="score the saved predictions under --work without training")
     parser.add_argument("--strict-iou", action="store_true", help="match dots by box IoU too (the pre-2026-11 rule)")
     parser.add_argument("--train-all", action="store_true", help="train one model on every drawing with the recipe (no scoring)")
+    parser.add_argument("--fine-tune-from", type=Path,
+                        help="cross-validation run whose matching fold weights initialize each training fold")
     parser.add_argument("--score-rotated", type=int, choices=(90, 270),
                         help="score the saved fold models on their test drawings turned by this many degrees (no training)")
     args = parser.parse_args()
+    if args.weights and args.fine_tune_from:
+        parser.error("--weights and --fine-tune-from cannot be combined")
 
     recipe = {**DEFAULT_RECIPE, **(json.loads(args.recipe.read_text()) if args.recipe else {})}
     RECIPE = recipe
@@ -471,6 +495,8 @@ def main() -> None:
         score_rotated(args, drawings, args.score_rotated)
         return
     if args.train_all:
+        if args.fine_tune_from:
+            parser.error("--fine-tune-from requires cross-validation, not --train-all")
         extra = read_extra(args.extra_labels, "all")
         data_yaml = write_fold_dataset(args.work / "all" / "dataset", drawings, {d["sheet"] for d in drawings}, extra)
         weights = train_fold(recipe, data_yaml, args.work / "all")
@@ -495,7 +521,10 @@ def main() -> None:
                 raise AssertionError("test drawing leaked into training")
             extra = read_extra(args.extra_labels, f"fold{fold_index}")
             data_yaml = write_fold_dataset(fold_dir / "dataset", drawings, train_sheets, extra)
-            weights = train_fold(recipe, data_yaml, fold_dir)
+            fold_recipe = recipe
+            if args.fine_tune_from:
+                fold_recipe = {**recipe, "model": str(fine_tune_weights(args.fine_tune_from, folds, fold_index))}
+            weights = train_fold(fold_recipe, data_yaml, fold_dir)
         for sheet in test_sheets:
             drawing = by_sheet[sheet]
             pred = predict(weights, recipe, drawing, recipe["conf"])
@@ -522,6 +551,7 @@ def main() -> None:
         "recipe_sha": hashlib.sha256(json.dumps(recipe, sort_keys=True).encode()).hexdigest()[:12],
         "folds": folds,
         "mode": "fixed-weights" if args.weights else "cross-validation",
+        "fine_tune_from": str(args.fine_tune_from) if args.fine_tune_from else None,
         "errors": errors,
         "seconds": round(time.time() - started, 1),
         "per_drawing": rows,

@@ -1,0 +1,27 @@
+{
+  "model": "yolo11s.pt",
+  "imgsz": 1280,
+  "epochs": 25,
+  "batch": 4,
+  "conf": 0.45,
+  "seed": 2609,
+  "drop_wire_bends": true,
+  "rotated_copies": [90, 270],
+  "synthetic_scan_copies": 3,
+  "train_args": {
+    "lr0": 0.001,
+    "lrf": 0.1,
+    "mosaic": 1.0,
+    "translate": 0.1,
+    "scale": 0.2,
+    "fliplr": 0.0,
+    "flipud": 0.0,
+    "degrees": 0.0,
+    "hsv_h": 0.0,
+    "hsv_s": 0.0,
+    "hsv_v": 0.0,
+    "copy_paste": 0.0,
+    "erasing": 0.4
+  },
+  "predict_args": {"max_det": 1000}
+}

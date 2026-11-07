@@ -19,7 +19,11 @@ from PIL import Image, ImageDraw, ImageFont, ImageOps
 DEFAULT_PDF_PATH = Path("private/inputs/reference/reference.pdf")
 DEFAULT_OUT_DIR = Path("private/results/pdf_structure/pdf_structure")
 PDF_ENV_VAR = "TODENSEKKEI_REFERENCE_PDF"
-WIRE_GEOMETRY_REVISION = "horizontal_connected_stroke_v2"
+WIRE_GEOMETRY_REVISION = "vertical_spine_corner_links_v3"
+# When two vertical pieces merge side by side (the union is this many px wider than the wider piece), the
+# longer piece keeps the x position: a text or dot fragment beside a thin wire must not pull the wire's axis
+# off its ink, or the ink check rejects the wire (ER21282). Overlapping pieces still merge as a union.
+MERGE_SPINE_MIN_SPREAD = 6
 
 
 @dataclass(frozen=True)
@@ -507,12 +511,11 @@ def merge_candidate_lines(
         else:
             existing = merged[match_index]
             box = line.box
-            merged[match_index] = Box(
-                min(existing.x0, box.x0),
-                min(existing.y0, box.y0),
-                max(existing.x1, box.x1),
-                max(existing.y1, box.y1),
-            )
+            union = Box(min(existing.x0, box.x0), min(existing.y0, box.y0), max(existing.x1, box.x1), max(existing.y1, box.y1))
+            if orientation == "v" and union.width - max(existing.width, box.width) > MERGE_SPINE_MIN_SPREAD:
+                spine = existing if line_from_box(orientation, existing).length >= line.length else box
+                union = Box(spine.x0, union.y0, spine.x1, union.y1)
+            merged[match_index] = union
 
     return [line_from_box(orientation, box) for box in merged]
 
@@ -756,6 +759,16 @@ def count_line_connections(line: LineSegment, h_lines: list[LineSegment], v_line
     if line.orientation == "h":
         return sum(1 for other in v_lines if line_intersection(line, other) is not None)
     return sum(1 for other in h_lines if line_intersection(other, line) is not None)
+
+
+def corner_ends(h_line: LineSegment, v_lines: list[LineSegment], tolerance: int = 8) -> int:
+    """How many ends of a horizontal line meet the end of a vertical line (a corner of a drawn box)."""
+    y = line_axis(h_line)
+    ends = 0
+    for x in (h_line.box.x0, h_line.box.x1):
+        if any(abs(line_axis(v) - x) <= tolerance and min(abs(v.box.y0 - y), abs(v.box.y1 - y)) <= tolerance for v in v_lines):
+            ends += 1
+    return ends
 
 
 def remove_line_mask_from_binary(binary: np.ndarray, h_lines: list[LineSegment], v_lines: list[LineSegment]) -> Image.Image:
@@ -1267,6 +1280,10 @@ def build_detected_wires(
                 accept, confidence, reason = True, 0.72, "connected_horizontal_wire"
             elif line.length >= 80 and connection_count >= 1 and label_overlap <= 0.12 and text_overlap <= 0.10 and visible_coverage >= 0.45:
                 accept, confidence, reason = True, 0.55, "short_horizontal_branch"
+            elif (line.length >= 40 and label_overlap <= 0.12 and text_overlap <= 0.10 and visible_coverage >= 0.9
+                  and corner_ends(line, merged_v) == 2):
+                # The top of a box drawn around a contact, joining the contact line to the return line (ER21282).
+                accept, confidence, reason = True, 0.5, "short_corner_link"
         else:
             if line.length >= 130 and label_overlap <= 0.78 and text_overlap <= 0.90 and visible_coverage >= 0.35:
                 accept, confidence, reason = True, 0.78 if connection_count else 0.62, "long_vertical_wire"

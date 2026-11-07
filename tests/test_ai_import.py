@@ -9,6 +9,7 @@ from sqlalchemy import text
 
 import database
 from models import StructurePrediction
+from services.ai_candidates import from_structure, plan_import
 from tests.conftest import create_project
 from tests.test_ml_cycle import _predictions_zip
 
@@ -83,6 +84,38 @@ def _apply(symbols, connections, result):
 
 def _ends(connections):
     return {(c["from_symbol_ref"], c["from_terminal_ref"], c["to_symbol_ref"], c["to_terminal_ref"]) for c in connections}
+
+
+def test_card_frame_ports_on_the_same_line_bridge_a_contact_and_connector():
+    def symbol(sid, class_name, y0, y1, ports):
+        return {"id": sid, "class_name": class_name, "bbox": {"x0": 80, "y0": y0, "x1": 160, "y1": y1},
+                "terminals": [_port(f"{sid}-P{i}", 100, y, f"P{i}") for i, y in enumerate(ports, 1)]}
+
+    def end(sid, port):
+        return {"symbol_id": sid, "terminal_ref": f"{sid}-P{port}"}
+
+    structure = {"image_size": {"width": W, "height": H}, "symbols": [
+        symbol("contact", "contact_a", 80, 110, [85, 95]),
+        symbol("contact_2", "contact_a", 110, 130, [115, 125]),
+        symbol("frame", "other", 90, 130, [100, 103]),
+        symbol("connector", "connector", 150, 170, [160]),
+    ], "from_to": {"connections": [
+        {"type": "wire", "from": end("contact", 2), "to": end("frame", 1)},
+        {"type": "internal", "from": end("frame", 1), "to": end("frame", 2)},
+        {"type": "wire", "from": end("frame", 2), "to": end("connector", 1)},
+    ]}}
+    structure["symbols"][2]["bbox"]["x1"] = 145
+    candidates = from_structure(structure, {"contact_a", "other", "connector"})
+    plan = plan_import(candidates, [], [], W, H)
+    assert len(plan.connections) == 3
+    assert any(c["from_symbol_ref"] == c["to_symbol_ref"] == "SYM-0003" for c in plan.connections)
+    structure["symbols"][2]["bbox"]["x1"] = 300
+    broad = from_structure(structure, {"contact_a", "other", "connector"})
+    assert len(plan_import(broad, [], [], W, H).connections) == 2
+    structure["symbols"][2]["bbox"]["x1"] = 145
+    structure["symbols"][1]["status"] = "suppressed_text_zone"
+    suppressed = from_structure(structure, {"contact_a", "other", "connector"})
+    assert len(plan_import(suppressed, [], [], W, H).connections) == 2
 
 
 def test_import_into_empty_editor_adds_terminals_and_wires_as_ai_candidates(client):

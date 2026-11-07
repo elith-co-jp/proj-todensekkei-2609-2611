@@ -9,7 +9,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 
-from terminal_numbers import connector_numbers, contact_numbers
+from terminal_numbers import attach_terminal_numbers, connector_numbers, contact_numbers
+from analysis.relay_links import apply_row
 
 
 def item(value, x0, y0, x1, y1):
@@ -46,6 +47,26 @@ def test_page_reading_fills_an_end_the_symbol_reading_missed():
     symbol = contact([item("9", 503, 250, 509, 259), *LABEL])
     page = [item("9", 503, 250, 509, 259), item("5", 505, 274, 510, 281), item("5", 700, 274, 705, 281)]
     assert contact_numbers(symbol, page) == {"P1": "9", "P2": "5"}
+
+
+def test_relay_table_confirms_a_full_page_ocr_number_cut_by_the_circle_rule():
+    symbol = contact([*LABEL, item("8", 505, 272, 511, 283)])
+    symbol.update(id="s1", label="33LA EV2101A", type="contact_a")
+    page = [item("12", 499, 248, 527, 265), item("8", 505, 272, 511, 283)]
+    attach_terminal_numbers([symbol], page)
+    assert [t.get("name") for t in symbol["terminals"]] == ["1", "8"]
+    row = {"device": "33LA EV2101A", "terminal": "8-12-4", "contact": "a", "position": "10D", "sheet": "本"}
+    apply_row(row, 0, {"device_match": True, "unique": True}, symbol)
+    assert [t.get("name") for t in symbol["terminals"]] == ["12", "8"]
+    assert symbol["relay_row"]["terminal_check"] == "一致"
+    assert symbol["terminals"][0]["name_source"] == "relay_table_verified_ocr"
+
+    another = contact([*LABEL, item("8", 505, 272, 511, 283)])
+    another.update(id="s2", label="33LA EV2101A", type="contact_a")
+    attach_terminal_numbers([another], page)
+    apply_row(row, 0, {"device_match": True, "unique": False}, another)
+    assert [t.get("name") for t in another["terminals"]] == ["1", "8"]
+    assert another["relay_row"]["terminal_check"] == "不一致"
 
 
 def terminal(names_numbers):

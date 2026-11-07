@@ -21,7 +21,7 @@ spec_dir = Path(SPECPATH)
 
 # --- 同梱データ（ビルド済みフロントエンド） -----------------------------------
 datas = [(str(spec_dir / "frontend" / "dist"), "frontend/dist")]
-base_model = spec_dir / ".build-assets" / "yolov8n.pt"
+base_model = spec_dir / ".build-assets" / "yolo11s.pt"
 if not base_model.is_file():
     raise FileNotFoundError("Run python scripts/fetch_base_model.py before packaging")
 datas.append((str(base_model), "models"))

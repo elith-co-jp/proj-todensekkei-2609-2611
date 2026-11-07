@@ -186,7 +186,7 @@ def test_contact_box_covering_its_label_takes_ports_on_its_own_wire_only(monkeyp
 
     found = _contact_ports(draw_contact, monkeypatch)
     assert len(found) >= 2 and {p["wire_id"] for p in found} == {"own"}
-    found = _contact_ports(draw_contact, monkeypatch, CONTACT_PREFERS_WIRES_INSIDE_BOX=False)
+    found = _contact_ports(draw_contact, monkeypatch, CONTACT_PREFERS_WIRES_INSIDE_BOX=False, CONTACT_KEEPS_INNERMOST_LINE=False)
     assert "next" in {p["wire_id"] for p in found}
 
 

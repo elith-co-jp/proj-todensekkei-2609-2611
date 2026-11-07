@@ -110,6 +110,33 @@ def test_line_inside_a_box_without_contacts_stays_a_wire(detector):
     assert [w["id"] for w in detector(original, image, [box])["wires"]] == ["frame_top"]
 
 
+def test_frame_merged_with_the_dash_dot_outline_above_it_is_still_a_card_frame(detector):
+    # ER21276: the solid frame and the dash-dot card outline 7 px above it became one 24 px tall
+    # segment whose centre row has no ink. Every input of the card was joined into one net.
+    image = _io_card_image()
+    draw = ImageDraw.Draw(image)
+    for x in range(100, 600, 24):
+        draw.line((x, 143, x + 14, 143), fill="black", width=2)
+        draw.line((x + 18, 143, x + 19, 143), fill="black", width=2)
+    box = {"class_name": "other", "confidence": 0.9, "bbox": {"x0": 90, "y0": 110, "x1": 610, "y1": 310}}
+    merged = wire("frame_top", "h", 100, 600, 150)
+    merged["bbox"] = {"x0": 100, "y0": 140, "x1": 600, "y1": 172}
+    original = payload(merged, wire("in_1", "v", 50, 200, 200), wire("in_2", "v", 50, 200, 450))
+    result = detector(original, image, [box, _contact(200), _contact(450)])
+    assert [w["id"] for w in result["wires"]] == ["in_1", "in_2"]
+
+
+def test_card_read_from_its_text_needs_no_contacts(detector):
+    # ER21302: DC input cards (+/-) hold no contacts. The card type in the box (DIO-400) marks them.
+    image = _io_card_image()
+    box = {"class_name": "other", "other_kind": "card", "confidence": 0.9,
+           "bbox": {"x0": 90, "y0": 110, "x1": 610, "y1": 310}}
+    original = payload(wire("frame_top", "h", 100, 600, 150), wire("in_1", "v", 50, 200, 200))
+    assert [w["id"] for w in detector(original, image, [box])["wires"]] == ["in_1"]
+    box["other_kind"] = "equipment"
+    assert [w["id"] for w in detector(original, image, [box])["wires"]] == ["frame_top", "in_1"]
+
+
 def ruled_label():
     image = Image.new("RGB", (1000, 700), "white")
     draw = ImageDraw.Draw(image)

@@ -46,13 +46,17 @@ def split_of(sheets: list[str], split: str) -> set[str]:
 
 
 class Ocr:
-    def __init__(self, cache: Path, rec_model: Path | None = None) -> None:
+    def __init__(self, cache: Path, rec_model: Path | None = None, crop_rec_model: Path | None = None) -> None:
         self.cache = cache
         self.cache.mkdir(parents=True, exist_ok=True)
         self.rec_model = rec_model
         # 既定のモデルのキャッシュ名は変えない（過去の結果を使い回す）
         self.tag = f"-{rec_model.stem}" if rec_model else ""
         self._reader = None
+        # 枠ごとの拡大 OCR だけを別のモデルで読む（製品の SEQANNO_OCR_REC_MODEL と同じ使い方）
+        self.crop_rec_model = crop_rec_model
+        self.crop_tag = f"-{crop_rec_model.stem}" if crop_rec_model else self.tag
+        self._crop_reader = None
 
     def reader(self) -> Any:
         if self._reader is None:
@@ -60,6 +64,15 @@ class Ocr:
 
             self._reader = RapidOCR(rec_model_path=str(self.rec_model)) if self.rec_model else RapidOCR()
         return self._reader
+
+    def crop_reader(self) -> Any:
+        if self.crop_rec_model is None:
+            return self.reader()
+        if self._crop_reader is None:
+            from rapidocr_onnxruntime import RapidOCR
+
+            self._crop_reader = RapidOCR(rec_model_path=str(self.crop_rec_model))
+        return self._crop_reader
 
     def page(self, png: bytes) -> list[tx.TextItem]:
         path = self.cache / f"{hashlib.sha256(png).hexdigest()[:16]}_page-{tx.PAGE_OCR_VERSION}{self.tag}.json"
@@ -70,7 +83,7 @@ class Ocr:
         return items
 
     def crops(self, png: bytes, boxes: list[dict[str, float]]) -> list[list[tx.TextItem]]:
-        path = self.cache / f"{hashlib.sha256(png).hexdigest()[:16]}_crop-{tx.CROP_OCR_VERSION}{self.tag}.json"
+        path = self.cache / f"{hashlib.sha256(png).hexdigest()[:16]}_crop-{tx.CROP_OCR_VERSION}{self.crop_tag}.json"
         cached = json.loads(path.read_text()) if path.exists() else {}
         keys = [",".join(str(round(v)) for v in b.values()) for b in boxes]
         missing = [k for k in keys if k not in cached]
@@ -78,7 +91,7 @@ class Ocr:
             image = Image.open(io.BytesIO(png)).convert("RGB")
             for key, box in zip(keys, boxes, strict=True):
                 if key not in cached:
-                    cached[key] = tx.read_crop_text(image, box, self.reader())
+                    cached[key] = tx.read_crop_text(image, box, self.crop_reader())
             path.write_text(json.dumps(cached, ensure_ascii=False))
         return [[{**i, "box": tuple(i["box"])} for i in cached[k]] for k in keys]
 
@@ -506,13 +519,14 @@ def main() -> None:
     parser.add_argument("--label-llm", help="器具番号の形でないラベルを読み直すローカル LLM の URL（Ollama 互換）")
     parser.add_argument("--label-llm-model", default="qwen3.6:35b-a3b-mtp-q4_K_M")
     parser.add_argument("--rec-model", type=Path, help="文字認識モデル（onnx）を既定から差し替えて測る")
+    parser.add_argument("--crop-rec-model", type=Path, help="枠ごとの拡大 OCR だけを、この文字認識モデル（onnx）で読んで測る")
     parser.add_argument("--no-name-ocr", action="store_true", help="日本語の名称・注記を読み直さずに測る（変更前の値）")
     args = parser.parse_args()
 
     _, drawings = load_gold(args.gold)
     chosen = split_of([d["sheet"] for d in drawings], args.split)
     drawings = [d for d in drawings if d["sheet"] in chosen]
-    ocr = Ocr(args.cache, args.rec_model)
+    ocr = Ocr(args.cache, args.rec_model, args.crop_rec_model)
     preds: dict[str, list[dict[str, Any]]] = {}
     if args.cv_preds:
         for path in args.cv_preds.glob("fold*/pred/*.json"):

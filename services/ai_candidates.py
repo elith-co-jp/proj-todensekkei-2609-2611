@@ -26,6 +26,9 @@ POINT_MATCH_PX = 12.0
 # 人が置いた端子から、この距離までの AI の端子は同じ端子とみなす。接点の両端は約 17 px 離れているので、
 # 最も近い端子に寄せれば両端を取り違えない。
 TERMINAL_MATCH_PX = 20.0
+COINCIDENT_OTHER_PORT_MAX_PX = 4.5
+COMPACT_CARD_MAX_ASPECT = 2.5
+COMPACT_CARD_MAX_WIDTH_RATIO = 0.18
 # 端子番号を読めなかった端子の仮の名前。エディタでは手入力と同じ連番にする。
 UNREAD_TERMINAL_NAME = re.compile(r"P\d+")
 
@@ -147,13 +150,31 @@ def from_structure(structure: dict[str, Any], class_keys: Iterable[str]) -> AiCa
         ))
     links: list[tuple[Endpoint, Endpoint]] = [((i, 0), (i, 1)) for i in mirrored]
     seen: set[frozenset[Endpoint]] = {frozenset(link) for link in links}
+    contacts = [s for s in structure.get("symbols", []) if s.get("class_name") in {"contact_a", "contact_b"}
+                and s.get("status") != "suppressed_text_zone" and not (s.get("dot_role") or {}).get("suppressed")]
+    card_frames = {
+        s["id"] for s in structure.get("symbols", []) if s.get("class_name") == "other"
+        and (s["bbox"]["x1"] - s["bbox"]["x0"]) <= COMPACT_CARD_MAX_ASPECT * (s["bbox"]["y1"] - s["bbox"]["y0"])
+        and (s["bbox"]["x1"] - s["bbox"]["x0"]) <= COMPACT_CARD_MAX_WIDTH_RATIO * width
+        and sum(
+            s["bbox"]["x0"] <= (c["bbox"]["x0"] + c["bbox"]["x1"]) / 2 <= s["bbox"]["x1"]
+            and s["bbox"]["y0"] <= (c["bbox"]["y0"] + c["bbox"]["y1"]) / 2 <= s["bbox"]["y1"]
+            for c in contacts
+        ) == 2
+    }
     for conn in (structure.get("from_to") or {}).get("connections", []):
         a = port_of.get((conn["from"]["symbol_id"], conn["from"]["terminal_ref"]))
         b = port_of.get((conn["to"]["symbol_id"], conn["to"]["terminal_ref"]))
         if a is None or b is None or a == b or frozenset((a, b)) in seen:
             continue
         if a[0] == b[0] and symbols[a[0]].class_key not in INTERNAL_LINK_CLASSES:
-            continue
+            symbol = symbols[a[0]]
+            if symbol.class_key != "other" or conn.get("type") != "internal" \
+                    or conn["from"]["symbol_id"] not in card_frames:
+                continue
+            p, q = symbol.terminals[a[1]], symbol.terminals[b[1]]
+            if math.hypot((p.tx - q.tx) * width, (p.ty - q.ty) * height) > COINCIDENT_OTHER_PORT_MAX_PX:
+                continue
         seen.add(frozenset((a, b)))
         links.append((a, b))
     return AiCandidates("structure", tuple(symbols), tuple(links), skipped)

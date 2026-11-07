@@ -167,7 +167,8 @@ def _page_numbers(symbol: dict[str, Any], page_items: list[dict[str, Any]], crop
     return [f for f in inside if not any(c["x0"] - 3 <= f["x"] <= c["x1"] + 3 and abs(c["y"] - f["y"]) <= c["h"] / 2 + 3 for c in crop)]
 
 
-def contact_numbers(symbol: dict[str, Any], page_items: list[dict[str, Any]] | None = None) -> dict[str, str]:
+def contact_numbers(symbol: dict[str, Any], page_items: list[dict[str, Any]] | None = None,
+                    raw_alternatives: dict[str, str] | None = None) -> dict[str, str]:
     """Nearest number to each terminal of a contact, keyed by terminal ref.
 
     Numbers sit on the other side of the contact line from the label; digits on the label side belong to the
@@ -193,8 +194,11 @@ def contact_numbers(symbol: dict[str, Any], page_items: list[dict[str, Any]] | N
         ref = str(terminals[ti].get("ref"))
         if distance <= 30 and ref not in out and fi not in used:
             used.add(fi)
-            out[ref] = numbers[fi]["text"] if label_x is None else _without_end_circle(
+            raw = numbers[fi]["text"]
+            out[ref] = raw if label_x is None else _without_end_circle(
                 numbers[fi], terminals[ti]["point"][0], label_x > terminals[ti]["point"][0])
+            if raw_alternatives is not None and out[ref] != raw:
+                raw_alternatives[ref] = raw
     return out
 
 
@@ -215,10 +219,13 @@ def attach_terminal_numbers(symbols: list[dict[str, Any]], page_items: list[dict
                 terminal["name"] = name
             counts["connectors"] += 1
         elif symbol.get("class_name") in CONTACT_CLASSES:
-            numbers = contact_numbers(symbol, page_items)
+            raw_alternatives: dict[str, str] = {}
+            numbers = contact_numbers(symbol, page_items, raw_alternatives)
             for terminal in symbol.get("terminals") or []:
                 if str(terminal.get("ref")) in numbers:
                     terminal["name"] = numbers[str(terminal.get("ref"))]
+                    if alternative := raw_alternatives.get(str(terminal.get("ref"))):
+                        terminal["ocr_number_alternative"] = alternative
                     counts["contact_terminals"] += 1
     return counts
 

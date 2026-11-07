@@ -14,7 +14,7 @@ from tests.conftest import SAMPLE_ANNOTATION, create_project
 from tests.test_ml_cycle import _predictions_zip, _upload_model
 
 
-def _fake_detector(monkeypatch, *, empty=False, xywhn=None):
+def _fake_detector(monkeypatch, *, empty=False, xywhn=None, confidences=None):
     import services.inference_service as inference
 
     class Array:
@@ -26,7 +26,7 @@ def _fake_detector(monkeypatch, *, empty=False, xywhn=None):
 
     rows = [] if empty else (xywhn or [[0.2, 0.5, 0.1, 0.1]])
     boxes = SimpleNamespace(
-        xywhn=Array(rows), conf=Array([0.9] * len(rows)), cls=Array([0] * len(rows)),
+        xywhn=Array(rows), conf=Array(confidences or [0.9] * len(rows)), cls=Array([0] * len(rows)),
     )
     detector = SimpleNamespace(names={0: "connector"}, predict=lambda *a, **k: [SimpleNamespace(boxes=boxes)])
     monkeypatch.setattr(inference, "ultralytics_available", lambda: True)
@@ -139,6 +139,21 @@ def test_integrated_run_preserves_annotations_and_uses_detector_names(client, mo
     assert client.delete(f"/api/projects/{project_id}").status_code == 200
     with database.SessionLocal() as db:
         assert db.get(StructurePrediction, project_id) is None
+
+
+def test_connector_floor_filters_only_low_confidence_connector(client, monkeypatch):
+    project_id = create_project(client)
+    _upload_model(client)
+    _fake_detector(monkeypatch, xywhn=[[0.2, 0.5, 0.1, 0.1], [0.8, 0.5, 0.1, 0.1]],
+                   confidences=[0.55, 0.7])
+
+    result = client.post("/api/ml/inference/run", json={
+        "project_ids": [project_id], "conf": 0.5, "connector_conf": 0.6,
+    })
+    assert result.status_code == 200, result.text
+    assert result.json()["detection_count"] == 1
+    predictions = client.get(f"/api/ml/projects/{project_id}/predictions").json()
+    assert predictions["count"] == 1
 
 
 @pytest.mark.parametrize("mode", ["inference", "import"])
