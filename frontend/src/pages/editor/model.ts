@@ -20,6 +20,7 @@ export function buildAnnotationPayload(symbols: SymbolBox[], connections: Connec
       note: symbol.note,
       origin: symbol.origin ?? 'manual',
       confidence: symbol.confidence ?? null,
+      attributes: symbol.attributes ?? {},
       terminals: symbol.terminals.map((terminal) => ({
         ref: terminal.ref,
         name: terminal.name,
@@ -29,6 +30,7 @@ export function buildAnnotationPayload(symbols: SymbolBox[], connections: Connec
       })),
     })),
     connections: connections.map((connection) => ({
+      ref: connection.ref ?? null,
       from_symbol_ref: connection.from_symbol_ref,
       from_terminal_ref: connection.from_terminal_ref,
       to_symbol_ref: connection.to_symbol_ref,
@@ -39,6 +41,7 @@ export function buildAnnotationPayload(symbols: SymbolBox[], connections: Connec
       external_ref: connection.external_ref,
       note: connection.note,
       origin: connection.origin ?? 'manual',
+      attributes: connection.attributes ?? {},
     })),
   }
 }
@@ -55,6 +58,14 @@ function isNullableString(value: unknown): value is string | null {
 
 function isFiniteNumber(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value)
+}
+
+function isAttributes(value: unknown) {
+  return (
+    value === undefined ||
+    (isRecord(value) &&
+      Object.values(value).every((v) => v === null || ['string', 'number', 'boolean'].includes(typeof v)))
+  )
 }
 
 function isOrigin(value: unknown) {
@@ -76,6 +87,7 @@ export function isAnnotationPayload(value: unknown): value is AnnotationPayload 
       isNullableString(symbol.note) &&
       isOrigin(symbol.origin) &&
       (symbol.confidence === undefined || symbol.confidence === null || isFiniteNumber(symbol.confidence)) &&
+      isAttributes(symbol.attributes) &&
       symbol.terminals.every(
         (terminal) =>
           isRecord(terminal) &&
@@ -100,7 +112,9 @@ export function isAnnotationPayload(value: unknown): value is AnnotationPayload 
       (connection.kind === 'wire' || connection.kind === 'sheet_ref') &&
       isNullableString(connection.external_ref) &&
       isNullableString(connection.note) &&
-      isOrigin(connection.origin),
+      isOrigin(connection.origin) &&
+      (connection.ref === undefined || isNullableString(connection.ref)) &&
+      isAttributes(connection.attributes),
   )
 }
 
@@ -115,8 +129,25 @@ export function mergeAiImport(symbols: SymbolBox[], connections: Connection[], r
       ...symbols.map((s) => (extra.has(s.ref) ? { ...s, terminals: [...s.terminals, ...extra.get(s.ref)!] } : s)),
       ...result.symbols,
     ],
-    connections: [...connections, ...result.connections],
+    connections: withWireRefs([...connections, ...result.connections]),
   }
+}
+
+function wireRef(n: number) {
+  return `W-${String(n).padStart(4, '0')}`
+}
+
+/** 参照名の無い配線に W-0001 形式の空き番号を振る（保存し直しても属性が同じ配線に付いたままになる） */
+export function withWireRefs(connections: Connection[]): Connection[] {
+  const used = new Set(connections.map((c) => c.ref).filter((r): r is string => Boolean(r)))
+  let n = 0
+  return connections.map((c) => {
+    if (c.ref) return c
+    do n += 1
+    while (used.has(wireRef(n)))
+    used.add(wireRef(n))
+    return { ...c, ref: wireRef(n) }
+  })
 }
 
 export function aiImportAddedCount(result: AiImportResult) {

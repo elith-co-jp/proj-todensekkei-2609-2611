@@ -28,14 +28,18 @@ export function ReviewSummaryCard({
   projectId,
   visible,
   serverSynced,
+  onSplitCoilWires,
 }: {
   projectId: number
   visible: boolean
   serverSynced: boolean
+  /** コイルを通り抜ける配線を分けて端子を付ける（エディタの状態に反映し、保存は自動保存に任せる） */
+  onSplitCoilWires?: () => Promise<void>
 }) {
   const [summary, setSummary] = useState<ReviewSummary | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
+  const [splitting, setSplitting] = useState(false)
   const latestRequest = useRef(0)
 
   const load = useCallback(async () => {
@@ -59,6 +63,17 @@ export function ReviewSummaryCard({
   }, [load, serverSynced, visible])
 
   const line = summary ? statusLine(summary) : null
+  const throughCount = summary?.coils?.issues.filter((issue) => issue.kind === 'through').length ?? 0
+
+  const split = async () => {
+    if (!onSplitCoilWires) return
+    setSplitting(true)
+    try {
+      await onSplitCoilWires()
+    } finally {
+      setSplitting(false)
+    }
+  }
 
   return (
     <section
@@ -101,6 +116,27 @@ export function ReviewSummaryCard({
               <p className="mt-1 font-semibold text-slate-800">{wiringLine('AI端子', summary.wiring.terminals)}</p>
               <p className="mt-1 font-semibold text-slate-800">{wiringLine('AI配線', summary.wiring.connections)}</p>
             </>
+          )}
+          {summary.coils && summary.coils.count > 0 && (
+            <div className="mt-1">
+              <p className={`font-semibold ${summary.coils.issues.length ? 'text-amber-800' : 'text-slate-800'}`}>
+                コイルの配線 {summary.coils.count - summary.coils.issues.length}/{summary.coils.count} 個が取り決めどおり
+              </p>
+              {summary.coils.issues.length > 0 && (
+                <ul aria-label="取り決めに合わないコイル" className="mt-1 list-disc pl-4 text-amber-800">
+                  {summary.coils.issues.map((issue) => (
+                    <li key={issue.symbol_ref}>
+                      {issue.label || issue.symbol_ref}: {issue.message}
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {throughCount > 0 && onSplitCoilWires && (
+                <button type="button" className="btn btn-sm mt-2" onClick={() => void split()} disabled={splitting}>
+                  通り抜ける配線を分けて端子を付ける（{throughCount} 個）
+                </button>
+              )}
+            </div>
           )}
           <p className={`mt-2 ${line.tone}`}>{line.text}</p>
         </>

@@ -7,6 +7,8 @@
 
 from __future__ import annotations
 
+import json
+
 import io
 import os
 from pathlib import Path
@@ -106,6 +108,42 @@ def ensure_class(db: Session, key: str, label: str | None = None, color: str = "
 # --------------------------------------------------------------------------
 # アノテーションの一括置換
 # --------------------------------------------------------------------------
+def dump_attributes(attributes: dict | None) -> str | None:
+    """空の値（null・空文字）を除いた属性の JSON。属性が無ければ None。"""
+    kept = {k.strip(): v for k, v in (attributes or {}).items() if v is not None and v != ""}
+    return json.dumps(kept, ensure_ascii=False, sort_keys=True) if kept else None
+
+
+def load_attributes(raw: str | None) -> dict:
+    try:
+        value = json.loads(raw) if raw else {}
+    except (TypeError, json.JSONDecodeError):
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def connection_refs(requested: list[str | None]) -> list[str]:
+    """配線の参照名。指定があれば保ち、無いか重複していれば W-0001 形式の空き番号を振る。"""
+    used: set[str] = set()
+    refs: list[str | None] = []
+    for ref in requested:
+        ref = (ref or "").strip() or None
+        refs.append(ref if ref and ref not in used else None)
+        if ref:
+            used.add(ref)
+    seq = 0
+    out = []
+    for ref in refs:
+        if ref is None:
+            while True:
+                seq += 1
+                if (ref := f"W-{seq:04d}") not in used:
+                    break
+            used.add(ref)
+        out.append(ref)
+    return out
+
+
 def replace_annotations(db: Session, project: AnnotationProject, payload) -> dict:
     """シンボル・端子・配線をまとめて置き換える。
 
@@ -155,6 +193,7 @@ def replace_annotations(db: Session, project: AnnotationProject, payload) -> dic
             note=(item.note or None),
             origin=(item.origin or "manual"),
             confidence=item.confidence,
+            attributes_json=dump_attributes(item.attributes),
         )
         db.add(sym)
         db.flush()
@@ -174,7 +213,8 @@ def replace_annotations(db: Session, project: AnnotationProject, payload) -> dic
             terminal_by_ref[t_ref] = term
 
     skipped: list[str] = []
-    for c in payload.connections:
+    wire_refs = connection_refs([c.ref for c in payload.connections])
+    for c, wire_ref in zip(payload.connections, wire_refs, strict=True):
         src = symbol_by_ref.get(c.from_symbol_ref)
         dst = symbol_by_ref.get(c.to_symbol_ref)
         if src is None or dst is None:
@@ -198,6 +238,8 @@ def replace_annotations(db: Session, project: AnnotationProject, payload) -> dic
                 external_ref=(c.external_ref or None),
                 note=(c.note or None),
                 origin=c.origin,
+                ref=wire_ref,
+                attributes_json=dump_attributes(c.attributes),
             )
         )
 
@@ -234,6 +276,7 @@ def serialize_project(db: Session, project: AnnotationProject, with_image_meta: 
                 "note": s.note,
                 "origin": s.origin or "manual",
                 "confidence": s.confidence,
+                "attributes": load_attributes(s.attributes_json),
                 "terminals": [
                     {"ref": terminal_ref(s, t), "name": t.name, "tx": t.tx, "ty": t.ty, "origin": t.origin or "manual"}
                     for t in sorted(s.terminals, key=lambda t: t.id)
@@ -249,6 +292,7 @@ def serialize_project(db: Session, project: AnnotationProject, with_image_meta: 
             continue
         out_connections.append(
             {
+                "ref": c.ref,
                 "from_symbol_ref": src.ref,
                 "from_terminal_ref": terminal_ref(src, c.from_terminal) if c.from_terminal else None,
                 "to_symbol_ref": dst.ref,
@@ -259,6 +303,7 @@ def serialize_project(db: Session, project: AnnotationProject, with_image_meta: 
                 "external_ref": c.external_ref,
                 "note": c.note,
                 "origin": c.origin or "manual",
+                "attributes": load_attributes(c.attributes_json),
             }
         )
 

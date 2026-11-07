@@ -1,7 +1,9 @@
-import { useEffect, useMemo, useRef } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Eye, EyeOff, PanelRightClose, Trash2 } from 'lucide-react'
 
-import type { Connection, ProjectDetail, SymbolBox, SymbolClass } from '../../types'
+import { api } from '../../api/client'
+import type { AttributeDefinitions, Connection, ProjectDetail, SymbolBox, SymbolClass } from '../../types'
+import { AttributeEditor } from './AttributeEditor'
 import { INSPECTOR_TABS, SYMBOL_SORTS, sortSymbols } from './model'
 import type { InspectorTab, MetaForm, SaveStatus, SymbolSort } from './model'
 import { MetaPanel } from './MetaPanel'
@@ -44,6 +46,7 @@ export function EditorInspector({
   metaSaveStatus,
   annotationSaveStatus,
   onQueueMetaSave,
+  onSplitCoilWires,
 }: {
   inspectorRef: React.RefObject<HTMLElement | null>
   desktopInspector: boolean
@@ -71,8 +74,22 @@ export function EditorInspector({
   metaSaveStatus: SaveStatus
   annotationSaveStatus: SaveStatus
   onQueueMetaSave: (projectId: number, payload: MetaForm, immediate?: boolean) => void
+  onSplitCoilWires: () => Promise<void>
 }) {
   const symbolListRef = useRef<HTMLDivElement | null>(null)
+  const [attributeDefs, setAttributeDefs] = useState<AttributeDefinitions | null>(null)
+  useEffect(() => {
+    let alive = true
+    // 定義が読めなくても、自由に足した項目は編集できる。
+    api.attributeDefinitions().then((d) => alive && setAttributeDefs(d)).catch(() => undefined)
+    return () => {
+      alive = false
+    }
+  }, [])
+  const symbolDefs = (classKey: string) => [
+    ...(attributeDefs?.symbol.common ?? []),
+    ...(attributeDefs?.symbol.by_class[classKey] ?? []),
+  ]
   const sortedSymbols = useMemo(
     () => sortSymbols(symbols, symbolSort, classes.map((c) => c.key)),
     [symbols, symbolSort, classes],
@@ -328,6 +345,14 @@ export function EditorInspector({
                             </div>
                           ))}
                         </div>
+                        <AttributeEditor
+                          idPrefix={`attr-${s.ref}`}
+                          defs={symbolDefs(s.class_key)}
+                          value={s.attributes}
+                          onChange={(next) =>
+                            setSymbols((prev) => prev.map((x) => (x.ref === s.ref ? { ...x, attributes: next } : x)))
+                          }
+                        />
                       </div>
                     )}
                   </div>
@@ -376,6 +401,7 @@ export function EditorInspector({
                     </span>
                     {c.origin === 'inference' && <AiBadge />}
                   </button>
+                  {c.ref && <span className="font-mono text-[10px] text-slate-400">{c.ref}</span>}
                   <button
                     type="button"
                     className="btn btn-sm btn-danger"
@@ -425,6 +451,18 @@ export function EditorInspector({
                     }}
                   />
                 )}
+                {selectedConn === i && (
+                  <div className="mt-1.5">
+                    <AttributeEditor
+                      idPrefix={`attr-wire-${i}`}
+                      defs={attributeDefs?.wire ?? []}
+                      value={c.attributes}
+                      onChange={(next) =>
+                        setConnections((prev) => prev.map((x, j) => (j === i ? { ...x, attributes: next } : x)))
+                      }
+                    />
+                  </div>
+                )}
               </div>
             ))}
           </div>
@@ -444,6 +482,7 @@ export function EditorInspector({
             saveStatus={metaSaveStatus}
             annotationSaveStatus={annotationSaveStatus}
             onQueueSave={onQueueMetaSave}
+            onSplitCoilWires={onSplitCoilWires}
           />
         </div>
       </aside>

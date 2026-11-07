@@ -11,6 +11,7 @@ import {
   Power,
   Sparkles,
   X,
+  Zap,
 } from 'lucide-react'
 
 import { api } from './api/client'
@@ -22,6 +23,7 @@ import { isEditorPath } from './utils/workspace'
 const NAVIGATION = [
   { to: '/', label: '図面ワークスペース', caption: '登録・進捗・編集', icon: LayoutDashboard, end: true, tone: 'bg-blue-100 text-blue-700' },
   { to: '/ml', label: 'AI 改善サイクル', caption: '推論・学習・モデル', icon: Sparkles, end: false, tone: 'bg-violet-100 text-violet-700' },
+  { to: '/circuit', label: '回路シミュレーション', caption: 'On/Off の動作確認', icon: Zap, end: false, tone: 'bg-rose-100 text-rose-700' },
   { to: '/export', label: 'データ受け渡し', caption: '出力・取り込み', icon: Download, end: false, tone: 'bg-emerald-100 text-emerald-700' },
   { to: '/guide', label: '操作ガイド', caption: '手順・ショートカット', icon: BookOpen, end: false, tone: 'bg-amber-100 text-amber-700' },
 ]

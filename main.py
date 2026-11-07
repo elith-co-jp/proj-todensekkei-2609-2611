@@ -19,7 +19,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from database import init_db
-from routers import annotations, ml
+from routers import annotations, attributes, circuit, ml
 from runtime import resource_base
 
 _DESKTOP_MODE = os.environ.get("SEQANNO_DESKTOP") == "1"
@@ -84,6 +84,8 @@ app.add_middleware(
 
 app.include_router(annotations.router)
 app.include_router(ml.router)
+app.include_router(circuit.router)
+app.include_router(attributes.router)
 
 
 _LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1"}

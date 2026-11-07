@@ -10,6 +10,7 @@ import EditorPage from './EditorPage'
 
 const apiMocks = vi.hoisted(() => ({
   aiImport: vi.fn(),
+  attributeDefinitions: vi.fn(),
   exportProject: vi.fn(),
   getProject: vi.fn(),
   getPredictions: vi.fn(),
@@ -160,6 +161,10 @@ beforeEach(() => {
     toJSON: () => ({}),
   })
   apiMocks.listClasses.mockResolvedValue([symbolClass])
+  apiMocks.attributeDefinitions.mockResolvedValue({
+    symbol: { common: [{ key: 'maker', label: 'メーカー', type: 'text', unit: null }], by_class: {} },
+    wire: [{ key: 'length_m', label: '長さ', type: 'number', unit: 'm' }],
+  })
   apiMocks.listProjects.mockResolvedValue([row(1), row(2)])
   apiMocks.getProject.mockImplementation(async (id: number) => project(id))
   apiMocks.saveAnnotations.mockResolvedValue({ symbol_count: 2, connection_count: 0, skipped: [] })
@@ -935,6 +940,25 @@ describe('EditorPage 学習への反映', () => {
 
     expect(await findByText('AI端子 40 → 採用 35・削除 5・手動追加 2')).toBeTruthy()
     expect(await findByText('AI配線 30（未取り込み）')).toBeTruthy()
+  })
+
+  it('コイルの配線の取り決めに合わないコイルを一覧に出す', async () => {
+    apiMocks.getReviewSummary.mockResolvedValue({
+      ...reviewSummary,
+      coils: {
+        count: 3,
+        issues: [
+          { symbol_ref: 'SYM-0004', class_key: 'relay_coil', label: '43U AMESD', kind: 'through',
+            message: '配線がコイルの中を通り抜けています。コイルの上下（左右）に端子を付け、配線を分けてください' },
+        ],
+      },
+    })
+    const { findByRole, findByText } = renderEditor()
+    fireEvent.click(await findByRole('tab', { name: '図面情報' }))
+
+    expect(await findByText('コイルの配線 2/3 個が取り決めどおり')).toBeTruthy()
+    const list = await findByRole('list', { name: '取り決めに合わないコイル' })
+    expect(list.textContent).toContain('43U AMESD: 配線がコイルの中を通り抜けています')
   })
 })
 

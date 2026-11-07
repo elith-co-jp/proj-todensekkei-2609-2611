@@ -7,6 +7,7 @@ reference connections are never used as inputs to production inference.
 from __future__ import annotations
 
 import logging
+import os
 import sys
 import tempfile
 from pathlib import Path
@@ -29,6 +30,7 @@ if str(_TOOLS) not in sys.path:
 from analyze_pdf_structure import analyze_image, make_binary_mask
 from build_e2e_demo_outputs import build_final_output_from_analysis
 from dot_roles import annotate_dots
+from faint_lines import bridge_faint_wires
 from filter_wire_decorations import filter_wire_decorations, rapidocr_text_confirmation
 from revision_clouds import detect_clouds, erase_clouds
 from run_yolo_e2e_pipeline import (
@@ -160,6 +162,9 @@ def analyze_detections(
     # リレー表の「本」の行を行列の位置の接点に結び付ける（#40 #44）。接点の種類を表に合わせて直すので from-to より先。
     relay_row_counts = link_relay_rows(text_result, payload["symbols"], width, height) if text_result else None
     payload["from_to"] = build_direct_from_to(payload, source_image=image)
+    # 細い線は 150 dpi のスキャンで途切れた薄い灰色になり、配線から落ちる。一直線に並んだ未接続の端子の間に
+    # 薄い線があれば配線として足す（DD-0007 §4.22）。
+    faint_wires = bridge_faint_wires(payload, image) if os.environ.get("SEQANNO_FAINT_LINES", "1") != "0" else []
     for symbol in symbols:
         symbol.pop("text_items", None)
     payload["symbols"] = symbols
@@ -201,6 +206,7 @@ def analyze_detections(
         },
         "text_zone_suppressed_count": len(symbols) - len(wired_symbols),
         "circle_review": circle_review,
+        "faint_wire_count": len(faint_wires),
         "terminal_source": "inferred", "annotation_assistance": False,
     })
     return payload

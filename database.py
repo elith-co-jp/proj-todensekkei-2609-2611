@@ -52,6 +52,13 @@ def _migrate_columns() -> None:
         statements.append(
             "ALTER TABLE annotation_symbols ADD COLUMN origin VARCHAR(20) NOT NULL DEFAULT 'manual'"
         )
+    if "attributes_json" not in symbols_cols:
+        statements.append("ALTER TABLE annotation_symbols ADD COLUMN attributes_json TEXT")
+    connection_cols = {c["name"] for c in inspector.get_columns("connections")}
+    if "ref" not in connection_cols:
+        statements.append("ALTER TABLE connections ADD COLUMN ref VARCHAR(50)")
+    if "attributes_json" not in connection_cols:
+        statements.append("ALTER TABLE connections ADD COLUMN attributes_json TEXT")
     if "confidence" not in symbols_cols:
         statements.append(
             "ALTER TABLE annotation_symbols ADD COLUMN confidence FLOAT"
