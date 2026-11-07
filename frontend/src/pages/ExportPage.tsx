@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Activity, AlertTriangle, CheckCircle2, Download, Upload, XCircle } from 'lucide-react'
 
 import { api } from '../api/client'
+import { AttributeJsonPanel } from '../components/AttributeJsonPanel'
 import { LoadingOverlay } from '../components/LoadingOverlay'
 import type { ProjectRow } from '../types'
 
@@ -208,6 +209,8 @@ export default function ExportPage() {
           </button>
         </div>
       )}
+
+      <AttributeJsonPanel projectIds={ids.size ? Array.from(ids) : rows.map((r) => r.id)} />
 
       <div className="grid gap-5 xl:grid-cols-2">
         <div className="space-y-5">

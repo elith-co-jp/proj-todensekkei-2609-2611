@@ -40,6 +40,8 @@ from models import (
 from services.annotation_service import (
     class_map_by_key,
     classes_ordered,
+    connection_refs,
+    dump_attributes,
     ensure_class,
     image_path,
     serialize_project,
@@ -396,6 +398,7 @@ def _restore_project_from_bundle(db: Session, proj: dict, images: dict[str, byte
             note=s.get("note"),
             origin=s.get("origin") or "manual",
             confidence=s.get("confidence"),
+            attributes_json=dump_attributes(s.get("attributes")),
         )
         db.add(sym)
         db.flush()
@@ -412,7 +415,8 @@ def _restore_project_from_bundle(db: Session, proj: dict, images: dict[str, byte
             db.flush()
             term_by_ref[t.get("ref") or f"{sym.ref}-T{len(term_by_ref) + 1}"] = term
 
-    for c in proj.get("connections", []):
+    wire_refs = connection_refs([c.get("ref") for c in proj.get("connections", [])])
+    for c, wire_ref in zip(proj.get("connections", []), wire_refs, strict=True):
         src = sym_by_ref.get(c.get("from_symbol_ref"))
         dst = sym_by_ref.get(c.get("to_symbol_ref"))
         if src is None or dst is None:
@@ -432,6 +436,8 @@ def _restore_project_from_bundle(db: Session, proj: dict, images: dict[str, byte
                 external_ref=c.get("external_ref"),
                 note=c.get("note"),
                 origin=c.get("origin") or "manual",
+                ref=wire_ref,
+                attributes_json=dump_attributes(c.get("attributes")),
             )
         )
     return p

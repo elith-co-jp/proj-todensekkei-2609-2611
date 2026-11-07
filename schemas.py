@@ -4,11 +4,27 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 SymbolOrigin = Literal["manual", "inference"]
 ProjectStatus = Literal["draft", "review", "done"]
 ConnectionKind = Literal["wire", "sheet_ref"]
+# 属性の値。数値・文字・真偽のどれか。空（null）は「未入力」として保存しない。
+AttributeValue = str | int | float | bool | None
+ATTRIBUTE_MAX_KEYS = 100
+ATTRIBUTE_KEY_MAX = 64
+ATTRIBUTE_TEXT_MAX = 1000
+
+
+def check_attributes(value: dict[str, AttributeValue]) -> dict[str, AttributeValue]:
+    if len(value) > ATTRIBUTE_MAX_KEYS:
+        raise ValueError(f"属性は {ATTRIBUTE_MAX_KEYS} 個までです")
+    for key, item in value.items():
+        if not key.strip() or len(key) > ATTRIBUTE_KEY_MAX:
+            raise ValueError(f"属性名は 1〜{ATTRIBUTE_KEY_MAX} 文字にしてください: {key!r}")
+        if isinstance(item, str) and len(item) > ATTRIBUTE_TEXT_MAX:
+            raise ValueError(f"属性 {key} の値は {ATTRIBUTE_TEXT_MAX} 文字までです")
+    return value
 
 
 # ---------- クラスマスタ ----------
@@ -48,9 +64,13 @@ class SymbolPayload(BaseModel):
     origin: SymbolOrigin = "manual"  # manual / inference（AI 推論由来）
     confidence: float | None = Field(default=None, ge=0.0, le=1.0)
     terminals: list[TerminalPayload] = []
+    attributes: dict[str, AttributeValue] = {}
+
+    _attributes = field_validator("attributes")(check_attributes)
 
 
 class ConnectionPayload(BaseModel):
+    ref: str | None = None  # W-0001。省略時はサーバで採番
     from_symbol_ref: str
     from_terminal_ref: str | None = None
     to_symbol_ref: str
@@ -61,6 +81,9 @@ class ConnectionPayload(BaseModel):
     external_ref: str | None = None
     note: str | None = None
     origin: SymbolOrigin = "manual"
+    attributes: dict[str, AttributeValue] = {}
+
+    _attributes = field_validator("attributes")(check_attributes)
 
 
 class AnnotationUpdatePayload(BaseModel):
