@@ -185,7 +185,9 @@ def wire_nodes(
             if key is not None:
                 root = ai_node.get(endpoint_key(s["ref"], t["ref"]))
                 ai_of_gold.setdefault(key, set()).add(root or endpoint_key(s["ref"], t["ref"]))
-    out = {"recall": Counter(), "precision": Counter()}
+    out: dict[str, Any] = {"recall": Counter(), "precision": Counter(), "missed": [], "wrong": []}
+    imported_pos = {endpoint_key(s["ref"], t["ref"]): (t["tx"] * width, t["ty"] * height)
+                    for s in symbols for t in s["terminals"]}
 
     def recalled(edge: frozenset[str]) -> bool:
         a, b = tuple(edge)
@@ -199,7 +201,10 @@ def wire_nodes(
         if a in gold_pos and b in gold_pos and any(_crosses(gold_pos[a], gold_pos[b], box) for box in unwired_boxes):
             out["recall"]["conv_through_unwired"] += 1
             continue
-        out["recall"].update({"conv_gold": 1, "conv_hit": int(recalled(edge))})
+        hit = recalled(edge)
+        out["recall"].update({"conv_gold": 1, "conv_hit": int(hit)})
+        if not hit:
+            out["missed"].append({"gold": [a, b], "points": [gold_pos.get(a), gold_pos.get(b)]})
     for c in ai_wires:
         a, b = key_of(c["from_symbol_ref"], c["from_terminal_ref"]), key_of(c["to_symbol_ref"], c["to_terminal_ref"])
         if a is None or b is None or not {parse_member(a)[0], parse_member(b)[0]} <= wired:
@@ -207,6 +212,10 @@ def wire_nodes(
             continue
         right = a == b or (gold_node.get(a) is not None and gold_node.get(a) == gold_node.get(b))
         out["precision"].update({"judged": 1, "right": int(right)})
+        if not right:
+            out["wrong"].append({"gold": [a, b], "points": [
+                imported_pos.get(endpoint_key(c["from_symbol_ref"], c["from_terminal_ref"])),
+                imported_pos.get(endpoint_key(c["to_symbol_ref"], c["to_terminal_ref"]))]})
     return out
 
 
@@ -307,7 +316,8 @@ def score_drawing(drawing: dict[str, Any], structure: dict[str, Any], class_keys
         "connections": {"tp": len(hit), "fp": sum(fp.values()), "fn": len(edges - hit)},
         "net_pairs": {"tp": len(gold_net_pairs & import_net_pairs), "fp": len(import_net_pairs - gold_net_pairs),
                       "fn": len(gold_net_pairs - import_net_pairs)},
-        "wire_nodes": {k: dict(v) for k, v in nodes.items()},
+        "wire_nodes": {"recall": dict(nodes["recall"]), "precision": dict(nodes["precision"])},
+        "wire_errors": {"missed": nodes["missed"], "wrong": nodes["wrong"]},
         "not_judged": not_judged,
         "fp_reasons": dict(fp),
         "fn_reasons": dict(fn),

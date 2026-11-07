@@ -115,8 +115,8 @@ def summarize_wiring(
     }
 
 
-def project_review_summary(db: Session, project: AnnotationProject) -> dict:
-    """構造解析の結果があれば、取り込みで候補にしたシンボル（重複した黒丸などを除いたもの）と比べる。"""
+def review_boxes(db: Session, project: AnnotationProject) -> tuple[list[Box], list[SavedSymbol], AiCandidates | None]:
+    """AI の検出と保存済みシンボル。構造解析の結果があれば、取り込みで候補にしたシンボル（重複した黒丸などを除いたもの）を使う。"""
     key_by_id = {c.id: c.key for c in classes_ordered(db)}
 
     def box(row) -> Box:
@@ -137,6 +137,12 @@ def project_review_summary(db: Session, project: AnnotationProject) -> dict:
     else:
         predictions = [box(p) for p in project.predictions if p.kind == "symbol"]
     symbols: list[SavedSymbol] = [{**box(s), "origin": s.origin} for s in project.symbols]
+    return predictions, symbols, analysis
+
+
+def project_review_summary(db: Session, project: AnnotationProject) -> dict:
+    """AI 検出を人がどう確認したか（採用・種別修正・削除・手動追加）と、端子・配線の確認状況。"""
+    predictions, symbols, analysis = review_boxes(db, project)
     wiring = None
     if analysis is not None:
         saved = serialize_project(db, project, with_image_meta=False)

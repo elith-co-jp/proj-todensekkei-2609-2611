@@ -280,7 +280,7 @@ def test_training_runs_list(client):
 def test_frozen_training_uses_bundled_base_model(tmp_path, monkeypatch):
     from services import training_service
 
-    bundled = tmp_path / "models" / "yolov8n.pt"
+    bundled = tmp_path / "models" / "yolo11s.pt"
     bundled.parent.mkdir()
     bundled.write_bytes(b"test weight")
     monkeypatch.setattr(training_service, "resource_base", lambda: tmp_path)
