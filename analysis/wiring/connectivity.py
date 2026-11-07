@@ -301,53 +301,47 @@ def _wire_ends_at_node(wires: list[dict[str, Any]], node_x: float, node_y: float
     return False
 
 
-def conductive_junction_nodes(payload: dict[str, Any]) -> set[str]:
-    quality = payload.get("quality", {})
-    config = quality.get("terminal_linking", {})
-    policy = str(config.get("junction_node_policy") or "all")
-    if policy != "explicit":
-        wires = list(payload.get("wires", []))
-        symbols = list(payload.get("symbols", []))
-        classes = set(config.get("junction_node_classes") or [])
-        threshold = float(config.get("junction_node_threshold") or 24.0)
-        junction_points = []
-        for symbol in symbols:
-            if str(symbol.get("class_name") or symbol.get("type") or "") not in classes:
-                continue
-            center = symbol.get("center")
-            if not center:
-                box = symbol.get("bbox") or {}
-                center = [
-                    (float(box.get("x0", 0)) + float(box.get("x1", 0))) / 2,
-                    (float(box.get("y0", 0)) + float(box.get("y1", 0))) / 2,
-                ]
-            junction_points.append(tuple(center))
-        result = set()
-        for node in payload.get("nodes", []):
-            if str(node.get("type") or "") != "junction":
-                continue
-            point = node_point(node)
-            if _wire_ends_at_node(wires, point[0], point[1]) or any(
-                point_distance(point, junction_point) <= threshold
-                for junction_point in junction_points
-            ):
-                result.add(str(node["id"]))
-        return result
+def _symbol_center(symbol: dict[str, Any]) -> tuple[float, float]:
+    center = symbol.get("center")
+    if center:
+        return float(center[0]), float(center[1])
+    box = symbol.get("bbox") or {}
+    return (float(box.get("x0", 0)) + float(box.get("x1", 0))) / 2, (float(box.get("y0", 0)) + float(box.get("y1", 0))) / 2
 
+
+def dotted_junction_nodes(nodes: list[dict[str, Any]], dots: list[tuple[float, float]], threshold: float) -> set[str]:
+    """黒丸（分岐点）が付く交点。黒丸は 1 つの点に描くので、1 つの黒丸がつなぐのは threshold 以内で最も近い交点だけ。
+
+    間隔の狭い平行線（ER21277 の 11〜12 px おきの横線）では、黒丸から threshold 以内に黒丸の無い交差も入る。
+    範囲内をすべてつなぐと、その交差で別々の配線が 1 つになった。
+    """
+    crossings = [(str(node["id"]), node_point(node)) for node in nodes if str(node.get("type") or "") == "junction"]
+    result = set()
+    for dot in dots:
+        near = [(point_distance(point, dot), node_id) for node_id, point in crossings if point_distance(point, dot) <= threshold]
+        if near:
+            result.add(min(near)[1])
+    return result
+
+
+def conductive_junction_nodes(payload: dict[str, Any]) -> set[str]:
+    """電気的につながる交点: 黒丸の付く交点と、（policy が explicit でなければ）配線が終わる T 字の交点。"""
+    config = payload.get("quality", {}).get("terminal_linking", {})
+    policy = str(config.get("junction_node_policy") or "all")
     classes = set(config.get("junction_node_classes") or [])
     threshold = float(config.get("junction_node_threshold") or 24.0)
-    junction_symbols = [
-        symbol
-        for symbol in payload.get("symbols", [])
+    nodes = list(payload.get("nodes", []))
+    dots = [
+        _symbol_center(symbol) for symbol in payload.get("symbols", [])
         if str(symbol.get("class_name") or symbol.get("type") or "") in classes
     ]
-    result = set()
-    for node in payload.get("nodes", []):
-        if str(node.get("type") or "") != "junction":
-            continue
-        point = node_point(node)
-        if any(point_distance(point, symbol.get("center") or [0, 0]) <= threshold for symbol in junction_symbols):
-            result.add(str(node["id"]))
+    result = dotted_junction_nodes(nodes, dots, threshold)
+    if policy != "explicit":
+        wires = list(payload.get("wires", []))
+        result |= {
+            str(node["id"]) for node in nodes
+            if str(node.get("type") or "") == "junction" and _wire_ends_at_node(wires, *node_point(node))
+        }
     return result
 
 
