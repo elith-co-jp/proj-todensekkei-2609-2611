@@ -71,6 +71,23 @@ def test_contact_label_without_unit_follows_the_only_coil_with_that_number():
     assert next(e for e in circuit.elements if e.symbol_ref == "XA").device == "X R100"
 
 
+def test_contact_read_with_letter_o_for_zero_follows_the_coil():
+    """OCR が 0 を O と読んだ接点（20VO）も、同じ器具番号のコイル（20V0）で開閉する。"""
+    page = self_holding_page()
+    for s in page["symbols"]:
+        if s["ref"] in ("XA", "XL", "XC"):
+            s["label"] = "X20V0 R100" if s["ref"] == "XC" else "X20VO R1OO"
+    circuit = build_circuit([page])
+    assert {e.device for e in circuit.elements if e.symbol_ref in ("XA", "XL")} == {"X20V0 R100"}
+    assert "X20VO R1OO" not in circuit.inputs
+
+
+def test_sheet_reference_without_space_is_not_part_of_the_device():
+    assert circuit_model.device_key("83D-2 ESD(ER21271)") == "83D-2 ESD"
+    assert circuit_model.device_key("33HB FV2306 (ER21236)") == "33HB FV2306"
+    assert circuit_model.device_key("63L (ER21292) P2193") == "63L P2193"
+
+
 def test_buses_with_names_are_separate_supplies_across_pages():
     pages = []
     for pid in (1, 2):

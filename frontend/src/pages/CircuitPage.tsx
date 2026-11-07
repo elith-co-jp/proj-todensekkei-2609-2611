@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { AlertTriangle, Download, Loader2, RotateCcw, Zap } from 'lucide-react'
 
 import { api } from '../api/client'
@@ -8,6 +9,11 @@ const ENGINE_LABEL = { ngspice: 'SPICE（ngspice）で解いています', built
 
 function sheetName(row: ProjectRow) {
   return row.sheet_no || row.name
+}
+
+/** 該当の記号を選んだ状態でエディタを開くリンク（直したら回路を組み直す） */
+function editorLink(projectId: number, symbolRef: string) {
+  return `/projects/${projectId}?symbol=${encodeURIComponent(symbolRef)}`
 }
 
 export default function CircuitPage() {
@@ -178,7 +184,7 @@ export default function CircuitPage() {
               <section className="card p-4" aria-label="回路にできなかった箇所">
                 <div className="mb-1 text-sm font-black">確認が必要な箇所（{summary.diagnostics.length}）</div>
                 <p className="mb-2 text-[11px] leading-5 text-slate-500">
-                  アノテーションを直すと、シミュレーションに反映されます。
+                  アノテーションを直して「回路を組んでシミュレーションする」を押し直すと反映されます。
                 </p>
                 <ul className="thin-scroll max-h-64 space-y-1 overflow-auto text-[11px] text-slate-600">
                   {summary.diagnostics.map((d, i) => (
@@ -186,6 +192,11 @@ export default function CircuitPage() {
                       {d.page && <b>{d.page} </b>}
                       {d.symbol_ref && <span className="font-mono text-slate-400">{d.symbol_ref} </span>}
                       {d.message}
+                      {d.project_id != null && d.symbol_ref && (
+                        <Link className="ml-1 font-bold text-cyan-700 underline" to={editorLink(d.project_id, d.symbol_ref)}>
+                          エディタで直す
+                        </Link>
+                      )}
                     </li>
                   ))}
                 </ul>

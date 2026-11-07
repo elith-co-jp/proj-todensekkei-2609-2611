@@ -52,6 +52,7 @@ class Element:
     symbol_ref: str
     label: str
     device: str | None = None   # コイル・接点の器具番号（開閉の対応づけ）
+    resistance: float = R_LOAD  # 負荷の抵抗。属性 coil_resistance_ohm / resistance_ohm があればその値（DD-0010）
 
 
 @dataclass
@@ -66,9 +67,18 @@ class Circuit:
 
 
 def device_key(label: str | None) -> str | None:
-    """「33HB FV2306 (ER21236)」→「33HB FV2306」。括弧の参照先シートは除く。"""
-    tokens = [t for t in re.split(r"\s+", (label or "").strip()) if t and not t.startswith("(")]
+    """「33HB FV2306 (ER21236)」「83D-2 ESD(ER21271)」→ 器具番号と機器名。括弧の参照先シートは空白が無くても除く。"""
+    tokens = [t for t in re.split(r"\s+", re.sub(r"[(（][^)）]*[)）]?", " ", label or "").strip()) if t]
     return " ".join(tokens[:2]) if tokens else None
+
+
+# OCR が取り違えやすい字（O と 0、I と 1、B と 8）。器具番号はこの違いだけの別の器具を使わない。
+_CONFUSABLE = str.maketrans({"O": "0", "I": "1", "B": "8"})
+
+
+def canonical_device(device: str) -> str:
+    """器具番号の照合用の形。「20VO HV2111」と「20V0 HV2111」を同じ器具とみなす。"""
+    return device.upper().translate(_CONFUSABLE)
 
 
 def _bus_side(text: str | None) -> str | None:
@@ -83,6 +93,17 @@ def _bus_side(text: str | None) -> str | None:
 
 def _spice_name(name: str) -> str:
     return re.sub(r"[^0-9A-Za-z_]", "_", name)
+
+
+def _load_resistance(attributes: dict[str, Any]) -> float:
+    for key in ("coil_resistance_ohm", "resistance_ohm"):
+        try:
+            value = float(attributes.get(key))
+        except (TypeError, ValueError):
+            continue
+        if value > 0:
+            return value
+    return R_LOAD
 
 
 def build_circuit(pages: list[dict[str, Any]], bus_texts: dict[int, list[dict[str, Any]]] | None = None) -> Circuit:
@@ -197,6 +218,8 @@ def build_circuit(pages: list[dict[str, Any]], bus_texts: dict[int, list[dict[st
 
     elements: list[Element] = []
     coils: dict[str, list[Element]] = defaultdict(list)
+    # 照合用の形 → 最初に見つけたコイルの器具番号。O と 0 だけが違うコイル・接点を同じリレーにする。
+    coil_by_canonical: dict[str, str] = {}
     for (pid, ref), s in sorted(symbols.items(), key=lambda kv: (kv[0][0], kv[0][1])):
         cls, terms = s["class_key"], s.get("terminals") or []
         kind = CONTACT_CLASSES.get(cls) or ("load" if cls in LOAD_CLASSES else None)
@@ -208,18 +231,24 @@ def build_circuit(pages: list[dict[str, Any]], bus_texts: dict[int, list[dict[st
             continue
         a, b = node_of[(pid, ref, terms[0]["ref"])], node_of[(pid, ref, terms[1]["ref"])]
         element = Element(f"{'SW' if kind in ('a', 'b') else 'R'}_{pid}_{_spice_name(ref)}", kind, a, b, pid, ref,
-                          s.get("label") or "", device_key(s.get("label")) if cls in CONTACT_CLASSES or cls == "relay_coil" else None)
+                          s.get("label") or "", device_key(s.get("label")) if cls in CONTACT_CLASSES or cls == "relay_coil" else None,
+                          _load_resistance(s.get("attributes") or {}))
         elements.append(element)
         if cls == "relay_coil" and element.device:
+            element.device = coil_by_canonical.setdefault(canonical_device(element.device), element.device)
             coils[element.device].append(element)
 
     # ラベルに機器名が無い接点（「33LA」）は、器具番号が同じコイルが 1 つだけなら、そのコイルで開閉する。
     by_number: dict[str, list[str]] = defaultdict(list)
     for dev in coils:
-        by_number[dev.split()[0]].append(dev)
+        by_number[canonical_device(dev.split()[0])].append(dev)
     for e in elements:
-        if e.kind in ("a", "b") and e.device and e.device not in coils and len(by_number.get(e.device.split()[0], [])) == 1:
-            e.device = by_number[e.device.split()[0]][0]
+        if e.kind not in ("a", "b") or not e.device or e.device in coils:
+            continue
+        if canonical_device(e.device) in coil_by_canonical:
+            e.device = coil_by_canonical[canonical_device(e.device)]
+        elif len(by_number.get(canonical_device(e.device.split()[0]), [])) == 1:
+            e.device = by_number[canonical_device(e.device.split()[0])][0]
     page_names = {p["id"]: p.get("sheet_no") or p.get("name") or str(p["id"]) for p in pages}
     inputs: set[str] = set()
     for e in elements:
@@ -249,7 +278,7 @@ def netlist(circuit: Circuit, closed: dict[str, bool], title: str = "TodenYOLO c
             # 開閉を決めた接点は抵抗にする（素子名の先頭の R が抵抗を表す）。
             lines += [comment, f"R{e.name} {_spice_name(e.a)} {_spice_name(e.b)} {R_ON if closed.get(e.name) else R_OFF:g}"]
         else:
-            lines += [comment, f"{e.name} {_spice_name(e.a)} {_spice_name(e.b)} {R_LOAD:g}"]
+            lines += [comment, f"{e.name} {_spice_name(e.a)} {_spice_name(e.b)} {e.resistance:g}"]
     lines += [f"R_LEAK_{_spice_name(n)} {_spice_name(n)} 0 {R_LEAK:g}" for n in circuit.nodes if n != GROUND]
     lines += [".op", ".end"]
     return "\n".join(lines) + "\n"
@@ -390,7 +419,7 @@ def export_netlist(circuit: Circuit, inputs: dict[str, bool] | None = None) -> s
         if e.kind in ("a", "b"):
             lines.append(f"S{e.name} {_spice_name(e.a)} {_spice_name(e.b)} {control[e.device]} 0 SW_{e.kind.upper()}")
         else:
-            lines.append(f"{e.name} {_spice_name(e.a)} {_spice_name(e.b)} {R_LOAD:g}")
+            lines.append(f"{e.name} {_spice_name(e.a)} {_spice_name(e.b)} {e.resistance:g}")
     lines += [f"R_LEAK_{_spice_name(n)} {_spice_name(n)} 0 {R_LEAK:g}" for n in circuit.nodes if n != GROUND]
     lines += [".op", ".end"]
     return "\n".join(lines) + "\n"

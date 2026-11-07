@@ -75,7 +75,9 @@ AI 改善サイクルの5段階は番号と線でつながった流れとして�
 
 - **シンボル**：一覧、クラス変更、ラベル入力、端子名の編集・削除、正規化座標の表示。並び順は登録順・位置順・種別順を選べる。図面上で選ぶとこのタブへ切り替えて該当行までスクロールし、一覧で選ぶと画面外のシンボルの位置まで図面を移動する
 - **配線**：一覧、電線番号、種別（配線／シート間参照）、参照先の入力、削除
-- **図面情報**：AI 検出の確認状況（採用・種別修正・削除・手動追加と次回学習への反映）、名称・シート番号（「AIで読取」で候補を表示）・頁・改訂・状態・担当・メモ、画像のサイズと sha256
+- **図面情報**：AI 検出の確認状況（採用・種別修正・削除・手動追加と次回学習への反映）、コイルの配線の取り決め（下記）に合わないコイルの一覧と、通り抜ける配線をその場で分けて端子を付けるボタン（元に戻せる）、名称・シート番号（「AIで読取」で候補を表示）・頁・改訂・状態・担当・メモ、画像のサイズと sha256
+
+**コイルの配線の取り決め**（DD-0009 §6）: リレーコイル・電磁弁・表示灯には端子を 2 個付け、配線はその端子で止める。コイルの中を通り抜ける 1 本の配線にはしない（回路シミュレーションでコイルの両側を別のノードにするため）。
 
 レイヤーパネルは配線・端子・ラベル（TAG）・AI 検出・シンボル種別ごとに表示を切り替える。ラベルを隠しても選択中のシンボルのラベルは表示する。
 
@@ -121,13 +123,19 @@ ZIP を選択してインポートすると、`bundle.json` の有無で復元�
 - **Windows 配布版**: CPU 版 PyTorch・Ultralytics・学習開始用の検証済み YOLO11s 重み・学習済みの初期推論モデル（`assets/models/yolo11n_all_symbols_best.pt`）を単一 EXE に同梱。モデル未登録の初回起動時に同梱モデルを使用中の推論モデルとして自動登録する。初回学習は使用中のモデル（同梱モデル等）をベースに行われ、登録モデルが無い環境では内蔵 yolo11s 重みが起点になる（図面単位の交差検証で yolo11n より未学習図面の検出 F1 が高かった、DD-0007 §4.11）。学習済み `best.pt` は採用判定で推論モデルになる。シーケンス図向け未学習の初期重みを推論モデルとして自動登録しない
 - **外部実行への誘導**: `ultralytics` が無い場合、推論・学習 API は日本語メッセージで外部フロー（エクスポート → 外部 predict/学習 → 取込）を案内する
 
+### 3.5.1 記号・配線の属性
+
+記号と配線にメーカー・型式・長さなどの属性を持たせる（DD-0010）。エディタの詳細で、標準の項目（記号の種類・配線で変わる）と自由に足した項目を編集する。配線には図面内で一意な参照名（W-0001）があり、保存し直しても変わらない。データ受け渡しの画面で、全オブジェクトをオブジェクト ID と 1 対 1 で並べた JSON を書き出し（値のみ / 入力用の空欄つき）、編集した JSON を取り込める（形式は DATA_FORMAT.md §6）。
+
 ### 3.6 回路シミュレーション（`/circuit`）
 
 図面のアノテーションから回路を組み、接点の On/Off で電気がどこまで通り、どのリレーが動くかを確かめる画面（DD-0009）。
 
 - 選んだ図面の記号・端子・配線から回路を組む。コネクタ・分岐点は通り抜けの点、接点はコイルで開閉する接点、コイル・電磁弁・表示灯は負荷。母線（PER…/NER…）と器具番号が同じリレーは図面をまたいでつなぐ
 - 選んだ図面にコイルが無い接点は外部入力として On/Off を切り替える。切り替えるたびに前の励磁状態から解くので、自己保持の回路は保持される
-- 図面の上に、電圧のかかった配線（赤）、閉じた接点（緑）、励磁したコイル（赤）を重ねる。端子の足りない記号や PER と NER の直結など、回路にできない箇所を一覧に出す
+- コイルは端子 2 個で配線する取り決め（§3.2）に従ったアノテーションを使う。AI の取り込みだけでは励磁の再現が 3 割程度のため、器具番号・接点の端子・黒丸の無い交差をエディタで確かめてから使う（DD-0009 §7）
+- 図面の上に、電圧のかかった配線（赤）、閉じた接点（緑）、励磁したコイル（赤）を重ねる。端子の足りない記号や PER と NER の直結など、回路にできない箇所を一覧に出す。一覧の「エディタで直す」で、該当の記号を選んだ状態のエディタを開く（`#/projects/{id}?symbol=SYM-0001`）
+- 接点とコイルは器具番号と機器名で結び付ける。参照先シートの括弧は空白が無くても除き、OCR が取り違えやすい O と 0、I と 1、B と 8 は同じ字とみなす
 - 電気は SPICE（ngspice があればそれ、無ければ同じネットリストを内蔵の節点解析）で解く。LTspice・ngspice で開けるネットリスト（.cir）を書き出せる
 
 ## 4. API 仕様
@@ -179,7 +187,7 @@ ZIP を選択してインポートすると、`bundle.json` の有無で復元�
 | `POST` | `/api/ml/inference/import` | multipart `archive`（外部 `yolo predict` の labels ZIP）。`{results, unmatched_files, missing_project_ids, count}` |
 | `GET` | `/api/ml/predictions` | 図面ごとの検出件数サマリ |
 | `GET` | `/api/ml/projects/{id}/predictions` | 図面の最新推論結果（JSON。クラス名・信頼度つき）。`detections` はシンボル候補、`regions` は領域枠 |
-| `GET` | `/api/ml/projects/{id}/review-summary` | AI 検出の確認状況（採用・種別修正・削除・手動追加、領域枠数、次回学習に含まれるか）。`wiring` に AI 端子・AI 配線の `ai_count` / `imported` / `kept` / `deleted` / `manual_added`（構造解析が無ければ null） |
+| `GET` | `/api/ml/projects/{id}/review-summary` | AI 検出の確認状況（採用・種別修正・削除・手動追加、領域枠数、次回学習に含まれるか）。`wiring` に AI 端子・AI 配線の `ai_count` / `imported` / `kept` / `deleted` / `manual_added`（構造解析が無ければ null）。`coils` にコイルの数（`count`）と取り決めに合わないコイル（`issues[]`: `symbol_ref`・`label`・`kind` = terminals / unwired / through・`message`） |
 | `POST` | `/api/ml/projects/{id}/ai-import` | エディタの現在の状態（未保存を含む）を受け取り、AI のシンボル・端子・配線のうち未登録のものだけを追加分として返す |
 | `POST` | `/api/ml/analysis/run` | `{project_ids[], conf}`。使用中モデルで推論し、続けて構造解析を実行して図面ごとに最新の結果を保存（アノテーションは変更しない） |
 | `GET` | `/api/ml/projects/{id}/structure` | 図面の最新の構造解析結果（未実行は null） |
@@ -190,8 +198,12 @@ ZIP を選択してインポートすると、`bundle.json` の有無で復元�
 | `GET` | `/api/ml/training/class-stats` | クラス別の正解件数（完了の図面と全図面）、その記号がある図面数、30 件未満の印 `thin` |
 | `GET` | `/api/ml/training/hard-drawings` | 完了の図面ごとの AI の検出と正解の一致（`f1`・`missed`・`false_detections`・`relabeled`）。一致の低い順。0.9 未満は `hard: true` |
 | `POST` | `/api/ml/training/runs/{id}/decision` | `{decision: adopt\|reject}`。採用で成果物モデルを使用中に切替え |
+| `GET` | `/api/attributes/definitions` | 記号（共通・種類別）と配線の標準の属性 |
+| `POST` | `/api/attributes/export` | `{project_ids[], template}`。オブジェクト ID と属性を 1 対 1 で並べた JSON（DATA_FORMAT.md §6） |
+| `POST` | `/api/attributes/import` | multipart `file`。属性の JSON を取り込み、`updated`・`unchanged`・`not_found`・`duplicates`・`type_mismatch`・`invalid` を返す |
 | `POST` | `/api/circuit/build` | `{project_ids[]}`。回路を組み、コイルと接点、外部入力、確認が必要な箇所（`diagnostics`）、電源、解き方（`engine`）を返す |
 | `POST` | `/api/circuit/simulate` | `{project_ids[], inputs: {器具番号: bool}, energized: {器具番号: bool}}`。前の励磁状態から解き、`coil_states`・`warnings`・図面ごとの重ね表示（`overlay`）を返す |
+| `POST` | `/api/circuit/split-coil-wires` | `{symbols[], connections[], image_width, image_height}`（PUT annotations と同じ形）。コイルを通り抜ける配線を 2 本に分けて端子を付けた結果（`symbols`・`connections`・`counts`）を返す。保存はしない |
 | `POST` | `/api/circuit/netlist` | `{project_ids[], inputs}`。LTspice・ngspice で開けるネットリスト（circuit.cir） |
 
 ### `PUT /api/projects/{id}/annotations` のリクエスト
