@@ -38,6 +38,9 @@ class PortParams:
     line_trace_max_px: int = 400
     # たどるときに許す線の途切れ。
     line_gap_px: int = 2
+    # たどる線がコネクタ・端子台の枠に入り、その中心がたどる線からこれ以内にあれば、その記号の端子につなぐ。
+    # コネクタの間の短い線は配線として検出されない（ER21315 の ABN GW の上）。0 でつながない。
+    line_pass_through_px: float = 6.0
     # コイルの薄い点線（ER21256）: 灰色がこれ未満の画素を線とみなす。
     faint_gray: int = 240
     # 枠の外の行のうち、線がある行の割合の下限（近くの文字の列は 0.25 前後、線は 0.45 以上）。
@@ -73,11 +76,12 @@ class BridgeParams:
     # 橋渡しが通ってよい空白の長さ。配線の上の印は 38 px 未満、カードの + と - の点の間は 50 px を超える。0 で確認しない。
     wire_gap_bridge_max_blank_px: float = 45.0
     terminal_gap_bridge_max_blank_px: float = 45.0
-    # コイルの中で終わる配線の端からの橋渡しは、同じコイルのもう一方の端子を越えない（ER21298）。
+    # 橋渡しは機器の端子を越えない。コイルの中で終わる配線の端からは同じコイルのもう一方の端子を（ER21298）、
+    # 端子からの橋渡しはほかの接点・コイルの端子を（ER21315 の 30GW）。
     # 端子が橋渡しの線から横に何 px 以内なら「線の上」とみなすか。0 で確認しない。
-    coil_jump_across_px: float = 4.0
+    device_jump_across_px: float = 4.0
     # 橋渡しの線に沿った範囲の端の遊び（画素の丸め）。
-    coil_jump_end_px: float = 1.0
+    device_jump_end_px: float = 1.0
 
 
 @dataclass(frozen=True)

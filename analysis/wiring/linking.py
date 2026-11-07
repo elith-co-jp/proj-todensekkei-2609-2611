@@ -126,6 +126,7 @@ def enrich_symbols_and_graph(
                 "point": terminal["point"],
                 "source": terminal.get("source"),
                 "wire_id_hint": terminal.get("wire_id_hint"),
+                "symbol_id_hint": terminal.get("symbol_id_hint"),
                 "wire_orientation": terminal.get("wire_orientation"),
                 "port_reason": terminal.get("port_reason"),
                 "port_ink_ratio": terminal.get("port_ink_ratio"),
@@ -158,6 +159,19 @@ def enrich_symbols_and_graph(
                     nodes_by_id[node["id"]].setdefault("symbol_ids", []).append(symbol["id"])
 
             hinted_wire_id = terminal.get("wire_id_hint")
+            if terminal.get("traced") and terminal.get("symbol_id_hint") and not hinted_wire_id:
+                # 線をたどってコネクタ・端子台の中心に着いた端子は、その記号の端子につなぐ（ER21315）。
+                link = {
+                    "symbol_id": symbol["id"],
+                    "terminal_ref": terminal["terminal_ref"],
+                    "terminal_name": terminal["terminal_name"],
+                    "peer_symbol_id": terminal["symbol_id_hint"],
+                    "reason": "traced_to_pass_through",
+                    "terminal_source": terminal.get("source"),
+                }
+                terminal_links_for_symbol.append(link)
+                symbol_terminal_links.append(link)
+                continue
             if terminal.get("traced") and not hinted_wire_id:
                 # 線をたどっても配線に当たらなかった端子は、近くの別の配線（記号を貫く線など）に結ばない。
                 continue

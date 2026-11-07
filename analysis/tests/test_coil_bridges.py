@@ -61,6 +61,23 @@ def test_bridge_from_a_wire_end_inside_the_coil_does_not_jump_the_coils_other_te
     assert _reaches_without(payload, "coil-P2", "bus-N1", avoid_ref="coil-P1")
 
 
+def test_bridge_from_a_connector_does_not_jump_a_contact_on_the_line():
+    """配線が y=40 で終わり、その下に接点（端子 y=60 と y=100）、さらに下にコネクタ（y=130）が並ぶ。
+    配線が検出されていないコネクタから上の配線の端へ橋渡しすると、接点を飛ばして接点の両側がつながる（ER21315 の 30GW）。"""
+    payload = {
+        "source": {}, "text_regions": [], "quality": {},
+        "wires": [{"id": "w_top", "orientation": "v", "polyline": [[100, 0], [100, 40]]}],
+        "nodes": [{"id": "n_a", "type": "endpoint", "x": 100, "y": 0}, {"id": "n_b", "type": "endpoint", "x": 100, "y": 40}],
+        "edges": [{"id": "e_top", "wire_id": "w_top", "from_node_id": "n_a", "to_node_id": "n_b"}],
+        "symbols": [
+            _symbol("src", "connector", (96, 0, 104, 8), [("src-N1", (100, 4), {"wire_id": "w_top"})]),
+            _symbol("k", "contact_a", (92, 60, 140, 100), [("k-P1", (100, 60), {}), ("k-P2", (100, 100), {})]),
+            _symbol("cn", "connector", (80, 122, 120, 138), [("cn-N1", (100, 130), {})]),
+        ],
+    }
+    assert not _reaches_without(payload, "src-N1", "cn-N1", avoid_ref="k-P1")
+
+
 def test_terminal_anchored_at_the_wire_end_still_bridges_to_the_bus():
     """下の端子が線の端の点に結ばれているとき、橋渡しはその端子から出る（ER21279）。"""
     payload = _payload({"node_id": "n_end"})

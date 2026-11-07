@@ -142,6 +142,7 @@ def build_direct_terminal_records(
                         "wire_id": link.get("wire_id"),
                         "wire_id_hint": terminal.get("wire_id_hint"),
                         "node_id": link.get("node_id"),
+                        "peer_symbol_id": link.get("peer_symbol_id"),
                         "link_index": link_index,
                     }
                 )
@@ -199,8 +200,8 @@ def build_direct_from_to(
         wire_gap_bridge_max_blank=params.wire_gap_bridge_max_blank_px,
         terminal_gap_bridge_max_blank=params.terminal_gap_bridge_max_blank_px,
         gap_bridge_device_classes=set(classes.COILS),
-        coil_jump_across=params.coil_jump_across_px,
-        coil_jump_end=params.coil_jump_end_px,
+        device_jump_across=params.device_jump_across_px,
+        device_jump_end=params.device_jump_end_px,
         trace=trace,
     )
     valid_pairs = sorted(
@@ -260,7 +261,7 @@ def build_direct_from_to(
             "wire_gap_bridge_outward_only": params.wire_gap_bridge_outward_only,
             "wire_gap_bridge_max_blank": params.wire_gap_bridge_max_blank_px if blank_run is not None else 0.0,
             "terminal_gap_bridge_max_blank": params.terminal_gap_bridge_max_blank_px if blank_run is not None else 0.0,
-            "coil_jump_across": params.coil_jump_across_px,
+            "device_jump_across": params.device_jump_across_px,
             "bridge_stats": dict(sorted(bridge_stats.items())),
         },
     }
@@ -477,8 +478,8 @@ def build_predicted_graph_pairs(
     wire_gap_bridge_max_blank: float = 0.0,
     terminal_gap_bridge_max_blank: float = 0.0,
     gap_bridge_device_classes: set[str] | None = None,
-    coil_jump_across: float = 0.0,
-    coil_jump_end: float = 1.0,
+    device_jump_across: float = 0.0,
+    device_jump_end: float = 1.0,
     trace: dict[str, Any] | None = None,
 ) -> set[tuple[str, str]]:
     nodes_by_id = {str(node["id"]): node for node in payload.get("nodes", [])}
@@ -518,6 +519,25 @@ def build_predicted_graph_pairs(
         if not box:
             continue
         symbol_boxes[symbol_id] = (str(record.get("class_name") or ""), box)
+
+    device_terminals = [
+        (str(record.get("symbol_id") or ""), (float(record["point"][0]), float(record["point"][1])))
+        for record in terminal_records if str(record.get("class_name") or "") in classes.TWO_TERMINAL_DEVICES
+    ]
+
+    def passes_device_terminal(start: tuple[float, float], end: tuple[float, float], own_symbol_id: str) -> bool:
+        """橋渡しの線の途中にほかの機器の端子が乗っている。線はそこで機器に入るので、橋渡しで越えるとその機器を飛ばす。"""
+        if device_jump_across <= 0:
+            return False
+        vertical = abs(end[1] - start[1]) > abs(end[0] - start[0])
+        lo, hi = sorted((start[1], end[1]) if vertical else (start[0], end[0]))
+        for symbol_id, (sx, sy) in device_terminals:
+            if symbol_id == own_symbol_id:
+                continue
+            along, across = (sy, sx - start[0]) if vertical else (sx, sy - start[1])
+            if abs(across) <= device_jump_across and lo + device_jump_end < along < hi - device_jump_end:
+                return True
+        return False
 
     def graph_node_id(node_id: str, wire_id: str | None) -> str:
         node = nodes_by_id.get(str(node_id), {})
@@ -691,6 +711,9 @@ def build_predicted_graph_pairs(
         if crosses_blocking_symbol(terminal_point, bridge_end, allowed_symbol_ids={str(record.get("symbol_id") or "")}):
             stats["terminal_gap_bridge_rejected_symbol_overlap_count"] += 1
             return False
+        if passes_device_terminal(terminal_point, bridge_end, str(record.get("symbol_id") or "")):
+            stats["terminal_gap_bridge_rejected_device_jump_count"] += 1
+            return False
         if endpoint_node:
             add_graph_edge(stop_id, graph_node_id(endpoint_node, wire_id), "terminal_gap_bridge")
         else:
@@ -748,7 +771,7 @@ def build_predicted_graph_pairs(
 
             橋渡しの出発点（線の端の点）にアンカーされた端子は、そこから橋渡しが出るので越えたことにしない（ER21279）。"""
             on_wire = members_on_wire.get(wire_id, set()) | terminal_members_by_graph_node.get(source_key, set())
-            if coil_jump_across <= 0:
+            if device_jump_across <= 0:
                 return False
             coils = {symbol_of_member.get(m) for m in on_wire} & coil_symbols
             if not coils:
@@ -760,7 +783,7 @@ def build_predicted_graph_pairs(
                     continue
                 sx, sy = coords[stop_id]
                 along, across = (sy, sx - start[0]) if vertical else (sx, sy - start[1])
-                if abs(across) <= coil_jump_across and lo + coil_jump_end < along < hi + coil_jump_end:
+                if abs(across) <= device_jump_across and lo + device_jump_end < along < hi + device_jump_end:
                     return True
             return False
 
@@ -941,6 +964,7 @@ def build_predicted_graph_pairs(
         distance = point_distance(point, node_point(node))
         return node_id, distance
 
+    peer_links: list[tuple[str, str]] = []
     for record in terminal_records:
         stop_id = f"stop:{record['id']}"
         member_key = str(record["member_key"])
@@ -973,7 +997,16 @@ def build_predicted_graph_pairs(
             for graph_id in graph_ids_for_anchor_node(record, str(node_id), preferred_wire_id or None):
                 add_graph_edge(stop_id, graph_id, "node_anchor")
             continue
+        if record.get("peer_symbol_id"):
+            peer_links.append((stop_id, str(record["peer_symbol_id"])))
+            continue
         bridge_terminal_to_collinear_wire(record, stop_id)
+
+    # 線をたどってコネクタ・端子台に着いた端子は、その記号の端子と直接つながる。
+    for stop_id, peer_symbol_id in peer_links:
+        peer_stop = next((s for m, s in stop_by_member.items() if m.startswith(f"{peer_symbol_id}:")), None)
+        if peer_stop is not None:
+            add_graph_edge(stop_id, peer_stop, "pass_through_trace")
 
     add_wire_gap_bridges()
 

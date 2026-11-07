@@ -69,3 +69,25 @@ def test_faint_dotted_line_gives_a_coil_its_ports():
     assert [p["point"] for p in ports] == [[100.0, 80.0], [100.0, 120.0]]
     assert [p["wire_id_hint"] for p in ports] == ["top", "bottom"]
 
+
+def _connector(cx, cy):
+    return {"id": "cn", "class_name": "connector", "center": [cx, cy],
+            "bbox": {"x0": cx - 20, "y0": cy - 8, "x1": cx + 20, "y1": cy + 8}}
+
+
+def test_line_ending_in_a_connector_on_the_line_joins_that_connector():
+    """コイルの上の線がコネクタの枠に入り、その中心が線の上にあれば、そのコネクタにつなぐ（ER21315）。
+    コネクタの間の短い線は配線として検出されない。"""
+    mask, wires, coil = _page()
+    connector = _connector(100, 70)
+    ports = line_ports(coil, mask, wires, [coil, connector])
+    assert [(p["wire_id_hint"], p["symbol_id_hint"]) for p in ports] == [(None, "cn"), ("bottom", None)]
+
+
+def test_connector_beside_the_line_is_not_joined():
+    """線の脇（中心が線から外れた）コネクタの枠に入っても、そのコネクタにはつながない。"""
+    mask, wires, coil = _page()
+    connector = _connector(115, 70)
+    ports = line_ports(coil, mask, wires, [coil, connector])
+    assert [(p["wire_id_hint"], p["symbol_id_hint"]) for p in ports] == [(None, None), ("bottom", None)]
+

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from typing import Any
+from typing import Any, NamedTuple
 
 from PIL import Image
 
@@ -396,15 +396,23 @@ def _ink_run(mask: Any, x: int, y: int, dx: int, dy: int, limit: int, gap: int) 
     return run
 
 
+class TraceHit(NamedTuple):
+    """線をたどって当たったもの。配線か、線が中心を通るコネクタ・端子台の記号か、どちらも無い。"""
+
+    wire_id: str | None = None
+    symbol_id: str | None = None
+
+
 def _trace_to_wire(
     mask: Any, start: tuple[int, int], step: tuple[int, int], wires: list[dict[str, Any]],
-    other_boxes: list[dict[str, Any]], dot_boxes: list[dict[str, Any]], gap: int, params: PortParams,
-) -> str | None:
-    """端子から外へ線をたどり、最初に当たる配線の ID。黒丸の無い交差（線が向こうへ続く）は通り過ぎ、
+    others: list[dict[str, Any]], dot_boxes: list[dict[str, Any]], gap: int, params: PortParams,
+) -> TraceHit:
+    """端子から外へ線をたどり、最初に当たる配線。黒丸の無い交差（線が向こうへ続く）は通り過ぎ、
     黒丸（分岐点）の上で当たった配線はそこでつながっているとみなす。
 
     同じ向きの配線が記号の枠を貫いていれば、その配線を返す。両端子が同じ配線に乗り、配線の上の位置で
     順に並ぶので、記号は直列に入る（推定の端子と同じ扱い）。ほかの記号の枠に入ったら止める。
+    その記号がコネクタ・端子台で、中心がたどる線の上にあれば、その記号に当たったとする。
     """
     height, width = mask.shape[:2]
     dx, dy = step
@@ -413,30 +421,44 @@ def _trace_to_wire(
     for i in range(0, params.line_trace_max_px + 1):
         px, py = x + dx * i, y + dy * i
         if not (0 <= px < width and 0 <= py < height):
-            return None
-        if i > 3 and any(b["x0"] <= px <= b["x1"] and b["y0"] <= py <= b["y1"] for b in other_boxes):
-            return None
+            return TraceHit()
+        entered = next((s for s in others if i > 3 and _inside(s["bbox"], px, py)), None)
+        if entered is not None:
+            return TraceHit(symbol_id=_pass_through_on_line(entered, (x, y), step, params))
         for wire in wires:
             box = wire.get("bbox") or {}
             if not box or not (box["x0"] - 2 <= px <= box["x1"] + 2 and box["y0"] - 2 <= py <= box["y1"] + 2):
                 continue
             if (wire.get("orientation") == "v") == (dx == 0):
-                return str(wire["id"])
+                return TraceHit(wire_id=str(wire["id"]))
             # 直交する配線: 線がその向こうへ続けば黒丸の無い交差なので通り過ぎる。
             on_dot = any(b["x0"] - 2 <= px <= b["x1"] + 2 and b["y0"] - 2 <= py <= b["y1"] + 2 for b in dot_boxes)
             thickness = (box["y1"] - box["y0"]) if dx == 0 else (box["x1"] - box["x0"])
             beyond = int(thickness) + 4
             if not on_dot and _ink_run(mask, px + dx * beyond, py + dy * beyond, dx, dy, 8, params.line_gap_px) >= 6:
                 continue
-            return str(wire["id"])
+            return TraceHit(wire_id=str(wire["id"]))
         inked = mask[py, max(0, px - 1):px + 2].any() if dx == 0 else mask[max(0, py - 1):py + 2, px].any()
         if inked:
             miss = 0
         else:
             miss += 1
             if miss > gap:
-                return None
-    return None
+                return TraceHit()
+    return TraceHit()
+
+
+def _inside(box: dict[str, Any], x: float, y: float) -> bool:
+    return box["x0"] <= x <= box["x1"] and box["y0"] <= y <= box["y1"]
+
+
+def _pass_through_on_line(symbol: dict[str, Any], start: tuple[int, int], step: tuple[int, int], params: PortParams) -> str | None:
+    """コネクタ・端子台（分岐点を除く）の中心がたどる線から params.line_pass_through_px 以内ならその ID。"""
+    if symbol.get("class_name") not in classes.PASS_THROUGH - {classes.JUNCTION} or params.line_pass_through_px <= 0:
+        return None
+    cx, cy = symbol["center"]
+    across = cx - start[0] if step[0] == 0 else cy - start[1]
+    return str(symbol["id"]) if abs(across) <= params.line_pass_through_px else None
 
 
 def _faint_coil_column(faint: Any, x0: int, y0: int, x1: int, y1: int, params: PortParams) -> int | None:
@@ -500,18 +522,20 @@ def line_ports(
     else:
         return []
     live = [s for s in symbols if s is not symbol and not (s.get("dot_role") or {}).get("suppressed")]
-    others = [s["bbox"] for s in live if s.get("class_name") != classes.JUNCTION]
+    others = [s for s in live if s.get("class_name") != classes.JUNCTION]
     dots = [s["bbox"] for s in live if s.get("class_name") == classes.JUNCTION]
     ends = [((c, y0), (0, -1)), ((c, y1), (0, 1))] if axis == "v" else [((x0, c), (-1, 0)), ((x1, c), (1, 0))]
-    return [
-        {
+    ports = []
+    for index, (point, step) in enumerate(ends, start=1):
+        hit = _trace_to_wire(trace_mask, point, step, wires, others, dots, gap, params)
+        ports.append({
             "terminal_ref": f"{symbol['id']}-L{index:02d}",
             "terminal_name": f"P{index}",
             "point": [float(point[0]), float(point[1])],
             "source": "line_port",
-            "wire_id_hint": _trace_to_wire(trace_mask, point, step, wires, others, dots, gap, params),
+            "wire_id_hint": hit.wire_id,
+            "symbol_id_hint": hit.symbol_id,
             "wire_orientation": axis,
             "traced": True,
-        }
-        for index, (point, step) in enumerate(ends, start=1)
-    ]
+        })
+    return ports
