@@ -96,6 +96,9 @@ def serialize_model(m: MlModel) -> dict:
             metrics = json.loads(m.metrics_json)
         except (TypeError, json.JSONDecodeError):
             metrics = None
+    if isinstance(metrics, dict):
+        # クラス別の値は学習ジョブの採用判定で返す。モデル一覧では全体の値だけを出す。
+        metrics.pop("per_class", None)
     return {
         "id": m.id,
         "name": m.name,
