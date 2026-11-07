@@ -73,6 +73,11 @@ class BridgeParams:
     # 橋渡しが通ってよい空白の長さ。配線の上の印は 38 px 未満、カードの + と - の点の間は 50 px を超える。0 で確認しない。
     wire_gap_bridge_max_blank_px: float = 45.0
     terminal_gap_bridge_max_blank_px: float = 45.0
+    # コイルの中で終わる配線の端からの橋渡しは、同じコイルのもう一方の端子を越えない（ER21298）。
+    # 端子が橋渡しの線から横に何 px 以内なら「線の上」とみなすか。0 で確認しない。
+    coil_jump_across_px: float = 4.0
+    # 橋渡しの線に沿った範囲の端の遊び（画素の丸め）。
+    coil_jump_end_px: float = 1.0
 
 
 @dataclass(frozen=True)

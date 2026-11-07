@@ -199,6 +199,8 @@ def build_direct_from_to(
         wire_gap_bridge_max_blank=params.wire_gap_bridge_max_blank_px,
         terminal_gap_bridge_max_blank=params.terminal_gap_bridge_max_blank_px,
         gap_bridge_device_classes=set(classes.COILS),
+        coil_jump_across=params.coil_jump_across_px,
+        coil_jump_end=params.coil_jump_end_px,
         trace=trace,
     )
     valid_pairs = sorted(
@@ -258,6 +260,7 @@ def build_direct_from_to(
             "wire_gap_bridge_outward_only": params.wire_gap_bridge_outward_only,
             "wire_gap_bridge_max_blank": params.wire_gap_bridge_max_blank_px if blank_run is not None else 0.0,
             "terminal_gap_bridge_max_blank": params.terminal_gap_bridge_max_blank_px if blank_run is not None else 0.0,
+            "coil_jump_across": params.coil_jump_across_px,
             "bridge_stats": dict(sorted(bridge_stats.items())),
         },
     }
@@ -474,6 +477,8 @@ def build_predicted_graph_pairs(
     wire_gap_bridge_max_blank: float = 0.0,
     terminal_gap_bridge_max_blank: float = 0.0,
     gap_bridge_device_classes: set[str] | None = None,
+    coil_jump_across: float = 0.0,
+    coil_jump_end: float = 1.0,
     trace: dict[str, Any] | None = None,
 ) -> set[tuple[str, str]]:
     nodes_by_id = {str(node["id"]): node for node in payload.get("nodes", [])}
@@ -727,6 +732,38 @@ def build_predicted_graph_pairs(
                     return True
             return False
 
+        # 端子（member）ごとの記号と、配線ごとに乗っている端子。1 つの端子が配線とノードの両方に結ばれると停留点が
+        # 2 つできるので、停留点ではなく端子で見る。
+        symbol_of_member = {str(record["member_key"]): str(record.get("symbol_id") or "") for record in terminal_records}
+        coil_symbols = {sid for sid, (class_name, _box) in symbol_boxes.items() if class_name in (gap_bridge_device_classes or set())}
+        members_on_wire: dict[str, set[str]] = defaultdict(set)
+        for wire_edge_id, segment in edge_segments.items():
+            for _t, stop_id in stops_by_edge.get(wire_edge_id, []):
+                if stop_id in terminal_by_stop:
+                    members_on_wire[str(segment.get("wire_id") or "")].add(terminal_by_stop[stop_id])
+
+        def jumps_own_coil(wire_id: str, source_key: str, start: tuple[float, float], end: tuple[float, float]) -> bool:
+            """コイルの一方の端子が乗る配線がコイルの中まで伸びて終わっているとき、その端からの橋渡しが同じコイルの
+            もう一方の端子（別の配線に結ばれている）を越えると、コイルの両側がつながる（ER21298）。
+
+            橋渡しの出発点（線の端の点）にアンカーされた端子は、そこから橋渡しが出るので越えたことにしない（ER21279）。"""
+            on_wire = members_on_wire.get(wire_id, set()) | terminal_members_by_graph_node.get(source_key, set())
+            if coil_jump_across <= 0:
+                return False
+            coils = {symbol_of_member.get(m) for m in on_wire} & coil_symbols
+            if not coils:
+                return False
+            vertical = abs(end[1] - start[1]) > abs(end[0] - start[0])
+            lo, hi = sorted((start[1], end[1]) if vertical else (start[0], end[0]))
+            for stop_id, member in terminal_by_stop.items():
+                if member in on_wire or symbol_of_member.get(member) not in coils or stop_id not in coords:
+                    continue
+                sx, sy = coords[stop_id]
+                along, across = (sy, sx - start[0]) if vertical else (sx, sy - start[1])
+                if abs(across) <= coil_jump_across and lo + coil_jump_end < along < hi + coil_jump_end:
+                    return True
+            return False
+
         def past_end_stop(edge_id: str, end_point: tuple[float, float], end_t: float) -> str | None:
             """The terminal stop lying on this edge beyond its end point, farthest out (None when there is none)."""
             segment = edge_segments[edge_id]
@@ -798,6 +835,9 @@ def build_predicted_graph_pairs(
                     # a long blank stretch is open paper, e.g. between the + and - dots of a card.
                     if gap_blank_run is not None and wire_gap_bridge_max_blank > 0 and gap_blank_run(point, projection) > wire_gap_bridge_max_blank:
                         stats["wire_gap_bridge_rejected_blank_count"] += 1
+                        continue
+                    if jumps_own_coil(source_wire_id, endpoint_key, point, projection):
+                        stats["wire_gap_bridge_rejected_coil_jump_count"] += 1
                         continue
                     candidate = (gap, target_edge_id, t, projection, str(target.get("wire_id") or ""))
                     if endpoint_key not in best_by_endpoint or gap < best_by_endpoint[endpoint_key][0]:
