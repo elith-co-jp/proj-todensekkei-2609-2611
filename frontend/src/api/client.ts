@@ -1,5 +1,7 @@
 import type {
   AiImportResult,
+  AttributeDefinitions,
+  AttributeImportReport,
   CircuitResult,
   CircuitSummary,
   ClassStats,
@@ -272,4 +274,19 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ project_ids: projectIds, inputs }),
     }, 'circuit.cir'),
+
+  attributeDefinitions: () => req<AttributeDefinitions>('/api/attributes/definitions'),
+
+  exportAttributes: (projectIds: number[], template: boolean) =>
+    download('/api/attributes/export', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ project_ids: projectIds, template }),
+    }, template ? 'object_attributes_template.json' : 'object_attributes.json'),
+
+  importAttributes: (file: File) => {
+    const fd = new FormData()
+    fd.append('file', file)
+    return req<AttributeImportReport>('/api/attributes/import', { method: 'POST', body: fd })
+  },
 }

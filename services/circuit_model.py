@@ -52,6 +52,7 @@ class Element:
     symbol_ref: str
     label: str
     device: str | None = None   # コイル・接点の器具番号（開閉の対応づけ）
+    resistance: float = R_LOAD  # 負荷の抵抗。属性 coil_resistance_ohm / resistance_ohm があればその値（DD-0010）
 
 
 @dataclass
@@ -83,6 +84,17 @@ def _bus_side(text: str | None) -> str | None:
 
 def _spice_name(name: str) -> str:
     return re.sub(r"[^0-9A-Za-z_]", "_", name)
+
+
+def _load_resistance(attributes: dict[str, Any]) -> float:
+    for key in ("coil_resistance_ohm", "resistance_ohm"):
+        try:
+            value = float(attributes.get(key))
+        except (TypeError, ValueError):
+            continue
+        if value > 0:
+            return value
+    return R_LOAD
 
 
 def build_circuit(pages: list[dict[str, Any]], bus_texts: dict[int, list[dict[str, Any]]] | None = None) -> Circuit:
@@ -208,7 +220,8 @@ def build_circuit(pages: list[dict[str, Any]], bus_texts: dict[int, list[dict[st
             continue
         a, b = node_of[(pid, ref, terms[0]["ref"])], node_of[(pid, ref, terms[1]["ref"])]
         element = Element(f"{'SW' if kind in ('a', 'b') else 'R'}_{pid}_{_spice_name(ref)}", kind, a, b, pid, ref,
-                          s.get("label") or "", device_key(s.get("label")) if cls in CONTACT_CLASSES or cls == "relay_coil" else None)
+                          s.get("label") or "", device_key(s.get("label")) if cls in CONTACT_CLASSES or cls == "relay_coil" else None,
+                          _load_resistance(s.get("attributes") or {}))
         elements.append(element)
         if cls == "relay_coil" and element.device:
             coils[element.device].append(element)
@@ -249,7 +262,7 @@ def netlist(circuit: Circuit, closed: dict[str, bool], title: str = "TodenYOLO c
             # 開閉を決めた接点は抵抗にする（素子名の先頭の R が抵抗を表す）。
             lines += [comment, f"R{e.name} {_spice_name(e.a)} {_spice_name(e.b)} {R_ON if closed.get(e.name) else R_OFF:g}"]
         else:
-            lines += [comment, f"{e.name} {_spice_name(e.a)} {_spice_name(e.b)} {R_LOAD:g}"]
+            lines += [comment, f"{e.name} {_spice_name(e.a)} {_spice_name(e.b)} {e.resistance:g}"]
     lines += [f"R_LEAK_{_spice_name(n)} {_spice_name(n)} 0 {R_LEAK:g}" for n in circuit.nodes if n != GROUND]
     lines += [".op", ".end"]
     return "\n".join(lines) + "\n"
@@ -390,7 +403,7 @@ def export_netlist(circuit: Circuit, inputs: dict[str, bool] | None = None) -> s
         if e.kind in ("a", "b"):
             lines.append(f"S{e.name} {_spice_name(e.a)} {_spice_name(e.b)} {control[e.device]} 0 SW_{e.kind.upper()}")
         else:
-            lines.append(f"{e.name} {_spice_name(e.a)} {_spice_name(e.b)} {R_LOAD:g}")
+            lines.append(f"{e.name} {_spice_name(e.a)} {_spice_name(e.b)} {e.resistance:g}")
     lines += [f"R_LEAK_{_spice_name(n)} {_spice_name(n)} 0 {R_LEAK:g}" for n in circuit.nodes if n != GROUND]
     lines += [".op", ".end"]
     return "\n".join(lines) + "\n"

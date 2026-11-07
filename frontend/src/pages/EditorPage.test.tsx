@@ -10,6 +10,7 @@ import EditorPage from './EditorPage'
 
 const apiMocks = vi.hoisted(() => ({
   aiImport: vi.fn(),
+  attributeDefinitions: vi.fn(),
   exportProject: vi.fn(),
   getProject: vi.fn(),
   getPredictions: vi.fn(),
@@ -160,6 +161,10 @@ beforeEach(() => {
     toJSON: () => ({}),
   })
   apiMocks.listClasses.mockResolvedValue([symbolClass])
+  apiMocks.attributeDefinitions.mockResolvedValue({
+    symbol: { common: [{ key: 'maker', label: 'メーカー', type: 'text', unit: null }], by_class: {} },
+    wire: [{ key: 'length_m', label: '長さ', type: 'number', unit: 'm' }],
+  })
   apiMocks.listProjects.mockResolvedValue([row(1), row(2)])
   apiMocks.getProject.mockImplementation(async (id: number) => project(id))
   apiMocks.saveAnnotations.mockResolvedValue({ symbol_count: 2, connection_count: 0, skipped: [] })

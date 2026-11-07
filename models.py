@@ -126,6 +126,8 @@ class AnnotationSymbol(Base):
     note = Column(Text, nullable=True)
     origin = Column(String(20), nullable=False, default="manual", server_default="manual")
     # origin: manual=人手で入力 / inference=AI 推論から生成（人が修正して蓄積する対象）
+    # メーカー・型式・定格などの属性（キー → 値の JSON）。DD-0010
+    attributes_json = Column(Text, nullable=True)
     confidence = Column(Float, nullable=True)  # 推論由来のときの信頼度 (0-1)
     created_at = Column(DateTime, default=utc_now_naive)
 
@@ -182,6 +184,10 @@ class Connection(Base):
     external_ref = Column(String(200), nullable=True)  # (610-2F-9) 等のシート間参照
     note = Column(Text, nullable=True)
     origin = Column(String(20), nullable=False, default="manual", server_default="manual")
+    # 図面内で一意な配線の参照名（W-0001）。保存し直しても変わらず、属性の JSON と 1 対 1 で対応する。DD-0010
+    ref = Column(String(50), nullable=True)
+    # 長さ・電線種別・断面積などの属性（キー → 値の JSON）
+    attributes_json = Column(Text, nullable=True)
     created_at = Column(DateTime, default=utc_now_naive)
 
     project = relationship("AnnotationProject", back_populates="connections")

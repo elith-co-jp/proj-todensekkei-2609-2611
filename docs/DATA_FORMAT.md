@@ -261,3 +261,57 @@ AI 改善サイクル画面の構造解析をまとめて書き出したファ�
 
 参照先の図面は、図面情報のシート番号（未入力ならシート番号の候補の 1 位）で照合する。枝番つきの参照（`ER21212-1`）は枝番なしの図面にも合わせる。
 
+
+## 6. 記号・配線の属性（object_attributes.json）
+
+記号と配線の 1 つ 1 つに、メーカー・型式・長さなどの属性を持たせる（DD-0010）。属性は bundle.json の
+`symbols[].attributes`・`connections[].attributes` にも入り、ZIP の書き出し・取り込みで引き継がれる。
+配線には図面内で一意な参照名 `connections[].ref`（W-0001 形式）があり、保存し直しても変わらない。
+
+データ受け渡しの画面（`POST /api/attributes/export`）で、全オブジェクトをオブジェクト ID と 1 対 1 で並べた JSON を書き出す。
+
+```json
+{
+  "schema": "todenyolo.object_attributes.v1",
+  "generated_at": "2026-11-07T06:00:00+00:00",
+  "template": true,
+  "attribute_definitions": { "symbol": { "common": [], "by_class": {} }, "wire": [] },
+  "projects": [{ "project_id": 1, "key": "ER21216", "sheet_no": "ER21216", "name": "ER21216.png" }],
+  "objects": [
+    { "object_id": "ER21216/SYM-0001", "project_id": 1, "sheet_no": "ER21216", "type": "symbol",
+      "ref": "SYM-0001", "class_key": "relay_coil", "label": "33HB FV2306",
+      "attributes": { "maker": "オムロン", "model": null, "part_no": null, "rated_voltage_v": null,
+                      "location": null, "coil_resistance_ohm": 4400, "pickup_voltage_v": null } },
+    { "object_id": "ER21216/W-0001", "project_id": 1, "sheet_no": "ER21216", "type": "wire",
+      "ref": "W-0001", "from": "SYM-0002/SYM-0002-T1", "to": "SYM-0001/SYM-0001-T1", "wire_no": null,
+      "attributes": { "length_m": 12.5, "wire_type": "CVV 2sq", "cross_section_mm2": null, "color": null,
+                      "cable_no": null, "core_no": null, "maker": null } }
+  ]
+}
+```
+
+| 項目 | 説明 |
+| --- | --- |
+| `object_id` | 「図面の鍵/参照名」。図面の鍵はシート番号（無ければ `P<図面ID>`、書き出す図面の間で重なれば `シート番号#図面ID`） |
+| `type` | `symbol`（記号）か `wire`（配線） |
+| `attributes` | キー → 値（文字・数値・真偽）。`template: true` では定義済みの項目を null で並べる（入力用） |
+
+標準の属性（`GET /api/attributes/definitions`）。ここに無い項目も自由に足せる。
+
+| 対象 | 項目（キー・単位） |
+| --- | --- |
+| 記号（共通） | メーカー `maker`、型式 `model`、品番 `part_no`、定格電圧 `rated_voltage_v`（V）、取付位置 `location` |
+| リレーコイル | コイル抵抗 `coil_resistance_ohm`（Ω）、動作電圧 `pickup_voltage_v`（V） |
+| 電磁弁 | コイル抵抗 `coil_resistance_ohm`（Ω）、定格電流 `rated_current_a`（A） |
+| a 接点・b 接点 | 接点定格 `contact_rating_a`（A） |
+| コネクタ・端子 | ピン数 `pin_count` |
+| 配線 | 長さ `length_m`（m）、電線種別 `wire_type`、断面積 `cross_section_mm2`（mm²）、色 `color`、ケーブル番号 `cable_no`、心線番号 `core_no`、メーカー `maker` |
+
+取り込み（`POST /api/attributes/import`）:
+
+- ファイルに載っているオブジェクトの属性を、その内容で置き換える。null・空文字の項目は未入力として消す。載っていないオブジェクトは変えない。
+- 図面は `project_id` とシート番号で照合し、図面 ID が違う別の環境でもシート番号が 1 枚に決まれば取り込む。
+- 同じ `object_id` が 2 回以上あるものは取り込まない（`duplicates`）。見つからないもの（`not_found`）、記号と配線の種類が合わないもの（`type_mismatch`）、数値の項目に数値でない値（`invalid`、その項目だけ取り込まない）を報告する。数値の項目は「3,000」のような文字でも数値にする。
+- 同じファイルをもう一度取り込んでも変わらない。
+
+回路シミュレーション（DD-0009）は、リレーコイル・電磁弁の `coil_resistance_ohm`（または `resistance_ohm`）があればその値を負荷の抵抗に使う。

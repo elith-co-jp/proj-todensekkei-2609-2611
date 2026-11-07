@@ -37,11 +37,15 @@ export type SymbolBox = {
   /** 推論由来のときの信頼度 (0-1) */
   confidence?: number | null
   terminals: Terminal[]
+  /** メーカー・型式・定格などの属性（DD-0010） */
+  attributes?: Attributes
 }
 
 export type ConnectionKind = 'wire' | 'sheet_ref'
 
 export type Connection = {
+  /** 図面内で一意な配線の参照名（W-0001）。属性の JSON のオブジェクト ID に使う */
+  ref?: string | null
   from_symbol_ref: string
   from_terminal_ref: string | null
   to_symbol_ref: string
@@ -53,6 +57,8 @@ export type Connection = {
   note: string | null
   /** 登録の経緯。inference=AI の解析から取り込んだ候補 */
   origin?: SymbolOrigin
+  /** 長さ・電線種別・断面積などの属性（DD-0010） */
+  attributes?: Attributes
 }
 
 export type ProjectDetail = {
@@ -369,4 +375,24 @@ export type CircuitResult = CircuitSummary & {
   warnings: string[]
   coil_states: Record<string, { energized: boolean; voltage: number }>
   overlay: CircuitOverlay[]
+}
+
+// ---------- 属性（DD-0010） ----------
+export type AttributeValue = string | number | boolean | null
+export type Attributes = Record<string, AttributeValue>
+
+export type AttributeDef = { key: string; label: string; type: 'text' | 'number'; unit: string | null }
+
+export type AttributeDefinitions = {
+  symbol: { common: AttributeDef[]; by_class: Record<string, AttributeDef[]> }
+  wire: AttributeDef[]
+}
+
+export type AttributeImportReport = {
+  updated: number
+  unchanged: number
+  not_found: string[]
+  duplicates: string[]
+  type_mismatch: string[]
+  invalid: string[]
 }

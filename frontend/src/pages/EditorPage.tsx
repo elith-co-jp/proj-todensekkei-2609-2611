@@ -36,6 +36,7 @@ import {
   MIN_BOX,
   nextSymbolRef,
   SAVE_STATUS_LABELS,
+  withWireRefs,
 } from './editor/model'
 import { CanvasControls } from './editor/CanvasControls'
 import { EditorCanvasSvg } from './editor/EditorCanvasSvg'
@@ -606,7 +607,7 @@ export default function EditorPage() {
       return
     }
     pushHistory()
-    setConnections((prev) => [
+    setConnections((prev) => withWireRefs([
       ...prev,
       {
         from_symbol_ref: from.symbolRef,
@@ -619,7 +620,7 @@ export default function EditorPage() {
         external_ref: null,
         note: null,
       },
-    ])
+    ]))
     setTab('connections')
   }
 

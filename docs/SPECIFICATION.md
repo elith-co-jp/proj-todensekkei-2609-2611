@@ -121,6 +121,10 @@ ZIP を選択してインポートすると、`bundle.json` の有無で復元�
 - **Windows 配布版**: CPU 版 PyTorch・Ultralytics・学習開始用の検証済み YOLO11s 重み・学習済みの初期推論モデル（`assets/models/yolo11n_all_symbols_best.pt`）を単一 EXE に同梱。モデル未登録の初回起動時に同梱モデルを使用中の推論モデルとして自動登録する。初回学習は使用中のモデル（同梱モデル等）をベースに行われ、登録モデルが無い環境では内蔵 yolo11s 重みが起点になる（図面単位の交差検証で yolo11n より未学習図面の検出 F1 が高かった、DD-0007 §4.11）。学習済み `best.pt` は採用判定で推論モデルになる。シーケンス図向け未学習の初期重みを推論モデルとして自動登録しない
 - **外部実行への誘導**: `ultralytics` が無い場合、推論・学習 API は日本語メッセージで外部フロー（エクスポート → 外部 predict/学習 → 取込）を案内する
 
+### 3.5.1 記号・配線の属性
+
+記号と配線にメーカー・型式・長さなどの属性を持たせる（DD-0010）。エディタの詳細で、標準の項目（記号の種類・配線で変わる）と自由に足した項目を編集する。配線には図面内で一意な参照名（W-0001）があり、保存し直しても変わらない。データ受け渡しの画面で、全オブジェクトをオブジェクト ID と 1 対 1 で並べた JSON を書き出し（値のみ / 入力用の空欄つき）、編集した JSON を取り込める（形式は DATA_FORMAT.md §6）。
+
 ### 3.6 回路シミュレーション（`/circuit`）
 
 図面のアノテーションから回路を組み、接点の On/Off で電気がどこまで通り、どのリレーが動くかを確かめる画面（DD-0009）。
@@ -190,6 +194,9 @@ ZIP を選択してインポートすると、`bundle.json` の有無で復元�
 | `GET` | `/api/ml/training/class-stats` | クラス別の正解件数（完了の図面と全図面）、その記号がある図面数、30 件未満の印 `thin` |
 | `GET` | `/api/ml/training/hard-drawings` | 完了の図面ごとの AI の検出と正解の一致（`f1`・`missed`・`false_detections`・`relabeled`）。一致の低い順。0.9 未満は `hard: true` |
 | `POST` | `/api/ml/training/runs/{id}/decision` | `{decision: adopt\|reject}`。採用で成果物モデルを使用中に切替え |
+| `GET` | `/api/attributes/definitions` | 記号（共通・種類別）と配線の標準の属性 |
+| `POST` | `/api/attributes/export` | `{project_ids[], template}`。オブジェクト ID と属性を 1 対 1 で並べた JSON（DATA_FORMAT.md §6） |
+| `POST` | `/api/attributes/import` | multipart `file`。属性の JSON を取り込み、`updated`・`unchanged`・`not_found`・`duplicates`・`type_mismatch`・`invalid` を返す |
 | `POST` | `/api/circuit/build` | `{project_ids[]}`。回路を組み、コイルと接点、外部入力、確認が必要な箇所（`diagnostics`）、電源、解き方（`engine`）を返す |
 | `POST` | `/api/circuit/simulate` | `{project_ids[], inputs: {器具番号: bool}, energized: {器具番号: bool}}`。前の励磁状態から解き、`coil_states`・`warnings`・図面ごとの重ね表示（`overlay`）を返す |
 | `POST` | `/api/circuit/netlist` | `{project_ids[], inputs}`。LTspice・ngspice で開けるネットリスト（circuit.cir） |
