@@ -11,7 +11,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 
-from run_yolo_e2e_pipeline import line_ports
+from analysis.wiring.ports import line_ports
 
 
 def _wire(wid, orientation, x0, y0, x1, y1):
@@ -52,4 +52,42 @@ def test_line_through_a_dot_joins_the_wire_at_the_dot():
     dot = {"id": "j1", "class_name": "junction", "bbox": {"x0": 95, "y0": 55, "x1": 105, "y1": 65}}
     ports = line_ports(coil, mask, wires, [coil, dot])
     assert [p["wire_id_hint"] for p in ports] == ["cross", "bottom"]
+
+
+def test_faint_dotted_line_gives_a_coil_its_ports():
+    """二値化で消える薄い点線（ER21256）でも、灰色の濃さで見ればコイルの上下の線が分かる。"""
+    mask, wires, coil = _page()
+    mask[40:81, 99:102] = False
+    mask[120:161, 99:102] = False
+    mask[39:42, 20:181] = mask[59:62, 20:181] = mask[159:162, 20:181] = True   # 横線は残す
+    faint = mask.copy()
+    for y in list(range(42, 80, 3)) + list(range(121, 159, 3)):
+        faint[y:y + 2, 100] = True          # 2 px 描いて 1 px 空く点線
+    faint[70:74, 85:88] = True               # 線の脇の文字の一画
+    assert line_ports(coil, mask, wires, [coil]) == []
+    ports = line_ports(coil, mask, wires, [coil], faint)
+    assert [p["point"] for p in ports] == [[100.0, 80.0], [100.0, 120.0]]
+    assert [p["wire_id_hint"] for p in ports] == ["top", "bottom"]
+
+
+def _connector(cx, cy):
+    return {"id": "cn", "class_name": "connector", "center": [cx, cy],
+            "bbox": {"x0": cx - 20, "y0": cy - 8, "x1": cx + 20, "y1": cy + 8}}
+
+
+def test_line_ending_in_a_connector_on_the_line_joins_that_connector():
+    """コイルの上の線がコネクタの枠に入り、その中心が線の上にあれば、そのコネクタにつなぐ（ER21315）。
+    コネクタの間の短い線は配線として検出されない。"""
+    mask, wires, coil = _page()
+    connector = _connector(100, 70)
+    ports = line_ports(coil, mask, wires, [coil, connector])
+    assert [(p["wire_id_hint"], p["symbol_id_hint"]) for p in ports] == [(None, "cn"), ("bottom", None)]
+
+
+def test_connector_beside_the_line_is_not_joined():
+    """線の脇（中心が線から外れた）コネクタの枠に入っても、そのコネクタにはつながない。"""
+    mask, wires, coil = _page()
+    connector = _connector(115, 70)
+    ports = line_ports(coil, mask, wires, [coil, connector])
+    assert [(p["wire_id_hint"], p["symbol_id_hint"]) for p in ports] == [(None, None), ("bottom", None)]
 

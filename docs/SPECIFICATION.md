@@ -24,6 +24,8 @@ Docker Compose は `frontend`（Nginx）、`backend`（FastAPI + Poppler）、`d
 
 ディレクトリ配置（`routers/` `services/` `models.py` `schemas.py` `main.py` `tests/` `frontend/`）。
 
+図面の解析は `analysis/runtime.py` が入口で、配線解析の各段（配線の検出、グラフ、端子、結び付け、端子間の接続）は `analysis/wiring/` に責務ごとに分ける。調整値は `analysis/wiring/params.py`、記号の種類の役割は `analysis/wiring/classes.py` だけで決める（DD-0011）。`analysis/tools/` は評価・実験・学習データ作成のスクリプトで、アプリからは読まない。
+
 ## 3. 画面仕様
 
 ### 3.1 図面一覧（`/`）

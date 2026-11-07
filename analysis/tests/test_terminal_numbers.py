@@ -9,7 +9,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 
-from terminal_numbers import attach_terminal_numbers, connector_numbers, contact_numbers
+from analysis.wiring.terminal_numbers import attach_terminal_numbers, connector_numbers, contact_numbers
 from analysis.relay_links import apply_row
 
 

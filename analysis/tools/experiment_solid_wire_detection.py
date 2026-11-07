@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import _repo_path  # noqa: F401  (リポジトリの直下を import できるようにする)
+
 import argparse
 import json
 import zipfile
@@ -13,30 +15,9 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
 from analyze_annotation_graph import endpoint_key, load_zip_payload
-from analyze_pdf_structure import (
-    Box,
-    DetectedWire,
-    LineSegment,
-    build_connection_graph,
-    center_in_box,
-    detect_regions,
-    filter_line_segments,
-    is_left_voltage_arrow,
-    is_near_outer_frame,
-    is_right_reference_block_line,
-    line_axis,
-    line_from_box,
-    line_ink_coverage,
-    line_intersection,
-    line_span,
-    make_binary_mask,
-    merge_candidate_lines,
-    render_page,
-    scan_line_segments,
-    split_lines_by_ink_support,
-    support_vector_for_span,
-    write_json,
-)
+from analyze_pdf_structure import render_page
+from analysis.wiring.detect import Box, DetectedWire, LineSegment, center_in_box, detect_regions, filter_line_segments, is_left_voltage_arrow, is_near_outer_frame, is_right_reference_block_line, line_axis, line_from_box, line_ink_coverage, line_intersection, line_span, make_binary_mask, merge_candidate_lines, scan_line_segments, split_lines_by_ink_support, support_vector_for_span, write_json
+from analysis.wiring.graph import build_connection_graph
 
 
 def load_font(size: int) -> ImageFont.ImageFont:

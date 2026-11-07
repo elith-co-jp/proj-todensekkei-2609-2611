@@ -10,7 +10,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 
 from ocr_finetune_data import snap_token, target_for
-from run_yolo_e2e_pipeline import load_crop_ocr_reader
+from analysis.wiring.ocr import load_crop_ocr_reader
 
 
 def test_a_misread_glyph_is_corrected_to_the_printed_word():

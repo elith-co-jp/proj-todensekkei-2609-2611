@@ -12,10 +12,10 @@ from PIL import Image, ImageDraw
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 
-from analyze_pdf_structure import Box, LineSegment, analyze_image, merge_candidate_lines
-from build_e2e_demo_outputs import build_final_output_from_analysis
-from experiment_symbol_port_inference import infer_ports_for_symbol
-from run_yolo_e2e_pipeline import port_inference_config
+from analysis.wiring.detect import Box, LineSegment, analyze_image, merge_candidate_lines
+from analysis.wiring.assemble import build_final_output_from_analysis
+from analysis.wiring.ports import infer_ports_for_symbol
+from analysis.wiring.ports import port_inference_config
 
 
 def wires_of(image: Image.Image) -> list[dict]:

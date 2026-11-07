@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import _repo_path  # noqa: F401  (リポジトリの直下を import できるようにする)
+
 import argparse
 import hashlib
 import json
@@ -11,24 +13,16 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 from PIL import Image, ImageDraw
 
-from analyze_pdf_structure import WIRE_GEOMETRY_REVISION, analyze_page, make_binary_mask, support_vector_for_span
+from analyze_pdf_structure import WIRE_GEOMETRY_REVISION, analyze_page
+from analysis.wiring.detect import make_binary_mask, support_vector_for_span
 from analyze_annotation_graph import load_zip_payload, symbol_bbox
-from build_from_to_review_outputs import build_predicted_graph_pairs
-from build_e2e_demo_outputs import (
-    DEFAULT_ANALYSIS_ROOT,
-    DEFAULT_PDF_PATH,
-    PDF_ENV_VAR,
-    build_final_output_from_analysis,
-    draw_reconstruction,
-    draw_wire_support_diff,
-    load_json,
-    load_font,
-    wire_points,
-    write_json,
-    write_visual_outputs,
-)
+from analysis.wiring.connectivity import build_predicted_graph_pairs
+from build_e2e_demo_outputs import DEFAULT_ANALYSIS_ROOT, DEFAULT_PDF_PATH, PDF_ENV_VAR, draw_reconstruction, draw_wire_support_diff, load_font, write_json, write_visual_outputs
+from analysis.wiring.assemble import build_final_output_from_analysis, load_json
+from analysis.wiring.geometry import wire_points
 from evaluate_yolo_label_ocr import (
     OCR_ALLOWLIST,
     build_label_candidate,
@@ -36,14 +30,15 @@ from evaluate_yolo_label_ocr import (
     read_label,
 )
 from evaluate_label_word_rules import build_word_rule_label
-from experiment_symbol_port_inference import (
-    EXPLICIT_NODE_CLASSES,
-    default_configs as default_port_inference_configs,
-    infer_ports_for_symbol,
-    is_four_port_symbol,
-)
+from analysis.wiring.ports import EXPLICIT_NODE_CLASSES, default_configs as default_port_inference_configs, infer_ports_for_symbol, is_four_port_symbol
 from prepare_yolo_dataset import suppress_text_like_components
-from filter_wire_decorations import filter_wire_decorations, rapidocr_text_confirmation
+from analysis.wiring.filter_wire_decorations import filter_wire_decorations, rapidocr_text_confirmation
+from analysis.wiring.connectivity import build_direct_from_to  # noqa: E402
+from analysis.wiring.detect import DEFAULT_WIRE_TEXT_MASK  # noqa: E402
+from analysis.wiring.geometry import box_center  # noqa: E402
+from analysis.wiring.linking import enrich_symbols_and_graph  # noqa: E402
+from analysis.wiring.ocr import load_symbol_ocr_reader  # noqa: E402
+from analysis.wiring.ports import DEFAULT_INFERRED_TERMINAL_CLASSES, port_inference_config  # noqa: E402
 
 
 DEFAULT_MODEL_PATH = Path(
@@ -52,47 +47,8 @@ DEFAULT_MODEL_PATH = Path(
 )
 DEFAULT_OUT_DIR = Path("private/results/e2e")
 DEFAULT_WIRE_ANALYSIS_DPI = 150
-DEFAULT_WIRE_TEXT_MASK = "components"
 FONT_SM = load_font(15)
 FONT_MD = load_font(18)
-# Ports are inferred from ink touching each box edge, so any class can take part
-# in connectivity when a wire visibly meets its outline.
-DEFAULT_INFERRED_TERMINAL_CLASSES = {
-    "contact_a", "contact_b", "solenoid", "relay_coil",
-    "lamp", "push_button", "diode", "other", "terminal", "power_bus",
-    "connector", "junction",
-}
-DIRECT_INTERNAL_BRIDGE_CLASSES = {
-    "contact_a", "contact_b", "solenoid", "relay_coil", "lamp", "push_button", "diode",
-}
-DIRECT_NODE_ANCHOR_CLASSES = {"connector", "junction", "power_bus", "terminal"}
-DIRECT_TERMINAL_GAP_BRIDGE_CLASSES = {
-    "connector", "contact_a", "contact_b", "junction", "solenoid",
-    "relay_coil", "lamp", "push_button", "diode", "power_bus",
-}
-DIRECT_TERMINAL_TERMINAL_BRIDGE_CLASSES = {"junction"}
-DIRECT_NODE_ANCHOR_THRESHOLD = 24.0
-DIRECT_TERMINAL_GAP_BRIDGE_MAX = 240.0
-DIRECT_WIRE_GAP_BRIDGE_MAX = 80.0
-DIRECT_GAP_BRIDGE_ALIGN_THRESHOLD = 28.0
-DIRECT_WIRE_GAP_TERMINAL_ANCHOR_THRESHOLD = 18.0
-# Two junction dots are joined only through a detected wire: a bridge between aligned dots chained
-# the separate staggered wires of one column group into a single net (ER21277).
-DIRECT_TERMINAL_TERMINAL_BRIDGE_MAX = 0.0
-DIRECT_ENDPOINT_BRIDGE_MAX = 60.0
-# Join a wire end to a nearby perpendicular wire only past that end, never back over its own span.
-DIRECT_WIRE_GAP_BRIDGE_OUTWARD_ONLY = True
-# Longest run of blank pixels (at 150 dpi) a wire-gap bridge may cross. Markers on a wire stay
-# under about 38 px; the space between a card's + and - dots is over 50 px. 0 disables the check.
-DIRECT_WIRE_GAP_BRIDGE_MAX_BLANK = 45.0
-# The same limit for a terminal joined to the end of a collinear wire up to DIRECT_TERMINAL_GAP_BRIDGE_MAX away.
-DIRECT_TERMINAL_GAP_BRIDGE_MAX_BLANK = 45.0
-# A missing wire never runs through the middle of a coil: such a bridge would short it.
-DIRECT_GAP_BRIDGE_DEVICE_CLASSES = {"relay_coil", "solenoid"}
-BOX_PORTS_SKIP_COIL_INTERIOR = True
-# Classes whose electrical port is wherever a wire meets the box; when such a
-# symbol has no terminal link, attach it to every wire touching its bbox.
-TOUCHING_WIRE_FALLBACK_CLASSES = {"connector", "junction", "power_bus", "terminal"}
 
 
 def parse_pages(values: list[str]) -> list[int]:
@@ -166,30 +122,12 @@ def ensure_analysis_outputs(
             pass
 
 
-def box_center(box: dict[str, int | float]) -> tuple[float, float]:
-    return ((float(box["x0"]) + float(box["x1"])) / 2, (float(box["y0"]) + float(box["y1"])) / 2)
 
 
-def point_distance(a: tuple[float, float], b: tuple[float, float]) -> float:
-    return ((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2) ** 0.5
 
 
-def padded_box(box: dict[str, int | float], padding: float, width: int, height: int) -> dict[str, float]:
-    return {
-        "x0": max(0.0, float(box["x0"]) - padding),
-        "y0": max(0.0, float(box["y0"]) - padding),
-        "x1": min(float(width), float(box["x1"]) + padding),
-        "y1": min(float(height), float(box["y1"]) + padding),
-    }
 
 
-def box_intersects(a: dict[str, int | float], b: dict[str, int | float]) -> bool:
-    return not (
-        float(a["x1"]) < float(b["x0"])
-        or float(b["x1"]) < float(a["x0"])
-        or float(a["y1"]) < float(b["y0"])
-        or float(b["y1"]) < float(a["y0"])
-    )
 
 
 def box_area(box: dict[str, int | float]) -> float:
@@ -683,29 +621,6 @@ def augment_symbols_with_gold(
     }
 
 
-def wire_bbox(wire: dict[str, Any], padding: int = 8) -> dict[str, int]:
-    if "polyline" in wire and wire["polyline"]:
-        xs = [int(round(point[0])) for point in wire["polyline"]]
-        ys = [int(round(point[1])) for point in wire["polyline"]]
-        return {
-            "x0": min(xs) - padding,
-            "y0": min(ys) - padding,
-            "x1": max(xs) + padding,
-            "y1": max(ys) + padding,
-        }
-    if wire["orientation"] == "h":
-        return {
-            "x0": int(wire["span_start"]) - padding,
-            "y0": int(wire["axis"]) - padding,
-            "x1": int(wire["span_end"]) + padding,
-            "y1": int(wire["axis"]) + padding,
-        }
-    return {
-        "x0": int(wire["axis"]) - padding,
-        "y0": int(wire["span_start"]) - padding,
-        "x1": int(wire["axis"]) + padding,
-        "y1": int(wire["span_end"]) + padding,
-    }
 
 
 def resize_panel(image: Image.Image, target_w: int) -> Image.Image:
@@ -983,931 +898,43 @@ def enrich_symbols_with_label_ocr(
     return enriched_count
 
 
-def point_to_wire_distance(point: tuple[float, float], wire: dict[str, Any]) -> float:
-    if wire.get("polyline") and len(wire["polyline"]) >= 2:
-        start = wire["polyline"][0]
-        end = wire["polyline"][-1]
-        if wire.get("orientation") == "h":
-            x0, x1 = sorted((float(start[0]), float(end[0])))
-            x = min(max(point[0], x0), x1)
-            return point_distance(point, (x, float(start[1])))
-        y0, y1 = sorted((float(start[1]), float(end[1])))
-        y = min(max(point[1], y0), y1)
-        return point_distance(point, (float(start[0]), y))
-    if wire["orientation"] == "h":
-        if "span_start" in wire and "span_end" in wire:
-            x0, x1 = float(wire["span_start"]), float(wire["span_end"])
-        else:
-            x0, x1 = float(wire["bbox"]["x0"]), float(wire["bbox"]["x1"])
-        x = min(max(point[0], x0), x1)
-        return point_distance(point, (x, float(wire["axis"])))
-    if "span_start" in wire and "span_end" in wire:
-        y0, y1 = float(wire["span_start"]), float(wire["span_end"])
-    else:
-        y0, y1 = float(wire["bbox"]["y0"]), float(wire["bbox"]["y1"])
-    y = min(max(point[1], y0), y1)
-    return point_distance(point, (float(wire["axis"]), y))
-
-
-def port_inference_config(name: str) -> dict[str, Any]:
-    for config in default_port_inference_configs():
-        if str(config.get("name")) == name:
-            return config
-    raise ValueError(f"unknown inferred terminal config: {name}")
-
-
-def terminal_points_for_symbol(
-    symbol: dict[str, Any],
-    *,
-    wires: list[dict[str, Any]],
-    source_image: Image.Image,
-    terminal_source: str,
-    inferred_terminal_classes: set[str],
-    inferred_terminal_config: dict[str, Any],
-) -> list[dict[str, Any]]:
-    class_name = str(symbol.get("class_name") or symbol.get("type") or "")
-    terminals = symbol.get("terminals") or []
-
-    if terminal_source in {"annotation", "annotation-or-inferred"}:
-        points = []
-        for index, terminal in enumerate(terminals, start=1):
-            point = terminal.get("point")
-            if not point:
-                continue
-            points.append(
-                {
-                    "terminal_ref": terminal.get("ref") or f"{symbol['id']}-T{index}",
-                    "terminal_name": terminal.get("name") or "",
-                    "point": [float(point[0]), float(point[1])],
-                    "source": "annotation",
-                }
-            )
-        if points:
-            return points
-
-    if terminal_source in {"inferred", "annotation-or-inferred"} and class_name in inferred_terminal_classes:
-        candidates = infer_ports_for_symbol(symbol, wires, source_image, config=inferred_terminal_config)
-        if candidates:
-            return [
-                {
-                    "terminal_ref": f"{symbol['id']}-P{index:02d}",
-                    "terminal_name": f"P{index}",
-                    "point": [float(candidate["point"][0]), float(candidate["point"][1])],
-                    "source": "inferred_symbol_port",
-                    "wire_id_hint": candidate.get("wire_id"),
-                    "wire_orientation": candidate.get("wire_orientation"),
-                    "port_reason": candidate.get("reason"),
-                    "port_ink_ratio": candidate.get("ink_ratio"),
-                }
-                for index, candidate in enumerate(candidates, start=1)
-            ]
-
-    if class_name in EXPLICIT_NODE_CLASSES:
-        return [
-            {
-                "terminal_ref": f"{symbol['id']}-N01",
-                "terminal_name": "N1",
-                "point": [float(symbol["center"][0]), float(symbol["center"][1])],
-                "source": "explicit_node_center",
-            }
-        ]
-
-    return [
-        {
-            "terminal_ref": None,
-            "terminal_name": None,
-            "point": [float(symbol["center"][0]), float(symbol["center"][1])],
-            "source": "bbox_center_fallback",
-        }
-    ]
-
-
-# 端子が 2 個に満たない接点・コイルは、記号の枠の上下（接点は左右も）から外へ伸びる線を画像で探して端子にし、
-# 線をたどって最初に当たる配線につなぐ（DD-0009 §8）。短い引き出し線や信頼度の低い縦線は配線として
-# 検出されず、端子が付かないため回路から外れていた。
-LINE_PORT_CLASSES = frozenset({"contact_a", "contact_b", "relay_coil", "solenoid"})
-LINE_PORT_MIN_RUN = 10      # 枠の外へ続く線の長さの下限（150 dpi の px）。文字の画は短い
-LINE_PORT_PROBE = 40        # 端子の位置を選ぶときに見る長さ
-LINE_PORT_TRACE_MAX = 400   # 配線を探してたどる長さの上限
-LINE_PORT_GAP = 2           # たどるときに許す途切れ
-LINE_PORTS_ENABLED = os.environ.get("SEQANNO_LINE_PORTS", "1") != "0"
-
-
-def _ink_run(mask: Any, x: int, y: int, dx: int, dy: int, limit: int) -> int:
-    """(x, y) から (dx, dy) の向きに続くインクの長さ。線の太さの揺れに 1 px、途切れに LINE_PORT_GAP px を許す。"""
-    height, width = mask.shape[:2]
-    run = miss = 0
-    for i in range(1, limit + 1):
-        px, py = x + dx * i, y + dy * i
-        if not (0 <= px < width and 0 <= py < height):
-            break
-        inked = mask[py, max(0, px - 1):px + 2].any() if dx == 0 else mask[max(0, py - 1):py + 2, px].any()
-        if inked:
-            run, miss = i, 0
-        else:
-            miss += 1
-            if miss > LINE_PORT_GAP:
-                break
-    return run
-
-
-def _trace_to_wire(
-    mask: Any, start: tuple[int, int], step: tuple[int, int], wires: list[dict[str, Any]],
-    other_boxes: list[dict[str, Any]], dot_boxes: list[dict[str, Any]],
-) -> str | None:
-    """端子から外へ線をたどり、最初に当たる配線の ID。黒丸の無い交差（線が向こうへ続く）は通り過ぎ、
-    黒丸（分岐点）の上で当たった配線はそこでつながっているとみなす。
-
-    同じ向きの配線が記号の枠を貫いていれば、その配線を返す。両端子が同じ配線に乗り、配線の上の位置で
-    順に並ぶので、記号は直列に入る（推定の端子と同じ扱い）。ほかの記号の枠に入ったら止める。
-    """
-    height, width = mask.shape[:2]
-    dx, dy = step
-    x, y = start
-    miss = 0
-    for i in range(0, LINE_PORT_TRACE_MAX + 1):
-        px, py = x + dx * i, y + dy * i
-        if not (0 <= px < width and 0 <= py < height):
-            return None
-        if i > 3 and any(b["x0"] <= px <= b["x1"] and b["y0"] <= py <= b["y1"] for b in other_boxes):
-            return None
-        for wire in wires:
-            box = wire.get("bbox") or {}
-            if not box or not (box["x0"] - 2 <= px <= box["x1"] + 2 and box["y0"] - 2 <= py <= box["y1"] + 2):
-                continue
-            if (wire.get("orientation") == "v") == (dx == 0):
-                return str(wire["id"])
-            # 直交する配線: 線がその向こうへ続けば黒丸の無い交差なので通り過ぎる。
-            on_dot = any(b["x0"] - 2 <= px <= b["x1"] + 2 and b["y0"] - 2 <= py <= b["y1"] + 2 for b in dot_boxes)
-            thickness = (box["y1"] - box["y0"]) if dx == 0 else (box["x1"] - box["x0"])
-            beyond = int(thickness) + 4
-            if not on_dot and _ink_run(mask, px + dx * beyond, py + dy * beyond, dx, dy, 8) >= 6:
-                continue
-            return str(wire["id"])
-        inked = mask[py, max(0, px - 1):px + 2].any() if dx == 0 else mask[max(0, py - 1):py + 2, px].any()
-        if inked:
-            miss = 0
-        else:
-            miss += 1
-            if miss > LINE_PORT_GAP:
-                return None
-    return None
-
-
-def line_ports(
-    symbol: dict[str, Any], mask: Any, wires: list[dict[str, Any]], symbols: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    """枠の両側から外へ続く線を探して 2 端子にする。見つからなければ空。"""
-    box = symbol["bbox"]
-    x0, y0, x1, y1 = (int(round(float(box[k]))) for k in ("x0", "y0", "x1", "y1"))
-    axes = ["v"] if symbol.get("class_name") in {"relay_coil", "solenoid"} else ["v", "h"]
-    # 線の太さの揺れを 1 px 許して見るので、同じ強さの列が線の幅だけ続く。その真ん中を端子の位置にする。
-    best_score, best_axis, best_columns = 0, "v", []
-    for axis in axes:
-        lo, hi = (x0 + 2, x1 - 2) if axis == "v" else (y0 + 2, y1 - 2)
-        for c in range(lo, hi + 1):
-            if axis == "v":
-                runs = (_ink_run(mask, c, y0, 0, -1, LINE_PORT_PROBE), _ink_run(mask, c, y1, 0, 1, LINE_PORT_PROBE))
-            else:
-                runs = (_ink_run(mask, x0, c, -1, 0, LINE_PORT_PROBE), _ink_run(mask, x1, c, 1, 0, LINE_PORT_PROBE))
-            score = min(runs)
-            if score < LINE_PORT_MIN_RUN or score < best_score:
-                continue
-            if score > best_score or axis != best_axis or c != best_columns[-1] + 1:
-                best_score, best_axis, best_columns = score, axis, [c]
-            else:
-                best_columns.append(c)
-    if not best_columns:
-        return []
-    axis, c = best_axis, best_columns[len(best_columns) // 2]
-    live = [s for s in symbols if s is not symbol and not (s.get("dot_role") or {}).get("suppressed")]
-    others = [s["bbox"] for s in live if s.get("class_name") != "junction"]
-    dots = [s["bbox"] for s in live if s.get("class_name") == "junction"]
-    ends = [((c, y0), (0, -1)), ((c, y1), (0, 1))] if axis == "v" else [((x0, c), (-1, 0)), ((x1, c), (1, 0))]
-    return [
-        {
-            "terminal_ref": f"{symbol['id']}-L{index:02d}",
-            "terminal_name": f"P{index}",
-            "point": [float(point[0]), float(point[1])],
-            "source": "line_port",
-            "wire_id_hint": _trace_to_wire(mask, point, step, wires, others, dots),
-            "wire_orientation": axis,
-            "traced": True,
-        }
-        for index, (point, step) in enumerate(ends, start=1)
-    ]
 
 
 
-def nearest_wire_for_point(
-    point: tuple[float, float],
-    wires: list[dict[str, Any]],
-) -> tuple[dict[str, Any], float] | tuple[None, float]:
-    if not wires:
-        return None, float("inf")
-    best_wire = min(wires, key=lambda wire: point_to_wire_distance(point, wire))
-    return best_wire, point_to_wire_distance(point, best_wire)
 
 
-def enrich_symbols_and_graph(
-    payload: dict[str, Any],
-    symbols: list[dict[str, Any]],
-    *,
-    terminal_wire_threshold: float,
-    terminal_node_threshold: float,
-    terminal_source: str,
-    inferred_terminal_classes: set[str],
-    inferred_terminal_config: dict[str, Any],
-    symbol_terminal_bridge_classes: set[str],
-    junction_node_policy: str,
-    junction_node_classes: set[str],
-    junction_node_threshold: float,
-    source_image: Image.Image,
-) -> dict[str, Any]:
-    width = int(payload["image_size"]["width"])
-    height = int(payload["image_size"]["height"])
-    labels = payload.get("labels", [])
-    wires = payload.get("wires", [])
-    wires_by_id = {str(wire.get("id")): wire for wire in wires}
-    nodes = [{**node} for node in payload.get("nodes", [])]
-    nodes_by_id = {node["id"]: node for node in nodes}
-
-    symbol_node_links: list[dict[str, Any]] = []
-    symbol_wire_links: list[dict[str, Any]] = []
-    symbol_terminal_links: list[dict[str, Any]] = []
-    # A wire end inside a coil or solenoid belongs to that device, never to a box drawn around it.
-    coil_boxes = [
-        s["bbox"] for s in symbols
-        if str(s.get("class_name") or "") in DIRECT_GAP_BRIDGE_DEVICE_CLASSES and not (s.get("dot_role") or {}).get("suppressed")
-    ] if BOX_PORTS_SKIP_COIL_INTERIOR else []
-    line_mask = None
-    for symbol in symbols:
-        if (symbol.get("dot_role") or {}).get("suppressed"):
-            symbol.update(terminals=[], nearby_node_ids=[], terminal_wire_ids=[], terminal_links=[],
-                          touching_wire_ids=[], nearby_label_ids=[])
-            continue
-        bbox = symbol["bbox"]
-        center = tuple(symbol["center"])
-        terminal_points = terminal_points_for_symbol(
-            symbol,
-            wires=wires,
-            source_image=source_image,
-            terminal_source=terminal_source,
-            inferred_terminal_classes=inferred_terminal_classes,
-            inferred_terminal_config=inferred_terminal_config,
-        )
-        if coil_boxes and symbol.get("class_name") == "other":
-            terminal_points = [
-                t for t in terminal_points
-                if not any(b["x0"] <= t["point"][0] <= b["x1"] and b["y0"] <= t["point"][1] <= b["y1"] for b in coil_boxes)
-            ]
-        if (
-            LINE_PORTS_ENABLED and symbol.get("class_name") in LINE_PORT_CLASSES
-            and not is_four_port_symbol(str(symbol.get("class_name")), bbox, float(inferred_terminal_config["four_port_height_px"]))
-            and len([t for t in terminal_points if t.get("terminal_ref")]) < 2
-        ):
-            if line_mask is None:
-                line_mask = make_binary_mask(source_image)
-            terminal_points = line_ports(symbol, line_mask, wires, symbols) or terminal_points
-        symbol["terminals"] = [
-            {
-                "ref": terminal.get("terminal_ref"),
-                "name": terminal.get("terminal_name") or "",
-                "point": terminal["point"],
-                "source": terminal.get("source"),
-                "wire_id_hint": terminal.get("wire_id_hint"),
-                "wire_orientation": terminal.get("wire_orientation"),
-                "port_reason": terminal.get("port_reason"),
-                "port_ink_ratio": terminal.get("port_ink_ratio"),
-            }
-            for terminal in terminal_points
-            if terminal.get("terminal_ref")
-        ]
-        linked_node_ids = []
-        terminal_wire_ids = []
-        terminal_links_for_symbol = []
-        for terminal in terminal_points:
-            point = (float(terminal["point"][0]), float(terminal["point"][1]))
-            nearest_node: tuple[float, dict[str, Any]] | None = None
-            if nodes:
-                node = min(nodes, key=lambda item: point_distance(point, (float(item["x"]), float(item["y"]))))
-                distance = point_distance(point, (float(node["x"]), float(node["y"])))
-                nearest_node = (distance, node)
-                if distance <= terminal_node_threshold and node["id"] not in linked_node_ids:
-                    linked_node_ids.append(node["id"])
-                    symbol_node_links.append(
-                        {
-                            "symbol_id": symbol["id"],
-                            "terminal_ref": terminal["terminal_ref"],
-                            "terminal_name": terminal["terminal_name"],
-                            "node_id": node["id"],
-                            "distance": round(distance, 2),
-                            "reason": "nearest_terminal_node",
-                        }
-                    )
-                    nodes_by_id[node["id"]].setdefault("symbol_ids", []).append(symbol["id"])
-
-            hinted_wire_id = terminal.get("wire_id_hint")
-            if terminal.get("traced") and not hinted_wire_id:
-                # 線をたどっても配線に当たらなかった端子は、近くの別の配線（記号を貫く線など）に結ばない。
-                continue
-            if hinted_wire_id and str(hinted_wire_id) in wires_by_id:
-                nearest_wire = wires_by_id[str(hinted_wire_id)]
-                wire_distance = point_to_wire_distance(point, nearest_wire)
-            else:
-                nearest_wire, wire_distance = nearest_wire_for_point(point, wires)
-            # 画像の線をたどった端子（line_ports）は、離れた先の配線にもつなぐ。
-            if nearest_wire is not None and (wire_distance <= terminal_wire_threshold or (terminal.get("traced") and hinted_wire_id)):
-                if nearest_wire["id"] not in terminal_wire_ids:
-                    terminal_wire_ids.append(nearest_wire["id"])
-                link = {
-                    "symbol_id": symbol["id"],
-                    "terminal_ref": terminal["terminal_ref"],
-                    "terminal_name": terminal["terminal_name"],
-                    "wire_id": nearest_wire["id"],
-                    "distance": round(wire_distance, 2),
-                    "reason": "inferred_terminal_wire" if hinted_wire_id else "nearest_terminal_wire",
-                    "terminal_source": terminal.get("source"),
-                }
-                terminal_links_for_symbol.append(link)
-                symbol_terminal_links.append(link)
-            elif nearest_node is not None and nearest_node[0] <= terminal_node_threshold:
-                link = {
-                    "symbol_id": symbol["id"],
-                    "terminal_ref": terminal["terminal_ref"],
-                    "terminal_name": terminal["terminal_name"],
-                    "node_id": nearest_node[1]["id"],
-                    "distance": round(nearest_node[0], 2),
-                    "reason": "nearest_terminal_node_no_wire",
-                }
-                terminal_links_for_symbol.append(link)
-                symbol_terminal_links.append(link)
-
-        expanded = padded_box(bbox, 10, width, height)
-        touching_wire_ids = []
-        for wire in wires:
-            if box_intersects(expanded, wire_bbox(wire, padding=10)):
-                touching_wire_ids.append(wire["id"])
-                symbol_wire_links.append(
-                    {
-                        "symbol_id": symbol["id"],
-                        "wire_id": wire["id"],
-                        "reason": "symbol_bbox_touches_wire",
-                    }
-                )
-
-        nearby_labels = []
-        for label in labels:
-            label_bbox = label.get("bbox")
-            if not label_bbox:
-                continue
-            distance = point_distance(center, box_center(label_bbox))
-            if distance <= 90:
-                nearby_labels.append((distance, label["id"]))
-        nearby_labels.sort(key=lambda item: item[0])
-        symbol["nearby_node_ids"] = linked_node_ids
-        symbol["terminal_wire_ids"] = terminal_wire_ids
-        symbol["terminal_links"] = terminal_links_for_symbol
-        symbol["touching_wire_ids"] = touching_wire_ids[:10]
-        symbol["nearby_label_ids"] = [label_id for _distance, label_id in nearby_labels[:8]]
-
-    return {
-        **payload,
-        "symbols": symbols,
-        "nodes": nodes,
-        "symbol_node_links": symbol_node_links,
-        "symbol_wire_links": symbol_wire_links,
-        "symbol_terminal_links": symbol_terminal_links,
-        "nets": build_net_candidates(
-            payload.get("edges", []),
-            nodes,
-            symbols,
-            wires,
-            symbol_terminal_bridge_classes=symbol_terminal_bridge_classes,
-            junction_node_policy=junction_node_policy,
-            junction_node_classes=junction_node_classes,
-            junction_node_threshold=junction_node_threshold,
-            source_image=source_image,
-        ),
-    }
 
 
-def build_net_candidates(
-    edges: list[dict[str, Any]],
-    nodes: list[dict[str, Any]],
-    symbols: list[dict[str, Any]],
-    wires: list[dict[str, Any]],
-    *,
-    symbol_terminal_bridge_classes: set[str],
-    junction_node_policy: str,
-    junction_node_classes: set[str],
-    junction_node_threshold: float,
-    source_image: Image.Image | None = None,
-) -> list[dict[str, Any]]:
-    parent: dict[str, str] = {}
-    nodes_by_id = {str(node["id"]): node for node in nodes}
-
-    def find(node_id: str) -> str:
-        parent.setdefault(node_id, node_id)
-        if parent[node_id] != node_id:
-            parent[node_id] = find(parent[node_id])
-        return parent[node_id]
-
-    def union(a: str, b: str) -> None:
-        ra = find(a)
-        rb = find(b)
-        if ra != rb:
-            parent[rb] = ra
-
-    conductive_junction_node_ids: set[str] = set()
-    if junction_node_policy == "explicit":
-        junction_symbols = [
-            symbol
-            for symbol in symbols
-            if str(symbol.get("class_name") or symbol.get("type") or "") in junction_node_classes
-        ]
-        for node in nodes:
-            if str(node.get("type") or "") != "junction":
-                continue
-            point = (float(node["x"]), float(node["y"]))
-            for symbol in junction_symbols:
-                center = tuple(symbol.get("center") or box_center(symbol["bbox"]))
-                if point_distance(point, center) <= junction_node_threshold:
-                    conductive_junction_node_ids.add(str(node["id"]))
-                    break
-    elif junction_node_policy == "all":
-        junction_symbol_points = [
-            tuple(symbol.get("center") or box_center(symbol["bbox"]))
-            for symbol in symbols
-            if str(symbol.get("class_name") or symbol.get("type") or "") in junction_node_classes
-        ]
-
-        def _wire_ends_at(node_x: float, node_y: float, tol: float = 8.0) -> bool:
-            """A wire span terminates at this node (tee join, not a through-crossing)."""
-            for wire in wires:
-                box = wire.get("box") or {}
-                if wire.get("orientation") == "h":
-                    if not (float(box.get("y0", -1)) - tol <= node_y <= float(box.get("y1", -1)) + tol):
-                        continue
-                    if not (float(box.get("x0", -1)) - tol <= node_x <= float(box.get("x1", -1)) + tol):
-                        continue
-                    if abs(node_x - float(box.get("x0", -999))) <= tol or abs(node_x - float(box.get("x1", -999))) <= tol:
-                        return True
-                elif wire.get("orientation") == "v":
-                    if not (float(box.get("x0", -1)) - tol <= node_x <= float(box.get("x1", -1)) + tol):
-                        continue
-                    if not (float(box.get("y0", -1)) - tol <= node_y <= float(box.get("y1", -1)) + tol):
-                        continue
-                    if abs(node_y - float(box.get("y0", -999))) <= tol or abs(node_y - float(box.get("y1", -999))) <= tol:
-                        return True
-            return False
-
-        tee_node_ids = {
-            str(node["id"])
-            for node in nodes
-            if str(node.get("type") or "") == "junction"
-            and _wire_ends_at(float(node["x"]), float(node["y"]))
-        }
-        # Through-crossings (no wire ends here) only conduct when a junction
-        # symbol sits nearby — bare line crossings are not connections.
-        cross_conductive_ids = {
-            str(node["id"])
-            for node in nodes
-            if str(node.get("type") or "") == "junction"
-            and str(node["id"]) not in tee_node_ids
-            and any(
-                point_distance((float(node["x"]), float(node["y"])), point) <= junction_node_threshold
-                for point in junction_symbol_points
-            )
-        }
-        if source_image is not None:
-            junction_mask = make_binary_mask(source_image)
-            mask_h, mask_w = junction_mask.shape[:2]
-
-            def _ink_at(px: int, py: int, r: int = 2) -> bool:
-                window = junction_mask[
-                    max(0, py - r):min(mask_h, py + r + 1),
-                    max(0, px - r):min(mask_w, px + r + 1),
-                ]
-                return bool((window > 0).any())
-
-            for node in nodes:
-                if str(node.get("type") or "") != "junction":
-                    continue
-                node_id = str(node["id"])
-                if node_id not in tee_node_ids and node_id not in cross_conductive_ids:
-                    continue
-                x = int(round(float(node["x"])))
-                y = int(round(float(node["y"])))
-                if not _ink_at(x, y):
-                    continue
-                arm_distance = 5
-                arms = sum(
-                    1
-                    for dx, dy in ((arm_distance, 0), (-arm_distance, 0), (0, arm_distance), (0, -arm_distance))
-                    if _ink_at(x + dx, y + dy)
-                )
-                if arms >= 3:
-                    conductive_junction_node_ids.add(node_id)
-        else:
-            conductive_junction_node_ids = {
-                str(node["id"])
-                for node in nodes
-                if str(node.get("type") or "") == "junction"
-                and (str(node["id"]) in tee_node_ids or str(node["id"]) in cross_conductive_ids)
-            }
-
-    def graph_node_id(node_id: str, wire_id: str | None) -> str:
-        node = nodes_by_id.get(str(node_id), {})
-        if (
-            junction_node_policy in ("explicit", "all")
-            and str(node.get("type") or "") == "junction"
-            and str(node_id) not in conductive_junction_node_ids
-        ):
-            return f"{node_id}@{wire_id or 'unknown_wire'}"
-        return str(node_id)
-
-    for edge in edges:
-        union(
-            graph_node_id(str(edge["from_node_id"]), edge.get("wire_id")),
-            graph_node_id(str(edge["to_node_id"]), edge.get("wire_id")),
-        )
-
-    edge_by_root: dict[str, list[str]]
-    wire_by_root: dict[str, set[str]]
-    root_by_wire: dict[str, set[str]]
-    root_by_node: dict[str, set[str]]
-
-    def rebuild_indexes() -> tuple[dict[str, set[str]], dict[str, list[str]], dict[str, set[str]], dict[str, set[str]], dict[str, set[str]]]:
-        indexed_nodes_by_root: dict[str, set[str]] = defaultdict(set)
-        indexed_edge_by_root: dict[str, list[str]] = defaultdict(list)
-        indexed_wire_by_root: dict[str, set[str]] = defaultdict(set)
-        indexed_root_by_wire: dict[str, set[str]] = defaultdict(set)
-        indexed_root_by_node: dict[str, set[str]] = defaultdict(set)
-        for edge in edges:
-            wire_id = edge.get("wire_id")
-            from_key = graph_node_id(str(edge["from_node_id"]), wire_id)
-            to_key = graph_node_id(str(edge["to_node_id"]), wire_id)
-            root = find(from_key)
-            indexed_edge_by_root[root].append(edge["id"])
-            indexed_nodes_by_root[root].update([str(edge["from_node_id"]), str(edge["to_node_id"])])
-            indexed_root_by_node[str(edge["from_node_id"])].add(root)
-            indexed_root_by_node[str(edge["to_node_id"])].add(root)
-            if wire_id:
-                indexed_wire_by_root[root].add(wire_id)
-                indexed_root_by_wire[wire_id].add(root)
-            find(to_key)
-        return (
-            indexed_nodes_by_root,
-            indexed_edge_by_root,
-            indexed_wire_by_root,
-            indexed_root_by_wire,
-            indexed_root_by_node,
-        )
-
-    nodes_by_root, edge_by_root, wire_by_root, root_by_wire, root_by_node = rebuild_indexes()
-
-    for edge in edges:
-        find(graph_node_id(str(edge["from_node_id"]), edge.get("wire_id")))
-        find(graph_node_id(str(edge["to_node_id"]), edge.get("wire_id")))
-
-    for symbol in symbols:
-        class_name = str(symbol.get("class_name") or symbol.get("type") or "")
-        if class_name not in symbol_terminal_bridge_classes:
-            continue
-        if class_name != "junction" and len(symbol.get("terminals") or []) > 2:
-            continue
-        linked_roots: set[str] = set()
-        for link in symbol.get("terminal_links", []):
-            wire_id = link.get("wire_id")
-            if wire_id:
-                linked_roots.update(root_by_wire.get(wire_id, set()))
-            node_id = link.get("node_id")
-            if node_id:
-                linked_roots.add(find(node_id))
-        linked_roots = {find(root) for root in linked_roots}
-        if len(linked_roots) < 2:
-            continue
-        first, *rest = sorted(linked_roots)
-        for root in rest:
-            union(first, root)
-
-    nodes_by_root, edge_by_root, wire_by_root, root_by_wire, root_by_node = rebuild_indexes()
-
-    symbol_by_root: dict[str, set[str]] = defaultdict(set)
-    terminal_by_root: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    for symbol in symbols:
-        linked = False
-        for link in symbol.get("terminal_links", []):
-            wire_id = link.get("wire_id")
-            if not wire_id:
-                continue
-            for root in root_by_wire.get(wire_id, set()):
-                symbol_by_root[root].add(symbol["id"])
-                terminal_by_root[root].append(
-                    {
-                        "symbol_id": symbol["id"],
-                        "terminal_ref": link.get("terminal_ref"),
-                        "terminal_name": link.get("terminal_name"),
-                        "wire_id": wire_id,
-                        "distance": link.get("distance"),
-                        "reason": link.get("reason"),
-                    }
-                )
-                linked = True
-        if linked:
-            continue
-        for node_id in symbol.get("nearby_node_ids", []):
-            for root in root_by_node.get(str(node_id), {find(str(node_id))}):
-                symbol_by_root[root].add(symbol["id"])
-                terminal_by_root[root].append(
-                    {
-                        "symbol_id": symbol["id"],
-                        "terminal_ref": None,
-                        "terminal_name": None,
-                        "node_id": node_id,
-                        "reason": "nearby_node_fallback",
-                    }
-                )
-                linked = True
-        if linked:
-            continue
-        if str(symbol.get("class_name") or symbol.get("type") or "") not in TOUCHING_WIRE_FALLBACK_CLASSES:
-            continue
-        for wire_id in symbol.get("touching_wire_ids", []):
-            for root in root_by_wire.get(str(wire_id), set()):
-                symbol_by_root[root].add(symbol["id"])
-                terminal_by_root[root].append(
-                    {
-                        "symbol_id": symbol["id"],
-                        "terminal_ref": None,
-                        "terminal_name": None,
-                        "wire_id": wire_id,
-                        "reason": "touching_wire_fallback",
-                    }
-                )
-
-    nets = []
-    for root, node_ids in sorted(nodes_by_root.items(), key=lambda item: item[0]):
-        if len(node_ids) < 2 and not symbol_by_root.get(root):
-            continue
-        nets.append(
-            {
-                "id": f"net_{len(nets) + 1:04d}",
-                "node_ids": sorted(node_ids),
-                "edge_ids": sorted(edge_by_root.get(root, [])),
-                "wire_ids": sorted(wire_by_root.get(root, [])),
-                "symbol_ids": sorted(symbol_by_root.get(root, [])),
-                "terminal_members": sorted(
-                    terminal_by_root.get(root, []),
-                    key=lambda item: (
-                        str(item.get("symbol_id")),
-                        str(item.get("terminal_ref")),
-                        str(item.get("wire_id") or item.get("node_id")),
-                    ),
-                ),
-                "status": "geometry_candidate",
-            }
-        )
-    return nets
 
 
-def compact_label_candidate(candidate: dict[str, Any] | None) -> dict[str, Any] | None:
-    if not candidate:
-        return None
-    return {
-        "text": candidate.get("text") or "",
-        "match_text": candidate.get("match_text") or "",
-        "tokens": [
-            {
-                "text": token.get("text"),
-                "kind": token.get("kind"),
-                "confidence": token.get("confidence"),
-                "source_text": token.get("source_text"),
-            }
-            for token in candidate.get("tokens", [])
-        ],
-        "rejected_tokens": [
-            {
-                "text": token.get("text"),
-                "reason": token.get("reason"),
-                "source_text": token.get("source_text"),
-            }
-            for token in candidate.get("rejected_tokens", [])
-        ],
-    }
 
 
-def compact_word_rule_label(label: dict[str, Any] | None) -> dict[str, Any] | None:
-    if not label:
-        return None
-    return {
-        "final_label": label.get("final_label") or "",
-        "final_tokens": label.get("final_tokens") or [],
-        "selected_tokens": [
-            {
-                "text": token.get("text"),
-                "kind": token.get("kind"),
-                "confidence": token.get("confidence"),
-                "source_text": token.get("source_text"),
-            }
-            for token in label.get("selected_tokens", [])
-        ],
-        "discarded_tokens": [
-            {
-                "text": token.get("text"),
-                "reason": token.get("reason"),
-                "kind": token.get("kind"),
-                "source_text": token.get("source_text"),
-            }
-            for token in label.get("discarded_tokens", [])
-        ],
-    }
 
 
-def direct_terminal_key(symbol_id: str, terminal_ref: str, index: int) -> str:
-    return f"{symbol_id}:{terminal_ref or f'P{index:02d}'}"
 
 
-def direct_terminal_view(
-    symbol: dict[str, Any],
-    terminal: dict[str, Any],
-    member_key: str,
-    links: list[dict[str, Any]],
-) -> dict[str, Any]:
-    raw_ocr = symbol.get("label_ocr", {}).get("raw_text") if symbol.get("label_ocr") else None
-    label_source = (
-        "ocr_word_rule"
-        if symbol.get("label_word_rule")
-        else "ocr_candidate"
-        if symbol.get("label_candidate")
-        else "detection"
-    )
-    return {
-        "id": member_key,
-        "symbol_id": symbol["id"],
-        "class_name": symbol.get("class_name") or symbol.get("type"),
-        "symbol_confidence": symbol.get("confidence"),
-        "symbol_bbox": symbol.get("bbox"),
-        "label": symbol.get("label") or "",
-        "label_source": label_source,
-        "raw_ocr": raw_ocr,
-        "label_candidate": compact_label_candidate(symbol.get("label_candidate")),
-        "label_word_rule": compact_word_rule_label(symbol.get("label_word_rule")),
-        "terminal_ref": terminal.get("ref"),
-        "terminal_name": terminal.get("name") or "",
-        "point": [round(float(value), 1) for value in terminal["point"]],
-        "source": terminal.get("source"),
-        "wire_ids": sorted({str(link["wire_id"]) for link in links if link.get("wire_id")}),
-        "node_ids": sorted({str(link["node_id"]) for link in links if link.get("node_id")}),
-        "link_reasons": sorted({str(link["reason"]) for link in links if link.get("reason")}),
-    }
 
 
-def build_direct_terminal_records(
-    payload: dict[str, Any],
-) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
-    records: list[dict[str, Any]] = []
-    terminal_by_key: dict[str, dict[str, Any]] = {}
-    for symbol in payload.get("symbols", []):
-        links_by_terminal: dict[str, list[dict[str, Any]]] = defaultdict(list)
-        for link in symbol.get("terminal_links", []):
-            links_by_terminal[str(link.get("terminal_ref") or "")].append(link)
-        for index, terminal in enumerate(symbol.get("terminals") or [], start=1):
-            terminal_ref = str(terminal.get("ref") or "")
-            member_key = direct_terminal_key(str(symbol["id"]), terminal_ref, index)
-            links = links_by_terminal.get(terminal_ref) or []
-            terminal_by_key[member_key] = direct_terminal_view(symbol, terminal, member_key, links)
-            for link_index, link in enumerate(links or [{}], start=1):
-                records.append(
-                    {
-                        "id": f"terminal_{len(records) + 1:05d}",
-                        "member_key": member_key,
-                        "symbol_id": symbol["id"],
-                        "class_name": symbol.get("class_name") or symbol.get("type") or "",
-                        "bbox": symbol.get("bbox"),
-                        "point": [float(terminal["point"][0]), float(terminal["point"][1])],
-                        "wire_id": link.get("wire_id"),
-                        "wire_id_hint": terminal.get("wire_id_hint"),
-                        "node_id": link.get("node_id"),
-                        "link_index": link_index,
-                    }
-                )
-    return records, terminal_by_key
 
 
-def blank_run_measure(source_image: Image.Image) -> Callable[[tuple[float, float], tuple[float, float]], int]:
-    binary = make_binary_mask(source_image)
-    scale = source_image.width / 1755
-
-    def longest_blank(start: tuple[float, float], end: tuple[float, float]) -> int:
-        (x0, y0), (x1, y1) = start, end
-        if abs(x1 - x0) >= abs(y1 - y0):
-            lo, hi = sorted((round(x0), round(x1)))
-            support = support_vector_for_span(binary, "h", round((y0 + y1) / 2), lo, hi + 1, half_width=2)
-        else:
-            lo, hi = sorted((round(y0), round(y1)))
-            support = support_vector_for_span(binary, "v", round((x0 + x1) / 2), lo, hi + 1, half_width=2)
-        longest = run = 0
-        for inked in support:
-            run = 0 if inked else run + 1
-            longest = max(longest, run)
-        return round(longest / scale)
-
-    return longest_blank
 
 
-def build_direct_from_to(
-    payload: dict[str, Any], source_image: Image.Image | None = None, trace: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    terminal_records, terminal_by_key = build_direct_terminal_records(payload)
-    bridge_stats: Counter[str] = Counter()
-    blank_run = blank_run_measure(source_image) if source_image is not None and DIRECT_WIRE_GAP_BRIDGE_MAX_BLANK > 0 else None
-    pairs = build_predicted_graph_pairs(
-        payload,
-        terminal_records,
-        internal_bridge_classes=DIRECT_INTERNAL_BRIDGE_CLASSES,
-        node_anchor_classes=DIRECT_NODE_ANCHOR_CLASSES,
-        node_anchor_threshold=DIRECT_NODE_ANCHOR_THRESHOLD,
-        terminal_gap_bridge_classes=DIRECT_TERMINAL_GAP_BRIDGE_CLASSES,
-        terminal_gap_bridge_max=DIRECT_TERMINAL_GAP_BRIDGE_MAX,
-        wire_gap_bridge_max=DIRECT_WIRE_GAP_BRIDGE_MAX,
-        gap_bridge_align_threshold=DIRECT_GAP_BRIDGE_ALIGN_THRESHOLD,
-        wire_gap_bridge_terminal_anchor_threshold=DIRECT_WIRE_GAP_TERMINAL_ANCHOR_THRESHOLD,
-        terminal_terminal_bridge_classes=DIRECT_TERMINAL_TERMINAL_BRIDGE_CLASSES,
-        terminal_terminal_bridge_max=DIRECT_TERMINAL_TERMINAL_BRIDGE_MAX,
-        gap_bridge_text_overlap_max=1.0,
-        gap_bridge_symbol_overlap_max=1.0,
-        nonconductive_anchor_policy="all",
-        bridge_stats=bridge_stats,
-        endpoint_bridge_max=DIRECT_ENDPOINT_BRIDGE_MAX,
-        wire_gap_bridge_outward_only=DIRECT_WIRE_GAP_BRIDGE_OUTWARD_ONLY,
-        gap_blank_run=blank_run,
-        wire_gap_bridge_max_blank=DIRECT_WIRE_GAP_BRIDGE_MAX_BLANK,
-        terminal_gap_bridge_max_blank=DIRECT_TERMINAL_GAP_BRIDGE_MAX_BLANK,
-        gap_bridge_device_classes=set(DIRECT_GAP_BRIDGE_DEVICE_CLASSES),
-        trace=trace,
-    )
-    valid_pairs = sorted(
-        pair for pair in pairs if pair[0] in terminal_by_key and pair[1] in terminal_by_key
-    )
-    connected_terminal_ids = {terminal_id for pair in valid_pairs for terminal_id in pair}
-    connections = []
-    for index, (left_key, right_key) in enumerate(valid_pairs, start=1):
-        left = terminal_by_key[left_key]
-        right = terminal_by_key[right_key]
-        left_endpoint = {
-            key: left.get(key)
-            for key in ("id", "symbol_id", "class_name", "label", "terminal_ref", "terminal_name", "point")
-        }
-        right_endpoint = {
-            key: right.get(key)
-            for key in ("id", "symbol_id", "class_name", "label", "terminal_ref", "terminal_name", "point")
-        }
-        connections.append(
-            {
-                "id": f"from_to_{index:05d}",
-                "type": "internal" if left["symbol_id"] == right["symbol_id"] else "wire",
-                "directed": False,
-                "from": left_endpoint,
-                "to": right_endpoint,
-                "basis": "first_terminal_reached_by_wire_graph_traversal",
-                "status": "predicted",
-            }
-        )
-    terminals = [terminal_by_key[key] for key in sorted(terminal_by_key)]
-    return {
-        "schema_version": "todensekkei.from_to.v1",
-        "source": payload.get("source"),
-        "definition": "Direct terminal-to-terminal connections; connected components are not expanded into all pairs.",
-        "directed": False,
-        "terminal_count": len(terminals),
-        "connected_terminal_count": len(connected_terminal_ids),
-        "unconnected_terminal_count": len(terminals) - len(connected_terminal_ids),
-        "connection_count": len(connections),
-        "terminals": terminals,
-        "unconnected_terminal_ids": [
-            terminal["id"] for terminal in terminals if terminal["id"] not in connected_terminal_ids
-        ],
-        "connections": connections,
-        "resolver": {
-            "algorithm": "direct_wire_graph_traversal",
-            "internal_bridge_classes": sorted(DIRECT_INTERNAL_BRIDGE_CLASSES),
-            "node_anchor_classes": sorted(DIRECT_NODE_ANCHOR_CLASSES),
-            "node_anchor_threshold": DIRECT_NODE_ANCHOR_THRESHOLD,
-            "terminal_gap_bridge_classes": sorted(DIRECT_TERMINAL_GAP_BRIDGE_CLASSES),
-            "terminal_gap_bridge_max": DIRECT_TERMINAL_GAP_BRIDGE_MAX,
-            "wire_gap_bridge_max": DIRECT_WIRE_GAP_BRIDGE_MAX,
-            "gap_bridge_align_threshold": DIRECT_GAP_BRIDGE_ALIGN_THRESHOLD,
-            "wire_gap_terminal_anchor_threshold": DIRECT_WIRE_GAP_TERMINAL_ANCHOR_THRESHOLD,
-            "terminal_terminal_bridge_classes": sorted(DIRECT_TERMINAL_TERMINAL_BRIDGE_CLASSES),
-            "terminal_terminal_bridge_max": DIRECT_TERMINAL_TERMINAL_BRIDGE_MAX,
-            "wire_gap_bridge_outward_only": DIRECT_WIRE_GAP_BRIDGE_OUTWARD_ONLY,
-            "wire_gap_bridge_max_blank": DIRECT_WIRE_GAP_BRIDGE_MAX_BLANK if blank_run is not None else 0.0,
-            "terminal_gap_bridge_max_blank": DIRECT_TERMINAL_GAP_BRIDGE_MAX_BLANK if blank_run is not None else 0.0,
-            "bridge_stats": dict(sorted(bridge_stats.items())),
-        },
-    }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 def process_page(
@@ -2239,40 +1266,8 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def load_symbol_ocr_reader(engine: str, language: str) -> tuple[Any | None, str, str | None]:
-    if engine == "none":
-        return None, "none", None
-    try:
-        if engine == "easyocr":
-            import easyocr
-
-            return easyocr.Reader([language], gpu=False, verbose=False), engine, None
-        if engine == "rapidocr":
-            from rapidocr_onnxruntime import RapidOCR
-
-            return RapidOCR(), engine, None
-    except (ImportError, ModuleNotFoundError) as caught:
-        warning = f"symbol label OCR '{engine}' is unavailable ({caught}); continuing without symbol label OCR"
-        return None, "none", warning
-    raise ValueError(f"unsupported symbol OCR engine: {engine}")
 
 
-def load_crop_ocr_reader(page_reader: Any) -> Any:
-    """The recognizer for the 4x reads of each connector / contact / coil box (the page is read with page_reader).
-
-    SEQANNO_OCR_REC_MODEL names a recognizer fine-tuned on the customer's drawings (ocr_finetune.py), which
-    ships outside the repository. It reads only these boxes: relay tables, notes and sheet numbers keep the
-    bundled recognizer, which the fine-tuning was not checked against.
-    """
-    rec_model = os.environ.get("SEQANNO_OCR_REC_MODEL")
-    if not rec_model or page_reader is None:
-        return page_reader
-    if not Path(rec_model).is_file():
-        print(f"SEQANNO_OCR_REC_MODEL={rec_model} does not exist; using the bundled recognizer", file=sys.stderr)
-        return page_reader
-    from rapidocr_onnxruntime import RapidOCR
-
-    return RapidOCR(rec_model_path=rec_model)
 
 
 def main() -> None:
