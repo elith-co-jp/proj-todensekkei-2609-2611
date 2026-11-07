@@ -10,14 +10,16 @@ type Props = {
   width: number
   height: number
   detections: Detection[]
+  regions: Detection[]
   structure: StructureResult | null
   showSymbols: boolean
+  showRegions: boolean
   showWires: boolean
   wireOpacity: number
 }
 
 export default function PredictionDrawing({
-  imageUrl, name, width, height, detections, structure, showSymbols, showWires, wireOpacity,
+  imageUrl, name, width, height, detections, regions, structure, showSymbols, showRegions, showWires, wireOpacity,
 }: Props) {
   const viewport = useRef<HTMLDivElement>(null)
   const drag = useRef<{ x: number; y: number; start: View } | null>(null)
@@ -91,6 +93,15 @@ export default function PredictionDrawing({
         <div className="absolute left-0 top-0 origin-top-left" style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.scale})`, width, height }}>
           <img src={imageUrl} alt={name} width={width} height={height} draggable={false} className="block max-w-none select-none bg-white shadow-sm" />
           <svg className="pointer-events-none absolute inset-0" width={width} height={height} viewBox={`0 0 ${width} ${height}`} aria-label="予測レイヤー">
+            {showRegions && (
+              <g data-testid="region-layer" fill="none" stroke="#64748b" strokeWidth={1.5 / view.scale} strokeDasharray={`${10 / view.scale} ${6 / view.scale}`}>
+                {regions.map((d, i) => (
+                  <rect key={i} x={(d.cx - d.w / 2) * width} y={(d.cy - d.h / 2) * height} width={d.w * width} height={d.h * height}>
+                    <title>領域枠（シンボル対象外）</title>
+                  </rect>
+                ))}
+              </g>
+            )}
             {showWires && structure && (
               <g data-testid="wire-layer" opacity={wireOpacity} fill="none" stroke="#e11d48" strokeWidth={1.5 / view.scale}>
                 {structure.wires.map((wire) => (

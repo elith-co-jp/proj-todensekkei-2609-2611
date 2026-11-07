@@ -1,9 +1,21 @@
+import { useEffect, useMemo, useRef } from 'react'
 import { Eye, EyeOff, PanelRightClose, Trash2 } from 'lucide-react'
 
 import type { Connection, ProjectDetail, SymbolBox, SymbolClass } from '../../types'
-import { INSPECTOR_TABS } from './model'
-import type { InspectorTab, MetaForm, SaveStatus } from './model'
+import { INSPECTOR_TABS, SYMBOL_SORTS, sortSymbols } from './model'
+import type { InspectorTab, MetaForm, SaveStatus, SymbolSort } from './model'
 import { MetaPanel } from './MetaPanel'
+
+function AiBadge({ confidence }: { confidence?: number | null }) {
+  return (
+    <span
+      className="flex-none rounded-full bg-cyan-100 px-1.5 py-0.5 text-[9px] font-black text-cyan-700"
+      title="AI の候補。確認して不要なら削除してください"
+    >
+      AI{confidence != null ? ` ${Math.round(confidence * 100)}%` : ''}
+    </span>
+  )
+}
 
 export function EditorInspector({
   inspectorRef,
@@ -19,6 +31,8 @@ export function EditorInspector({
   hiddenSymbols,
   selectedRef,
   onSelectSymbol,
+  symbolSort,
+  onSymbolSortChange,
   onSetSymbolHidden,
   onDeleteSymbol,
   pushHistory,
@@ -28,6 +42,7 @@ export function EditorInspector({
   onSelectConnection,
   project,
   metaSaveStatus,
+  annotationSaveStatus,
   onQueueMetaSave,
 }: {
   inspectorRef: React.RefObject<HTMLElement | null>
@@ -43,6 +58,8 @@ export function EditorInspector({
   hiddenSymbols: ReadonlySet<string>
   selectedRef: string | null
   onSelectSymbol: (ref: string) => void
+  symbolSort: SymbolSort
+  onSymbolSortChange: (sort: SymbolSort) => void
   onSetSymbolHidden: (ref: string, hidden: boolean) => void
   onDeleteSymbol: (ref: string) => void
   pushHistory: () => void
@@ -52,8 +69,24 @@ export function EditorInspector({
   onSelectConnection: (index: number) => void
   project: ProjectDetail
   metaSaveStatus: SaveStatus
+  annotationSaveStatus: SaveStatus
   onQueueMetaSave: (projectId: number, payload: MetaForm, immediate?: boolean) => void
 }) {
+  const symbolListRef = useRef<HTMLDivElement | null>(null)
+  const sortedSymbols = useMemo(
+    () => sortSymbols(symbols, symbolSort, classes.map((c) => c.key)),
+    [symbols, symbolSort, classes],
+  )
+
+  useEffect(() => {
+    if (tab !== 'symbols' || !selectedRef) return
+    const row = Array.from(
+      symbolListRef.current?.querySelectorAll<HTMLElement>('[data-symbol-ref]') ?? [],
+    ).find((element) => element.dataset.symbolRef === selectedRef)
+    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    row?.scrollIntoView({ block: 'nearest', behavior: reduceMotion ? 'auto' : 'smooth' })
+  }, [selectedRef, symbolSort, tab])
+
   return (
     <>
       <button
@@ -127,162 +160,180 @@ export function EditorInspector({
         {tab === 'symbols' && (
           <div
             id="inspector-panel-symbols"
-            className="thin-scroll flex-1 overflow-auto"
+            className="flex min-h-0 flex-1 flex-col"
             role="tabpanel"
             aria-labelledby="inspector-tab-symbols"
           >
-            {symbols.length === 0 && (
-              <p className="p-6 text-center text-xs leading-relaxed text-slate-400">
-                <span className="kbd">B</span> でシンボル描画モードにして
-                <br />
-                図面上をドラッグしてください
-              </p>
+            {symbols.length > 0 && (
+              <div className="flex flex-none flex-wrap items-center gap-2 border-b border-slate-100 px-3 py-2">
+                <span className="text-[10px] font-bold text-slate-500">並び順</span>
+                <div className="segmented" role="group" aria-label="シンボルの並び順">
+                  {SYMBOL_SORTS.map(([key, label]) => (
+                    <button
+                      key={key}
+                      type="button"
+                      className="segmented-item"
+                      aria-pressed={symbolSort === key}
+                      onClick={() => onSymbolSortChange(key)}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </div>
             )}
-            {symbols.map((s) => {
-              const symbolHidden = hiddenSymbols.has(s.ref)
-              return (
-                <div
-                  key={s.ref}
-                  className={`border-b border-slate-100 px-3 py-2.5 ${
-                    selectedRef === s.ref ? 'bg-koa-50 shadow-[inset_3px_0_0_#0055a4]' : 'hover:bg-slate-50'
-                  } ${symbolHidden ? 'opacity-55' : ''}`}
-                >
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      className="flex min-h-8 min-w-0 flex-1 items-center gap-2 rounded-lg text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500"
-                      onClick={() => {
-                        if (symbolHidden) onSetSymbolHidden(s.ref, false)
-                        onSelectSymbol(s.ref)
-                      }}
-                      aria-expanded={selectedRef === s.ref}
-                    >
-                      <span className="h-3 w-3 flex-none rounded-sm" style={{ background: colorOf(s.class_key) }} />
-                      <span className="font-mono text-xs font-bold">{s.ref}</span>
-                      {s.origin === 'inference' && (
-                        <span className="flex-none rounded-full bg-cyan-100 px-1.5 py-0.5 text-[9px] font-black text-cyan-700">
-                          AI{s.confidence != null ? ` ${Math.round(s.confidence * 100)}%` : ''}
-                        </span>
-                      )}
-                      <span className="truncate text-[11px] text-slate-500">{labelOf(s.class_key)}</span>
-                    </button>
-                    <button
-                      type="button"
-                      className="icon-button h-8 w-8 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
-                      onClick={() => onSetSymbolHidden(s.ref, !symbolHidden)}
-                      aria-pressed={symbolHidden}
-                      aria-label={symbolHidden ? `${s.ref}を表示` : `${s.ref}を非表示`}
-                      title={symbolHidden ? `${s.ref}を表示` : `${s.ref}を非表示`}
-                    >
-                      {symbolHidden ? <EyeOff size={13} /> : <Eye size={13} />}
-                    </button>
-                    <button
-                      type="button"
-                      className="btn btn-sm btn-danger"
-                      onClick={() => onDeleteSymbol(s.ref)}
-                      aria-label={`${s.ref}を削除`}
-                    >
-                      <Trash2 size={12} />
-                    </button>
-                  </div>
-                  {selectedRef === s.ref && (
-                    <div className="mt-2 space-y-2">
-                      <div className="grid grid-cols-2 gap-2">
-                        <label className="block min-w-0">
-                          <span className="mb-1 block text-[10px] font-bold text-slate-500">種別</span>
-                          <select
-                            className="field w-full py-1 text-xs"
-                            value={s.class_key}
-                            onChange={(e) => {
-                              pushHistory()
-                              const v = e.target.value
-                              setSymbols((prev) =>
-                                prev.map((x) => (x.ref === s.ref ? { ...x, class_key: v } : x)),
-                              )
-                            }}
-                          >
-                            {classes.map((c) => (
-                              <option key={c.key} value={c.key}>
-                                {c.label}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
-                        <label className="block min-w-0">
-                          <span className="mb-1 block text-[10px] font-bold text-slate-500">ラベル</span>
-                          <input
-                            className="field w-full py-1 text-xs"
-                            placeholder="33HB 等"
-                            value={s.label ?? ''}
-                            onChange={(e) => {
-                              const v = e.target.value
-                              setSymbols((prev) =>
-                                prev.map((x) => (x.ref === s.ref ? { ...x, label: v || null } : x)),
-                              )
-                            }}
-                          />
-                        </label>
-                      </div>
-                      <div className="font-mono text-[10px] text-slate-400">
-                        cx {s.cx.toFixed(4)} / cy {s.cy.toFixed(4)} / w {s.w.toFixed(4)} / h {s.h.toFixed(4)}
-                      </div>
-                      <div>
-                        <div className="mb-1 text-[10px] font-bold text-slate-500">
-                          端子（<span className="kbd">T</span> モードで図面をクリックして追加）
-                        </div>
-                        {s.terminals.length === 0 && (
-                          <div className="text-[11px] text-slate-400">未登録（配線はシンボル単位で登録されます）</div>
-                        )}
-                        {s.terminals.map((t) => (
-                          <div key={t.ref} className="mb-1 flex items-center gap-1.5">
-                            <span className="font-mono text-[10px] text-slate-400">{t.ref.split('-').pop()}</span>
-                            <input
-                              className="field py-0.5 text-xs"
-                              value={t.name}
+            <div ref={symbolListRef} className="thin-scroll min-h-0 flex-1 overflow-auto">
+              {symbols.length === 0 && (
+                <p className="p-6 text-center text-xs leading-relaxed text-slate-400">
+                  <span className="kbd">B</span> でシンボル描画モードにして
+                  <br />
+                  図面上をドラッグしてください
+                </p>
+              )}
+              {sortedSymbols.map((s) => {
+                const symbolHidden = hiddenSymbols.has(s.ref)
+                return (
+                  <div
+                    key={s.ref}
+                    data-symbol-ref={s.ref}
+                    className={`border-b border-slate-100 px-3 py-2.5 ${
+                      selectedRef === s.ref ? 'bg-koa-50 shadow-[inset_3px_0_0_#0055a4]' : 'hover:bg-slate-50'
+                    } ${symbolHidden ? 'opacity-55' : ''}`}
+                  >
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        className="flex min-h-8 min-w-0 flex-1 items-center gap-2 rounded-lg text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500"
+                        onClick={() => {
+                          if (symbolHidden) onSetSymbolHidden(s.ref, false)
+                          onSelectSymbol(s.ref)
+                        }}
+                        aria-expanded={selectedRef === s.ref}
+                      >
+                        <span className="h-3 w-3 flex-none rounded-sm" style={{ background: colorOf(s.class_key) }} />
+                        <span className="font-mono text-xs font-bold">{s.ref}</span>
+                        {s.origin === 'inference' && <AiBadge confidence={s.confidence} />}
+                        <span className="truncate text-[11px] text-slate-500">{labelOf(s.class_key)}</span>
+                      </button>
+                      <button
+                        type="button"
+                        className="icon-button h-8 w-8 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+                        onClick={() => onSetSymbolHidden(s.ref, !symbolHidden)}
+                        aria-pressed={symbolHidden}
+                        aria-label={symbolHidden ? `${s.ref}を表示` : `${s.ref}を非表示`}
+                        title={symbolHidden ? `${s.ref}を表示` : `${s.ref}を非表示`}
+                      >
+                        {symbolHidden ? <EyeOff size={13} /> : <Eye size={13} />}
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-sm btn-danger"
+                        onClick={() => onDeleteSymbol(s.ref)}
+                        aria-label={`${s.ref}を削除`}
+                      >
+                        <Trash2 size={12} />
+                      </button>
+                    </div>
+                    {selectedRef === s.ref && (
+                      <div className="mt-2 space-y-2">
+                        <div className="grid grid-cols-2 gap-2">
+                          <label className="block min-w-0">
+                            <span className="mb-1 block text-[10px] font-bold text-slate-500">種別</span>
+                            <select
+                              className="field w-full py-1 text-xs"
+                              value={s.class_key}
                               onChange={(e) => {
+                                pushHistory()
                                 const v = e.target.value
                                 setSymbols((prev) =>
-                                  prev.map((x) =>
-                                    x.ref === s.ref
-                                      ? {
-                                          ...x,
-                                          terminals: x.terminals.map((y) =>
-                                            y.ref === t.ref ? { ...y, name: v } : y,
-                                          ),
-                                        }
-                                      : x,
-                                  ),
-                                )
-                              }}
-                            />
-                            <button
-                              className="btn btn-sm btn-danger"
-                              onClick={() => {
-                                pushHistory()
-                                setSymbols((prev) =>
-                                  prev.map((x) =>
-                                    x.ref === s.ref
-                                      ? { ...x, terminals: x.terminals.filter((y) => y.ref !== t.ref) }
-                                      : x,
-                                  ),
-                                )
-                                setConnections((prev) =>
-                                  prev.filter(
-                                    (c) => c.from_terminal_ref !== t.ref && c.to_terminal_ref !== t.ref,
-                                  ),
+                                  prev.map((x) => (x.ref === s.ref ? { ...x, class_key: v } : x)),
                                 )
                               }}
                             >
-                              <Trash2 size={11} />
-                            </button>
+                              {classes.map((c) => (
+                                <option key={c.key} value={c.key}>
+                                  {c.label}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                          <label className="block min-w-0">
+                            <span className="mb-1 block text-[10px] font-bold text-slate-500">ラベル</span>
+                            <input
+                              className="field w-full py-1 text-xs"
+                              placeholder="33HB 等"
+                              value={s.label ?? ''}
+                              onChange={(e) => {
+                                const v = e.target.value
+                                setSymbols((prev) =>
+                                  prev.map((x) => (x.ref === s.ref ? { ...x, label: v || null } : x)),
+                                )
+                              }}
+                            />
+                          </label>
+                        </div>
+                        <div className="font-mono text-[10px] text-slate-400">
+                          cx {s.cx.toFixed(4)} / cy {s.cy.toFixed(4)} / w {s.w.toFixed(4)} / h {s.h.toFixed(4)}
+                        </div>
+                        <div>
+                          <div className="mb-1 text-[10px] font-bold text-slate-500">
+                            端子（<span className="kbd">T</span> モードで図面をクリックして追加）
                           </div>
-                        ))}
+                          {s.terminals.length === 0 && (
+                            <div className="text-[11px] text-slate-400">未登録（配線はシンボル単位で登録されます）</div>
+                          )}
+                          {s.terminals.map((t) => (
+                            <div key={t.ref} className="mb-1 flex items-center gap-1.5">
+                              <span className="font-mono text-[10px] text-slate-400">{t.ref.split('-').pop()}</span>
+                              {t.origin === 'inference' && <AiBadge />}
+                              <input
+                                className="field py-0.5 text-xs"
+                                value={t.name}
+                                onChange={(e) => {
+                                  const v = e.target.value
+                                  setSymbols((prev) =>
+                                    prev.map((x) =>
+                                      x.ref === s.ref
+                                        ? {
+                                            ...x,
+                                            terminals: x.terminals.map((y) =>
+                                              y.ref === t.ref ? { ...y, name: v } : y,
+                                            ),
+                                          }
+                                        : x,
+                                    ),
+                                  )
+                                }}
+                              />
+                              <button
+                                className="btn btn-sm btn-danger"
+                                onClick={() => {
+                                  pushHistory()
+                                  setSymbols((prev) =>
+                                    prev.map((x) =>
+                                      x.ref === s.ref
+                                        ? { ...x, terminals: x.terminals.filter((y) => y.ref !== t.ref) }
+                                        : x,
+                                    ),
+                                  )
+                                  setConnections((prev) =>
+                                    prev.filter(
+                                      (c) => c.from_terminal_ref !== t.ref && c.to_terminal_ref !== t.ref,
+                                    ),
+                                  )
+                                }}
+                              >
+                                <Trash2 size={11} />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
                       </div>
-                    </div>
-                  )}
-                </div>
-              )
-            })}
+                    )}
+                  </div>
+                )
+              })}
+            </div>
           </div>
         )}
 
@@ -323,6 +374,7 @@ export function EditorInspector({
                       {c.to_symbol_ref}
                       {c.to_terminal_ref ? `:${c.to_terminal_ref.split('-').pop()}` : ''}
                     </span>
+                    {c.origin === 'inference' && <AiBadge />}
                   </button>
                   <button
                     type="button"
@@ -380,7 +432,7 @@ export function EditorInspector({
 
         <div
           id="inspector-panel-meta"
-          className="flex min-h-0 flex-1"
+          className={`min-h-0 flex-1 ${tab === 'meta' ? 'flex' : 'hidden'}`}
           role="tabpanel"
           aria-labelledby="inspector-tab-meta"
           hidden={tab !== 'meta'}
@@ -388,7 +440,9 @@ export function EditorInspector({
           <MetaPanel
             key={project.id}
             project={project}
+            visible={tab === 'meta'}
             saveStatus={metaSaveStatus}
+            annotationSaveStatus={annotationSaveStatus}
             onQueueSave={onQueueMetaSave}
           />
         </div>

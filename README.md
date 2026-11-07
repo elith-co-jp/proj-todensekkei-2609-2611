@@ -115,7 +115,7 @@ build_windows.bat
 
 短い学習・推論の検証が通ると `dist\TodenYOLO.exe` が生成されます。PyInstaller はクロスビルドできないため、
 Windows 用 exe は必ず Windows 上でビルドしてください（spec: `seq-annotator.spec`）。
-ビルド時のみ、公式 Ultralytics リリースから `yolov8n.pt` を取得して SHA-256 を照合します。
+ビルド時のみ、公式 Ultralytics リリースから学習の起点にする `yolo11s.pt` を取得して SHA-256 を照合します。
 初期推論モデルはリポジトリの `assets/models/` に同梱されているため、配布先でモデルをダウンロードする必要はありません。
 
 **配布・起動**:
@@ -193,6 +193,7 @@ uvicorn main:app --port 8010               # http://localhost:8010 で UI と AP
 | `SEQANNO_DATA_DIR` | `./data` | DB と画像の保存先 |
 | `SEQANNO_DATABASE_URL` | `sqlite:///<data>/seqanno.db` | PostgreSQL 等へ差し替え可能（Docker は PostgreSQL） |
 | `SEQANNO_CORS_ORIGINS` | `http://localhost:5173,http://127.0.0.1:5173` | 許可オリジン |
+| `SEQANNO_OCR_REC_MODEL` | なし | 記号ごとの拡大読みに使う文字認識モデル（ONNX）。図面の字体に合わせて追加学習したモデル（`analysis/tools/ocr_finetune.py`）を指定する。なければ同梱のモデル |
 | `VITE_API_PROXY_TARGET` | `http://localhost:8010` | Vite 開発サーバーの API 接続先（`frontend/.env`） |
 
 ---
@@ -218,7 +219,7 @@ uvicorn main:app --port 8010               # http://localhost:8010 で UI と AP
 # 2. GPU 環境で推論し、labels を ZIP 化して「推論結果を取り込む」から読み込み
 yolo predict model=best.pt source=dataset_root/dataset/images/train save_txt=True save_conf=True
 # 3. 外部で学習した best.pt を「モデル登録」からアップロード
-yolo detect train data=dataset_root/data.yaml model=yolov8n.pt epochs=100 imgsz=1280
+yolo detect train data=dataset_root/data.yaml model=yolo11s.pt epochs=100 imgsz=1280
 ```
 
 開発環境でツール内実行するには追加依存が必要です（GPU 推奨）。Windows 配布 EXE には
@@ -233,7 +234,7 @@ pip install -r requirements-ml.txt   # ultralytics
 ```bash
 unzip seqanno_export_*.zip -d dataset_root
 cd dataset_root
-yolo detect train data=data.yaml model=yolov8n.pt epochs=100 imgsz=1280
+yolo detect train data=data.yaml model=yolo11s.pt epochs=100 imgsz=1280
 ```
 
 ---

@@ -2,7 +2,7 @@
 
 蓄積済みアノテーションからデータセットを組み立て、バックグラウンドスレッドで
 ultralytics の学習を実行する。完了すると best.pt を `MlModel`（source='trained'）として
-登録し、学習に使った蓄積データで新旧モデルを評価して指標を記録する。
+登録し、評価用の図面（holdout 時は学習に使っていない図面）で新旧モデルを評価して指標を記録する。
 学習済みモデルは `decision='pending'`（採用待ち）で止め、利用者が比較結果を見て
 採用を選んだときだけ active に切り替える。
 
@@ -36,9 +36,27 @@ from services.model_service import (
     serialize_model,
     store_model_bytes,
 )
+from services.rotation_copies import ROTATED_COPY_DEGREES, rotated_copy
 
-DEFAULT_BASE_MODEL = "yolov8n.pt"
+# 図面単位の交差検証（DD-0007 §4.11）で yolo11n より未学習図面の検出 F1 が高かった yolo11s を、
+# 使用中のモデルが無いときの学習の起点にする。
+DEFAULT_BASE_MODEL = "yolo11s.pt"
 _LOG_TAIL_LIMIT = 4000
+HOLDOUT_MIN_DRAWINGS = 5
+HOLDOUT_RATIO = 0.2
+MAP_KEY = "metrics/mAP50-95(B)"
+# 採用判定の基準（#24）。学習に使っていない図面で、全体の mAP50-95 がこれ以上下がらず、
+# 評価用の図面に ADOPT_CLASS_MIN_INSTANCES 件以上あるクラスの mAP50-95 が ADOPT_CLASS_DROP より
+# 下がらなければ採用を勧める。件数が少ないクラスは 1 件で値が大きく動くため判定に使わない。
+ADOPT_MAP_TOLERANCE = 0.005
+ADOPT_CLASS_DROP = 0.05
+ADOPT_CLASS_MIN_INSTANCES = 5
+# 図面は向き・色が決まっていて、記号の大きさもほぼ一定。図面単位の交差検証（DD-0007）では
+# 反転・色の揺らぎを止め、拡大縮小を ±20% に抑えた設定が未学習の図面で最も良かった。
+DRAWING_AUGMENTATION = {
+    "mosaic": 1.0, "translate": 0.1, "scale": 0.2, "fliplr": 0.0, "flipud": 0.0,
+    "degrees": 0.0, "hsv_h": 0.0, "hsv_s": 0.0, "hsv_v": 0.0, "copy_paste": 0.0, "erasing": 0.4,
+}
 
 
 def default_base_model() -> str:
@@ -78,6 +96,7 @@ def start_training(
     epochs: int,
     imgsz: int,
     base_model: str | None,
+    holdout: bool,
 ) -> TrainingRun:
     if not ultralytics_available():
         raise ValueError(
@@ -105,44 +124,78 @@ def start_training(
     db.commit()
     db.refresh(run)
 
-    thread = threading.Thread(target=_run_training, args=(run.id,), name=f"training-run-{run.id}", daemon=True)
+    thread = threading.Thread(
+        target=_run_training, args=(run.id, holdout), name=f"training-run-{run.id}", daemon=True
+    )
     thread.start()
     return run
 
 
-def _write_dataset(db: Session, run_dir, projects: list[AnnotationProject]) -> str:
-    """data/training/run_<id>/dataset に ultralytics 標準構成を書き出し、data.yaml のパスを返す。"""
-    dataset_dir = run_dir / "dataset"
-    images_dir = dataset_dir / "images" / "train"
-    labels_dir = dataset_dir / "labels" / "train"
-    images_dir.mkdir(parents=True, exist_ok=True)
-    labels_dir.mkdir(parents=True, exist_ok=True)
+def _holdout_ids(drawing_ids: list[int], holdout: bool) -> set[int]:
+    """id 順に並べた図面から評価専用の図面を等間隔に選ぶ。少なすぎるときは選ばない。"""
+    n = len(drawing_ids)
+    if not holdout or n < HOLDOUT_MIN_DRAWINGS:
+        return set()
+    val_count = max(1, round(n * HOLDOUT_RATIO))
+    return {drawing_ids[int((i + 0.5) * n / val_count)] for i in range(val_count)}
 
-    written = 0
-    for project in projects:
-        label_content = build_label_content(db, project)
+
+def _write_dataset(
+    db: Session, run_dir, projects: list[AnnotationProject], holdout: bool
+) -> tuple[str, dict]:
+    """data/training/run_<id>/dataset に ultralytics 標準構成を書き出し、data.yaml のパスと評価範囲を返す。
+
+    同じ図面のシンボルは描き方が揃っているため、学習に使った図面で評価すると未学習の図面より
+    高い精度が出る。holdout では図面単位で val を分け、新旧モデルを未学習の図面で比べる。
+    """
+    dataset_dir = run_dir / "dataset"
+    drawings = sorted(
+        (p for p in projects if any(image_path(i.sha256).exists() for i in p.images)),
+        key=lambda p: p.id,
+    )
+    if not drawings:
+        raise ValueError("学習用画像を出力できませんでした")
+    val_ids = _holdout_ids([p.id for p in drawings], holdout)
+
+    for project in drawings:
+        split = "val" if project.id in val_ids else "train"
+        images_dir = dataset_dir / "images" / split
+        labels_dir = dataset_dir / "labels" / split
+        images_dir.mkdir(parents=True, exist_ok=True)
+        labels_dir.mkdir(parents=True, exist_ok=True)
+        label_content = build_label_content(db, project, skip_wire_bends=True)
         for image in project.images:
             src = image_path(image.sha256)
             if not src.exists():
                 continue
             base = project_image_stem(project, image)
-            (images_dir / f"{base}.png").write_bytes(src.read_bytes())
+            png = src.read_bytes()
+            (images_dir / f"{base}.png").write_bytes(png)
             (labels_dir / f"{base}.txt").write_text(label_content, encoding="utf-8")
-            written += 1
-    if written == 0:
-        raise ValueError("学習用画像を出力できませんでした")
+            if split == "train":
+                # 横書き（90° 回した）図面・シンボルも読めるよう、学習用の図面だけ両方向に回したコピーを足す（#42）。
+                for degrees in ROTATED_COPY_DEGREES:
+                    rotated_png, rotated_label = rotated_copy(png, label_content, degrees)
+                    (images_dir / f"{base}_r{degrees}.png").write_bytes(rotated_png)
+                    (labels_dir / f"{base}_r{degrees}.txt").write_text(rotated_label, encoding="utf-8")
+
+    train_ids = [p.id for p in drawings if p.id not in val_ids]
+    if val_ids:
+        eval_scope = {"mode": "holdout", "train_project_ids": train_ids, "val_project_ids": sorted(val_ids)}
+    else:
+        eval_scope = {"mode": "train", "train_project_ids": train_ids, "val_project_ids": train_ids}
 
     names = {c.yolo_index: c.key for c in classes_ordered(db)}
     data_yaml = {
         "path": str(dataset_dir),
         "train": "images/train",
-        "val": "images/train",
+        "val": "images/val" if val_ids else "images/train",
         "nc": len(names),
         "names": {int(k): v for k, v in sorted(names.items())},
     }
     data_yaml_path = run_dir / "data.yaml"
     data_yaml_path.write_text(yaml.safe_dump(data_yaml, allow_unicode=True, sort_keys=False), encoding="utf-8")
-    return str(data_yaml_path)
+    return str(data_yaml_path), eval_scope
 
 
 _METRIC_KEYS = (
@@ -165,8 +218,43 @@ def _pick_metrics(results_dict: dict) -> dict | None:
     return picked or None
 
 
-def _eval_weights(weights: Path, data_yaml: str, imgsz: int) -> dict | None:
-    """蓄積データの data.yaml で val を実行し主要メトリクスを返す。失敗時は None。"""
+def _val_instances(data_yaml: str) -> dict[str, int]:
+    """data.yaml の val に入っている正解の件数をクラスごとに数える。"""
+    spec = yaml.safe_load(Path(data_yaml).read_text(encoding="utf-8"))
+    names = {int(k): v for k, v in (spec.get("names") or {}).items()}
+    labels = Path(spec["path"]) / str(spec["val"]).replace("images", "labels", 1)
+    counts: dict[str, int] = {}
+    for label in labels.glob("*.txt"):
+        for line in label.read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                key = names.get(int(line.split()[0]), line.split()[0])
+                counts[key] = counts.get(key, 0) + 1
+    return counts
+
+
+def _per_class_metrics(results, instances: dict[str, int], labels: dict[str, str]) -> dict | None:
+    """ultralytics の val 結果からクラスごとの P・R・mAP を取り出す（#24）。弱いクラスを見つけるため。"""
+    box = getattr(results, "box", None)
+    index = getattr(box, "ap_class_index", None)
+    names = getattr(results, "names", None) or {}
+    if box is None or index is None:
+        return None
+    per_class = {}
+    for row, cls in enumerate(list(index)):
+        key = names.get(int(cls), str(int(cls)))
+        per_class[key] = {
+            "label": labels.get(key, key),
+            "instances": instances.get(key, 0),
+            "precision": round(float(box.p[row]), 4),
+            "recall": round(float(box.r[row]), 4),
+            "map50": round(float(box.ap50[row]), 4),
+            "map50_95": round(float(box.ap[row]), 4),
+        }
+    return per_class or None
+
+
+def _eval_weights(weights: Path, data_yaml: str, imgsz: int, labels: dict[str, str] | None = None) -> dict | None:
+    """蓄積データの data.yaml で val を実行し主要メトリクスとクラス別の値を返す。失敗時は None。"""
     if not weights.exists():
         return None
     try:
@@ -176,10 +264,61 @@ def _eval_weights(weights: Path, data_yaml: str, imgsz: int) -> dict | None:
         if is_frozen():
             kwargs["workers"] = 0
         results = YOLO(str(weights)).val(**kwargs)
-        return _pick_metrics(getattr(results, "results_dict", {}) or {})
+        metrics = _pick_metrics(getattr(results, "results_dict", {}) or {})
     except Exception as exc:  # noqa: BLE001  評価だけ落ちても学習自体は成功として残す
         print(f"[eval] {weights.name} の評価に失敗: {exc}")
         return None
+    try:
+        per_class = _per_class_metrics(results, _val_instances(data_yaml), labels or {})
+    except Exception as exc:  # noqa: BLE001  クラス別の値が取れなくても全体の値は残す
+        print(f"[eval] {weights.name} のクラス別の値を取れませんでした: {exc}")
+        per_class = None
+    if metrics is not None and per_class:
+        metrics["per_class"] = per_class
+    return metrics
+
+
+def _number(value) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def adoption_review(metrics: dict | None, baseline: dict | None, eval_scope: dict | None) -> dict:
+    """新旧の評価から採用を勧めるかを決める（#24）。最後に決めるのは利用者で、ここは判断材料。
+
+    verdict: adopt=採用を勧める / hold=見送りを勧める / caution=学習に使った図面での評価なので判断できない /
+    unknown=指標がそろっていない
+    """
+    candidate = _number((metrics or {}).get(MAP_KEY))
+    current = _number((baseline or {}).get(MAP_KEY))
+    if candidate is None or current is None:
+        return {"verdict": "unknown", "reasons": ["新旧の評価指標がそろっていないため、自動では判定できません。"]}
+    reasons = []
+    if candidate < current - ADOPT_MAP_TOLERANCE:
+        reasons.append(f"全体の mAP50-95 が {current:.4f} から {candidate:.4f} に下がりました。")
+    new_classes = (metrics or {}).get("per_class") or {}
+    for key, old in ((baseline or {}).get("per_class") or {}).items():
+        new = new_classes.get(key)
+        if new is None or old.get("instances", 0) < ADOPT_CLASS_MIN_INSTANCES:
+            continue
+        if old["map50_95"] - new["map50_95"] > ADOPT_CLASS_DROP:
+            reasons.append(
+                f"{old.get('label', key)}（評価用 {old['instances']} 件）の mAP50-95 が "
+                f"{old['map50_95']:.3f} から {new['map50_95']:.3f} に下がりました。"
+            )
+    if reasons:
+        return {"verdict": "hold", "reasons": reasons}
+    if (eval_scope or {}).get("mode") != "holdout":
+        return {"verdict": "caution", "reasons": [
+            "学習に使った図面で評価したため、未学習の図面での精度は分かりません。"
+            "図面を 5 枚以上にして、学習に使わない図面で評価してください。"
+        ]}
+    return {"verdict": "adopt", "reasons": [
+        f"学習に使っていない図面で、全体の mAP50-95 が {current:.4f} から {candidate:.4f} になり、"
+        f"評価用に {ADOPT_CLASS_MIN_INSTANCES} 件以上あるクラスで {ADOPT_CLASS_DROP} を超えて下がったものはありません。"
+    ]}
 
 
 def _baseline_label(db: Session, base: str) -> str:
@@ -212,7 +351,7 @@ def _read_metrics(run_dir) -> dict | None:
         return None
 
 
-def _run_training(run_id: int) -> None:
+def _run_training(run_id: int, holdout: bool) -> None:
     db = SessionLocal()
     log_buf = io.StringIO()
     try:
@@ -221,7 +360,8 @@ def _run_training(run_id: int) -> None:
         run_dir = TRAINING_DIR / f"run_{run.id}"
         run_dir.mkdir(parents=True, exist_ok=True)
 
-        data_yaml = _write_dataset(db, run_dir, projects)
+        data_yaml, eval_scope = _write_dataset(db, run_dir, projects, holdout)
+        run.eval_scope_json = json.dumps(eval_scope)
 
         base = run.base_model
         if not base:
@@ -242,6 +382,7 @@ def _run_training(run_id: int) -> None:
                 "project": str(run_dir),
                 "name": "train",
                 "exist_ok": True,
+                **DRAWING_AUGMENTATION,
             }
             if is_frozen():
                 # Windows の凍結 exe から DataLoader の子プロセスを起動しない。
@@ -253,12 +394,13 @@ def _run_training(run_id: int) -> None:
             if not best.exists():
                 raise RuntimeError("学習は完了しましたが best.pt が見つかりません")
 
-            # 蓄積データ（この run のデータセット）で新旧モデルを評価し、採用判定の材料にする
+            # 同じ評価用図面（data.yaml の val）で新旧モデルを評価し、採用判定の材料にする
+            labels = {c.key: c.label for c in classes_ordered(db)}
             print(f"[training-run-{run.id}] evaluate candidate {best}", file=log_buf)
-            eval_metrics = _eval_weights(best, data_yaml, run.imgsz)
+            eval_metrics = _eval_weights(best, data_yaml, run.imgsz, labels)
             print(f"[training-run-{run.id}] evaluate baseline {base}", file=log_buf)
             baseline_metrics = (
-                _eval_weights(Path(base), data_yaml, run.imgsz) if base else None
+                _eval_weights(Path(base), data_yaml, run.imgsz, labels) if base else None
             )
 
         digest, size = store_model_bytes(best.read_bytes(), f"run_{run.id}_best.pt")
@@ -319,6 +461,12 @@ def _loads_or_none(raw: str | None) -> dict | None:
 
 
 def serialize_run(run: TrainingRun) -> dict:
+    metrics = _loads_or_none(run.metrics_json)
+    baseline = _loads_or_none(run.baseline_metrics_json)
+    eval_scope = _loads_or_none(run.eval_scope_json)
+    review = adoption_review(metrics, baseline, eval_scope) if run.status == "success" else None
+    per_class = (metrics or {}).pop("per_class", None)
+    baseline_per_class = (baseline or {}).pop("per_class", None)
     return {
         "id": run.id,
         "status": run.status,
@@ -329,9 +477,13 @@ def serialize_run(run: TrainingRun) -> dict:
         "base_model": run.base_model,
         "result_model_id": run.result_model_id,
         "result_model": serialize_model(run.result_model) if run.result_model else None,
-        "metrics": _loads_or_none(run.metrics_json),
-        "baseline_metrics": _loads_or_none(run.baseline_metrics_json),
+        "metrics": metrics,
+        "baseline_metrics": baseline,
+        "per_class": per_class,
+        "baseline_per_class": baseline_per_class,
+        "review": review,
         "baseline_label": run.baseline_label,
+        "eval_scope": eval_scope,
         "decision": run.decision or None,
         "log_tail": run.log_tail,
         "started_at": run.started_at.isoformat() if run.started_at else None,

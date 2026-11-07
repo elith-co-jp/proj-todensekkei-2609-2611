@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import logging
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
@@ -16,6 +18,7 @@ from models import (
     AnnotationSymbol,
     Connection,
     Prediction,
+    StructurePrediction,
     SymbolClass,
     SymbolTerminal,
 )
@@ -37,9 +40,12 @@ from services.annotation_service import (
     store_image_bytes,
 )
 from services.export_service import import_zip, write_export_zip
+from services.page_orientation import upright_page
 from services.pdf_service import render_pdf_pages
+from services.sheet_number_service import suggest_sheet_numbers
 
 router = APIRouter(prefix="/api", tags=["annotation"])
+_logger = logging.getLogger(__name__)
 
 
 def _stamp() -> str:
@@ -108,6 +114,7 @@ async def create_project(
     if not files:
         raise HTTPException(400, "画像が含まれていません")
     created = []
+    turned: list[dict[str, int]] = []
     for f in files:
         raw = await f.read()
         name = safe_upload_name(f, "図面")
@@ -120,6 +127,8 @@ async def create_project(
             pages = render_pdf_pages(raw) if is_pdf else [raw]
             stem = name.rsplit(".", 1)[0] or "図面"
             for index, page in enumerate(pages, start=1):
+                # 横書き（ページ全体を 90° 回して描いた）図面は縦向きに直して保存する（#42）。
+                page, turn = upright_page(page)
                 digest, w, h = store_image_bytes(page)
                 page_name = f"{stem} - {index:03d}" if is_pdf else stem
                 image_name = f"{stem}_page_{index:03d}.png" if is_pdf else name
@@ -130,9 +139,12 @@ async def create_project(
                     image_width=w,
                     image_height=h,
                     status="draft",
+                    note=f"横書きの図面のため、登録時に {turn}° 回して縦向きにしました" if turn else None,
                 )
                 db.add(p)
                 db.flush()
+                if turn:
+                    turned.append({"project_id": p.id, "degrees": turn})
                 db.add(
                     AnnotationImage(
                         project_id=p.id,
@@ -147,7 +159,7 @@ async def create_project(
             db.rollback()
             raise HTTPException(400, str(exc)) from exc
     db.commit()
-    return {"project_ids": [p.id for p in created], "count": len(created)}
+    return {"project_ids": [p.id for p in created], "count": len(created), "turned": turned}
 
 
 @router.get("/projects")
@@ -162,22 +174,29 @@ def list_projects(q: str | None = Query(default=None), db: Session = Depends(get
                 AnnotationProject.name.ilike(like) | AnnotationProject.sheet_no.ilike(like)
             )
     # 件数は行ごとの relationship 読み込みではなく集計クエリで取る（N+1 回避）
-    def _counts(model, key_col):
+    def _counts(model, key_col, *criteria):
         return dict(
-            db.query(key_col, func.count(model.id)).group_by(key_col).all()
+            db.query(key_col, func.count(model.id)).filter(*criteria).group_by(key_col).all()
         )
 
     symbol_counts = _counts(AnnotationSymbol, AnnotationSymbol.project_id)
     connection_counts = _counts(Connection, Connection.project_id)
-    prediction_counts = _counts(Prediction, Prediction.project_id)
+    prediction_counts = _counts(Prediction, Prediction.project_id, Prediction.kind == "symbol")
     terminal_counts = dict(
         db.query(AnnotationSymbol.project_id, func.count(SymbolTerminal.id))
         .join(SymbolTerminal, SymbolTerminal.symbol_id == AnnotationSymbol.id)
         .group_by(AnnotationSymbol.project_id)
         .all()
     )
+    analysis_counts = {}
+    for project_id, payload_json in db.query(
+        StructurePrediction.project_id, StructurePrediction.payload_json
+    ):
+        payload = json.loads(payload_json)
+        analysis_counts[project_id] = (len(payload["wires"]), payload["from_to"]["connection_count"])
     out = []
     for p in query.order_by(AnnotationProject.id.desc()).all():
+        analysis_wire_count, analysis_connection_count = analysis_counts.get(p.id, (None, None))
         out.append(
             {
                 "id": p.id,
@@ -193,6 +212,8 @@ def list_projects(q: str | None = Query(default=None), db: Session = Depends(get
                 "connection_count": connection_counts.get(p.id, 0),
                 "terminal_count": terminal_counts.get(p.id, 0),
                 "prediction_count": prediction_counts.get(p.id, 0),
+                "analysis_wire_count": analysis_wire_count,
+                "analysis_connection_count": analysis_connection_count,
                 "updated_at": p.updated_at.isoformat() if p.updated_at else None,
             }
         )
@@ -213,6 +234,23 @@ def update_meta(project_id: int, payload: ProjectMetaPayload, db: Session = Depe
             setattr(p, field, value)
     db.commit()
     return {"id": p.id, "status": p.status}
+
+
+@router.post("/projects/{project_id}/sheet-number/suggest")
+def suggest_sheet_number(project_id: int, db: Session = Depends(get_db)):
+    """図面下部の文字を読み取り、シート番号の候補を返す。sheet_no は書き換えない。"""
+    p = get_project_or_404(db, project_id)
+    path = image_path(p.images[0].sha256) if p.images else None
+    if path is None or not path.exists():
+        raise HTTPException(400, "図面画像が登録されていないため、シート番号を読み取れません")
+    try:
+        candidates = suggest_sheet_numbers(path)
+    except RuntimeError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except Exception as exc:
+        _logger.exception("Sheet number OCR failed")
+        raise HTTPException(500, "シート番号の読み取りに失敗しました。手入力してください。") from exc
+    return {"candidates": candidates}
 
 
 @router.put("/projects/{project_id}/annotations")
@@ -339,7 +377,7 @@ def stats(db: Session = Depends(get_db)):
         .group_by(AnnotationSymbol.origin)
         .all()
     )
-    prediction_total = db.query(Prediction).count()
+    prediction_total = db.query(Prediction).filter(Prediction.kind == "symbol").count()
     return {
         "project_count": len(projects),
         "symbol_count": symbols,

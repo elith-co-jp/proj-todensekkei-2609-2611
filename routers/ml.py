@@ -17,7 +17,8 @@ from sqlalchemy.orm import Session
 from database import get_db
 from models import AnnotationProject, MlModel, TrainingRun
 from routers.common import get_project_or_404, safe_upload_name
-from schemas import InferenceRunRequest, TrainingDecisionPayload, TrainingRunRequest
+from schemas import AnnotationUpdatePayload, InferenceRunRequest, TrainingDecisionPayload, TrainingRunRequest
+from services.ai_import_service import import_payload
 from services.inference_service import (
     import_predictions_zip,
     predictions_payload,
@@ -34,7 +35,9 @@ from services.model_service import (
     serialize_model,
     store_model_bytes,
 )
+from services.review_service import project_review_summary
 from services.structure_service import document_structure, get_structure
+from services.training_data_service import class_stats, hard_drawings
 from services.training_service import running_training, serialize_run, start_training
 
 router = APIRouter(prefix="/api/ml", tags=["ml"])
@@ -149,9 +152,11 @@ def _run_inference(payload: InferenceRunRequest, db: Session, *, include_structu
         raise HTTPException(409, "別の解析を実行中です。完了してから再実行してください。")
     try:
         if include_structure:
-            results = run_inference(db, model, projects, conf=payload.conf, include_structure=True)
+            results = run_inference(db, model, projects, conf=payload.conf,
+                                    connector_conf=payload.connector_conf, include_structure=True)
         else:
-            results = run_inference(db, model, projects, conf=payload.conf)
+            results = run_inference(db, model, projects, conf=payload.conf,
+                                    connector_conf=payload.connector_conf)
     except RuntimeError as exc:
         db.rollback()
         raise HTTPException(400, str(exc)) from exc
@@ -164,6 +169,7 @@ def _run_inference(payload: InferenceRunRequest, db: Session, *, include_structu
     return {
         "model": serialize_model(model),
         "conf": payload.conf,
+        "connector_conf": payload.connector_conf,
         "results": results,
         "detection_count": sum(r["detections"] for r in results),
     }
@@ -188,7 +194,7 @@ def export_structure(payload: InferenceRunRequest, db: Session = Depends(get_db)
         result = get_structure(db, project.id)
         if result is None:
             raise HTTPException(409, f"構造解析が未実行の図面があります: {project.name}")
-        pages.append(result)
+        pages.append({**result, "sheet_no": project.sheet_no})
     return Response(
         json.dumps(document_structure(pages), ensure_ascii=False, indent=2, allow_nan=False),
         media_type="application/json",
@@ -227,7 +233,38 @@ def project_predictions(project_id: int, db: Session = Depends(get_db)):
     return predictions_payload(db, project)
 
 
+@router.get("/projects/{project_id}/review-summary")
+def review_summary(project_id: int, db: Session = Depends(get_db)):
+    """AI 検出を人がどう確認したか（採用・種別修正・削除・手動追加）と次回学習への反映。"""
+    return project_review_summary(db, get_project_or_404(db, project_id))
+
+
+@router.post("/projects/{project_id}/ai-import")
+def ai_import(project_id: int, payload: AnnotationUpdatePayload, db: Session = Depends(get_db)):
+    """エディタの現在の内容に足す AI の候補（シンボル・端子・配線）を返す。保存はエディタが行う。"""
+    project = get_project_or_404(db, project_id)
+    if any(not s.ref or any(not t.ref for t in s.terminals) for s in payload.symbols):
+        raise HTTPException(400, "シンボルと端子の参照名（ref）を指定してください")
+    return import_payload(
+        db, project,
+        [s.model_dump() for s in payload.symbols],
+        [c.model_dump() for c in payload.connections],
+    )
+
+
 # ---------------------------------------------------------------- 学習
+@router.get("/training/class-stats")
+def training_class_stats(db: Session = Depends(get_db)):
+    """学習に使う図面のクラス別の正解件数。件数の少ないクラスを示す（#24）。"""
+    return class_stats(db)
+
+
+@router.get("/training/hard-drawings")
+def training_hard_drawings(db: Session = Depends(get_db)):
+    """AI の検出と直した後の正解の食い違いが大きい完了の図面（難例）。一致の低い順（#24）。"""
+    return hard_drawings(db)
+
+
 @router.post("/training/run")
 def training_run(payload: TrainingRunRequest, db: Session = Depends(get_db)):
     try:
@@ -238,6 +275,7 @@ def training_run(payload: TrainingRunRequest, db: Session = Depends(get_db)):
             epochs=payload.epochs,
             imgsz=payload.imgsz,
             base_model=payload.base_model,
+            holdout=payload.holdout,
         )
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc

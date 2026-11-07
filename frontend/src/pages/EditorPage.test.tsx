@@ -1,24 +1,43 @@
 // @vitest-environment jsdom
 
-import { act, cleanup, fireEvent, render, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMemoryRouter, RouterProvider } from 'react-router-dom'
 
-import type { ProjectDetail, ProjectRow, SymbolClass } from '../types'
+import type { ProjectDetail, ProjectRow, ReviewSummary, SymbolClass } from '../types'
 import { clearPersistedProjectSave } from '../utils/workspace'
 import EditorPage from './EditorPage'
 
 const apiMocks = vi.hoisted(() => ({
+  aiImport: vi.fn(),
   exportProject: vi.fn(),
   getProject: vi.fn(),
+  getPredictions: vi.fn(),
+  getReviewSummary: vi.fn(),
   imageUrl: vi.fn((id: number) => `/api/projects/${id}/image`),
   listClasses: vi.fn(),
   listProjects: vi.fn(),
   saveAnnotations: vi.fn(),
+  suggestSheetNumber: vi.fn(),
   updateMeta: vi.fn(),
 }))
 
 vi.mock('../api/client', () => ({ api: apiMocks }))
+
+const scrollIntoView = vi.fn()
+
+const reviewSummary: ReviewSummary = {
+  project_id: 1,
+  status: 'draft',
+  in_next_training: false,
+  ai_detection_count: 12,
+  region_excluded_count: 2,
+  imported: true,
+  kept: 7,
+  relabeled: 2,
+  deleted: 3,
+  manual_added: 4,
+}
 
 const symbolClass: SymbolClass = {
   id: 1,
@@ -79,6 +98,8 @@ function row(id: number): ProjectRow {
     sheet_no: String(id),
     page_no: String(id),
     prediction_count: 0,
+    analysis_wire_count: null,
+    analysis_connection_count: null,
     revision: null,
     status: 'draft',
     assignee: null,
@@ -105,6 +126,7 @@ function renderEditor() {
 beforeEach(() => {
   vi.clearAllMocks()
   window.sessionStorage.clear()
+  Object.defineProperty(Element.prototype, 'scrollIntoView', { configurable: true, value: scrollIntoView })
   for (const projectId of [1, 2]) {
     clearPersistedProjectSave('annotations', projectId)
     clearPersistedProjectSave('meta', projectId)
@@ -143,6 +165,7 @@ beforeEach(() => {
   apiMocks.saveAnnotations.mockResolvedValue({ symbol_count: 2, connection_count: 0, skipped: [] })
   apiMocks.updateMeta.mockResolvedValue({ id: 1, status: 'draft' })
   apiMocks.exportProject.mockResolvedValue({ name: 'anonymous.zip', size: 10 })
+  apiMocks.getReviewSummary.mockResolvedValue(reviewSummary)
 })
 
 afterEach(() => {
@@ -407,6 +430,105 @@ describe('EditorPage interactions', () => {
     expect((await findByRole('alert')).textContent).toContain('出力できませんでした')
   })
 
+  it('ヘッダーの図面番号入力でエディタのまま別の図面へ移動する', async () => {
+    const { findByRole, router } = renderEditor()
+    const jump = (await findByRole('textbox', { name: '図面番号を入力して移動' })) as HTMLInputElement
+
+    act(() => jump.focus())
+    fireEvent.change(jump, { target: { value: '2' } })
+    fireEvent.keyDown(jump, { key: 'Enter' })
+
+    await waitFor(() => expect(router.state.location.pathname).toBe('/projects/2'))
+    await waitFor(() => expect(apiMocks.getProject).toHaveBeenLastCalledWith(2))
+  })
+
+  it('AI 推論で AI 解析の端子と配線を破線の候補として足し、既存のシンボルを変えずに保存する', async () => {
+    apiMocks.aiImport.mockResolvedValue({
+      source: 'structure',
+      symbols: [
+        {
+          ref: 'SYM-0003', class_key: 'relay', label: '33HB', cx: 0.5, cy: 0.8, w: 0.05, h: 0.05, note: null,
+          origin: 'inference', confidence: 0.9,
+          terminals: [{ ref: 'SYM-0003-T1', name: '13', tx: 0.5, ty: 0.78, origin: 'inference' }],
+        },
+      ],
+      terminals: [{ symbol_ref: 'SYM-0001', ref: 'SYM-0001-T1', name: '1', tx: 0.3, ty: 0.42, origin: 'inference' }],
+      connections: [
+        {
+          from_symbol_ref: 'SYM-0001', from_terminal_ref: 'SYM-0001-T1', to_symbol_ref: 'SYM-0003',
+          to_terminal_ref: 'SYM-0003-T1', wire_no: null, net_id: null, kind: 'wire', external_ref: null, note: null,
+          origin: 'inference',
+        },
+      ],
+      counts: { existing_symbols: 2, region_excluded: 2, duplicate_dots: 1, text_zone: 0 },
+    })
+    const { container, findByRole, findByText, getByRole } = renderEditor()
+    await findByRole('region', { name: '図面アノテーションキャンバス' })
+
+    fireEvent.click(getByRole('button', { name: 'AI 推論' }))
+
+    expect(
+      await findByText(
+        'AI 検出を 1 件、端子を 2 件、配線を 1 件取り込みました（破線）。内容を確認・修正して保存してください' +
+          '／2 件は既存のシンボルと重なったため追加していません／重複した黒丸 1 件は取り込みませんでした' +
+          '／領域枠 2 件はシンボル対象外として除外',
+      ),
+    ).toBeTruthy()
+    const sent = apiMocks.aiImport.mock.calls[0]
+    expect(sent[0]).toBe(1)
+    expect(sent[1].symbols.map((s: { ref: string }) => s.ref)).toEqual(['SYM-0001', 'SYM-0002'])
+    const wires = [...container.querySelectorAll('svg line')].filter((l) => l.getAttribute('stroke') === '#0891b2')
+    expect(wires).toHaveLength(1)
+    expect(wires[0].getAttribute('stroke-dasharray')).toBeTruthy()
+
+    fireEvent.click(await findByRole('button', { name: '変更を検出' }))
+    await waitFor(() => expect(apiMocks.saveAnnotations).toHaveBeenCalledTimes(1))
+    const saved = apiMocks.saveAnnotations.mock.calls[0][1]
+    expect(saved.symbols[0]).toMatchObject({
+      ref: 'SYM-0001', class_key: 'relay', cx: 0.3, origin: 'manual',
+      terminals: [{ ref: 'SYM-0001-T1', name: '1', origin: 'inference' }],
+    })
+    expect(saved.symbols.map((s: { ref: string }) => s.ref)).toEqual(['SYM-0001', 'SYM-0002', 'SYM-0003'])
+    expect(saved.connections).toEqual([expect.objectContaining({ to_symbol_ref: 'SYM-0003', origin: 'inference' })])
+  })
+
+  it('AI 推論で足すものが無いときは画面を変えず、AI 解析で端子と配線を取り込めることを伝える', async () => {
+    apiMocks.aiImport.mockResolvedValue({
+      source: 'predictions',
+      symbols: [],
+      terminals: [],
+      connections: [],
+      counts: { existing_symbols: 2, region_excluded: 0, duplicate_dots: 0, text_zone: 0 },
+    })
+    const { findByRole, findByText, getByRole, queryByRole } = renderEditor()
+    await findByRole('region', { name: '図面アノテーションキャンバス' })
+
+    fireEvent.click(getByRole('button', { name: 'AI 推論' }))
+
+    expect(
+      await findByText('AI の結果はすべて取り込み済みです／端子と配線は「AI 解析」を実行すると取り込めます'),
+    ).toBeTruthy()
+    expect(queryByRole('button', { name: '変更を検出' })).toBeNull()
+  })
+
+  it('AI の結果が無い図面では推論の実行を案内する', async () => {
+    apiMocks.aiImport.mockResolvedValue({
+      source: null,
+      symbols: [],
+      terminals: [],
+      connections: [],
+      counts: { existing_symbols: 0, region_excluded: 0, duplicate_dots: 0, text_zone: 0 },
+    })
+    const { findByRole, findByText, getByRole } = renderEditor()
+    await findByRole('region', { name: '図面アノテーションキャンバス' })
+
+    fireEvent.click(getByRole('button', { name: 'AI 推論' }))
+
+    expect(
+      await findByText('この図面の推論結果がありません。「AI 改善サイクル」で推論を実行してください'),
+    ).toBeTruthy()
+  })
+
   it('保存失敗後にエディタを再生成しても下書きを復元して再試行できる', async () => {
     let rejectSave: (reason: Error) => void = () => {
       throw new Error('保存リクエストが開始されていません')
@@ -570,6 +692,24 @@ describe('EditorPage レイヤー表示', () => {
     expect(container.querySelectorAll('svg rect[stroke="#0891b2"]')).toHaveLength(3)
   })
 
+  it('ラベル（TAG）レイヤーは枠と別に消せて、選択中のシンボルだけタグを残す', async () => {
+    const { container, findByRole, getByRole, getByTitle } = renderEditor()
+    await findByRole('region', { name: '図面アノテーションキャンバス' })
+    const tags = () => Array.from(container.querySelectorAll('svg text')).map((t) => t.textContent)
+    expect(tags()).toEqual(['SYM-0001', 'SYM-0002'])
+
+    fireEvent.click(getByRole('button', { name: 'ラベル（TAG）を非表示' }))
+    expect(tags()).toEqual([])
+    expect(container.querySelectorAll('svg rect[stroke="#0891b2"]')).toHaveLength(2)
+    expect(getByTitle('表示をオフにしたアノテーション 1 件')).toBeTruthy()
+
+    fireEvent.click(getByRole('button', { name: /^SYM-0002リレー$/ }))
+    expect(tags()).toEqual(['SYM-0002'])
+
+    fireEvent.click(getByRole('button', { name: 'すべて表示' }))
+    expect(tags()).toEqual(['SYM-0001', 'SYM-0002'])
+  })
+
   it('パネルボタンの Enter では新しいシンボルが追加されない', async () => {
     const { container, findByRole, getByRole } = renderEditor()
     await findByRole('region', { name: '図面アノテーションキャンバス' })
@@ -646,5 +786,196 @@ describe('EditorPage レイヤー表示', () => {
     fireEvent.keyDown(window, { key: 't' })
     expect(getByRole('button', { name: '端子を非表示' })).toBeTruthy()
     expect(container.querySelectorAll('svg circle[stroke="#3f9067"]')).toHaveLength(1)
+  })
+})
+
+describe('EditorPage 選択の連動', () => {
+  function canvasTransform(container: HTMLElement) {
+    const transform = (container.querySelector('.origin-top-left') as HTMLElement).style.transform
+    const [, x, y, scale] = /translate\((-?[\d.]+)px, (-?[\d.]+)px\) scale\(([\d.]+)\)/.exec(transform) ?? []
+    return { x: Number(x), y: Number(y), scale: Number(scale) }
+  }
+
+  it('図面上で選んだシンボルをシンボルタブで開き、その行までスクロールする', async () => {
+    Object.defineProperties(HTMLElement.prototype, {
+      setPointerCapture: { configurable: true, value: () => {} },
+      releasePointerCapture: { configurable: true, value: () => {} },
+      hasPointerCapture: { configurable: true, value: () => true },
+    })
+    const { findByRole, getByRole } = renderEditor()
+    const canvas = await findByRole('region', { name: '図面アノテーションキャンバス' })
+    fireEvent.click(getByRole('tab', { name: '図面情報' }))
+
+    fireEvent.keyDown(window, { key: 'v' })
+    fireEvent.pointerDown(canvas, { pointerId: 1, button: 0, clientX: 690, clientY: 324 })
+    fireEvent.pointerUp(window, { pointerId: 1 })
+
+    expect(getByRole('tab', { name: /^シンボル/ }).getAttribute('aria-selected')).toBe('true')
+    expect(getByRole('button', { name: /^SYM-0002リレー$/ }).getAttribute('aria-expanded')).toBe('true')
+    expect((scrollIntoView.mock.contexts.at(-1) as HTMLElement).dataset.symbolRef).toBe('SYM-0002')
+    expect(scrollIntoView).toHaveBeenLastCalledWith({ block: 'nearest', behavior: 'auto' })
+  })
+
+  it('シンボル一覧を登録順・位置順・種別順で並べ替えられる', async () => {
+    apiMocks.listClasses.mockResolvedValue([
+      symbolClass,
+      { ...symbolClass, id: 2, key: 'lamp', label: 'ランプ', yolo_index: 1, color: '#f59e0b', sort_order: 1 },
+    ])
+    apiMocks.getProject.mockImplementation(async (id: number) => {
+      const p = project(id)
+      p.symbols = [
+        { ...p.symbols[0], ref: 'SYM-0001', cx: 0.6, cy: 0.502 },
+        { ...p.symbols[0], ref: 'SYM-0002', class_key: 'lamp', cx: 0.2, cy: 0.3 },
+        { ...p.symbols[0], ref: 'SYM-0003', cx: 0.4, cy: 0.515 },
+      ]
+      return p
+    })
+    const { container, findByRole, getByRole } = renderEditor()
+    await findByRole('region', { name: '図面アノテーションキャンバス' })
+    const order = () =>
+      Array.from(container.querySelectorAll<HTMLElement>('[data-symbol-ref]')).map((row) => row.dataset.symbolRef)
+    expect(order()).toEqual(['SYM-0001', 'SYM-0002', 'SYM-0003'])
+
+    fireEvent.click(getByRole('button', { name: '位置順' }))
+    expect(order()).toEqual(['SYM-0002', 'SYM-0003', 'SYM-0001'])
+
+    fireEvent.click(getByRole('button', { name: '種別順' }))
+    expect(order()).toEqual(['SYM-0001', 'SYM-0003', 'SYM-0002'])
+
+    fireEvent.click(getByRole('button', { name: '登録順' }))
+    expect(order()).toEqual(['SYM-0001', 'SYM-0002', 'SYM-0003'])
+  })
+
+  it('一覧で選んだシンボルが画面外のときだけ、倍率を変えずに中央へ移動する', async () => {
+    const { container, findByText, getByRole } = renderEditor()
+    await findByText('95%')
+    const fitted = canvasTransform(container)
+
+    fireEvent.click(getByRole('button', { name: /^SYM-0002リレー$/ }))
+    expect(canvasTransform(container)).toEqual(fitted)
+
+    for (let i = 0; i < 3; i += 1) fireEvent.click(getByRole('button', { name: '図面を拡大' }))
+    const zoomed = canvasTransform(container)
+    fireEvent.click(getByRole('button', { name: /^SYM-0001リレー$/ }))
+    const centered = canvasTransform(container)
+
+    expect(centered.scale).toBe(zoomed.scale)
+    expect(centered.x + 0.3 * 1000 * centered.scale).toBeCloseTo(500)
+    expect(centered.y + 0.4 * 800 * centered.scale).toBeCloseTo(400)
+  })
+})
+
+describe('EditorPage 学習への反映', () => {
+  it('図面情報タブで確認状況を示し、状態を完了にして保存すると学習に含まれる表示へ更新する', async () => {
+    apiMocks.getReviewSummary
+      .mockResolvedValueOnce(reviewSummary)
+      .mockResolvedValue({ ...reviewSummary, status: 'done', in_next_training: true })
+    const { findByRole, findByText, getByRole, getByText } = renderEditor()
+    fireEvent.click(await findByRole('tab', { name: '図面情報' }))
+
+    expect(await findByText(/^状態を『完了』にすると次回の学習に含まれます。/)).toBeTruthy()
+    expect(getByText('AI検出 12 → 採用 7・種別修正 2・削除 3・手動追加 4')).toBeTruthy()
+    expect(getByText('領域枠 2 件はシンボル対象外として除外')).toBeTruthy()
+
+    fireEvent.change(getByRole('combobox', { name: '状態' }), { target: { value: 'done' } })
+    await waitFor(() => expect(apiMocks.updateMeta).toHaveBeenCalledTimes(1))
+
+    expect(
+      await findByText(
+        'この図面は次回の学習に含まれます。削除したAI検出（3件）の位置は『シンボルではない（背景）』として学習され、同じ誤検出が出にくくなります。',
+      ),
+    ).toBeTruthy()
+    expect(apiMocks.getReviewSummary).toHaveBeenLastCalledWith(1)
+  })
+
+  it('AI 検出を取り込む前はその旨を示し、「更新」で最新の集計を取り直す', async () => {
+    apiMocks.getReviewSummary
+      .mockResolvedValueOnce({ ...reviewSummary, imported: false, kept: 0, relabeled: 0, deleted: 0 })
+      .mockResolvedValue(reviewSummary)
+    const { findByRole, findByText, getByRole, queryByText } = renderEditor()
+    fireEvent.click(await findByRole('tab', { name: '図面情報' }))
+
+    expect(await findByText('AI 検出はまだ取り込まれていません。')).toBeTruthy()
+    expect(queryByText(/→ 採用/)).toBeNull()
+
+    fireEvent.click(getByRole('button', { name: '更新' }))
+    expect(await findByText('AI検出 12 → 採用 7・種別修正 2・削除 3・手動追加 4')).toBeTruthy()
+  })
+
+  it('AI 検出のシンボルを削除したときだけ、背景として学習されることを通知する', async () => {
+    apiMocks.getProject.mockImplementation(async (id: number) => {
+      const p = project(id)
+      p.symbols[0] = { ...p.symbols[0], origin: 'inference', confidence: 0.8 }
+      return p
+    })
+    const { findByRole, findByText, getByRole, queryByText } = renderEditor()
+    await findByRole('region', { name: '図面アノテーションキャンバス' })
+
+    fireEvent.click(getByRole('button', { name: 'SYM-0002を削除' }))
+    expect(queryByText(/を削除しました/)).toBeNull()
+
+    fireEvent.click(getByRole('button', { name: 'SYM-0001を削除' }))
+    expect(
+      await findByText(
+        'AI 検出 SYM-0001 を削除しました。図面を『完了』にして学習すると、この位置は『シンボルではない』例として学習されます。',
+      ),
+    ).toBeTruthy()
+  })
+
+  it('AI 解析の結果がある図面では、AI の端子と配線の確認状況も示す', async () => {
+    apiMocks.getReviewSummary.mockResolvedValue({
+      ...reviewSummary,
+      wiring: {
+        terminals: { ai_count: 40, imported: true, kept: 35, deleted: 5, manual_added: 2 },
+        connections: { ai_count: 30, imported: false, kept: 0, deleted: 0, manual_added: 4 },
+      },
+    })
+    const { findByRole, findByText } = renderEditor()
+    fireEvent.click(await findByRole('tab', { name: '図面情報' }))
+
+    expect(await findByText('AI端子 40 → 採用 35・削除 5・手動追加 2')).toBeTruthy()
+    expect(await findByText('AI配線 30（未取り込み）')).toBeTruthy()
+  })
+})
+
+describe('EditorPage シート番号の読取', () => {
+  it('AI で読み取った候補を押すとシート番号に入力して自動保存する', async () => {
+    apiMocks.suggestSheetNumber.mockResolvedValue({
+      candidates: [
+        { text: 'EA1203', score: 0.92, region: 'title_block' },
+        { text: 'EA1208', score: 0.41, region: 'margin' },
+      ],
+    })
+    const { findByRole, getByRole } = renderEditor()
+    fireEvent.click(await findByRole('tab', { name: '図面情報' }))
+
+    fireEvent.click(getByRole('button', { name: 'AIで読取' }))
+    const chip = await findByRole('button', { name: /^EA1203/ })
+    expect(within(chip).getByText('92%')).toBeTruthy()
+    expect(getByRole('button', { name: /^EA1208/ })).toBeTruthy()
+    expect(apiMocks.suggestSheetNumber).toHaveBeenCalledWith(1)
+
+    fireEvent.click(chip)
+    expect((getByRole('textbox', { name: 'シート番号' }) as HTMLInputElement).value).toBe('EA1203')
+    expect(chip.getAttribute('aria-pressed')).toBe('true')
+    await waitFor(() =>
+      expect(apiMocks.updateMeta).toHaveBeenCalledWith(1, expect.objectContaining({ sheet_no: 'EA1203' })),
+    )
+  })
+
+  it('候補が無いときは手入力を促し、読み取れないときは理由を示す', async () => {
+    apiMocks.suggestSheetNumber
+      .mockResolvedValueOnce({ candidates: [] })
+      .mockRejectedValueOnce(new Error('文字認識（OCR）を利用できません'))
+    const { findByRole, findByText, getByRole, queryByText } = renderEditor()
+    fireEvent.click(await findByRole('tab', { name: '図面情報' }))
+
+    fireEvent.click(getByRole('button', { name: 'AIで読取' }))
+    expect(await findByText('候補が見つかりませんでした。手入力してください。')).toBeTruthy()
+
+    fireEvent.click(await findByRole('button', { name: 'AIで読取' }))
+    expect(await findByText('シート番号を読み取れませんでした: 文字認識（OCR）を利用できません')).toBeTruthy()
+    expect(queryByText('候補が見つかりませんでした。手入力してください。')).toBeNull()
+    expect(apiMocks.updateMeta).not.toHaveBeenCalled()
   })
 })

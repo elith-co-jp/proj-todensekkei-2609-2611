@@ -16,6 +16,20 @@ from build_e2e_demo_outputs import load_font, wire_points
 
 TARGET_PARENT_CLASSES = ("contact_a", "contact_b", "solenoid", "relay_coil")
 EXPLICIT_NODE_CLASSES = ("connector", "junction", "terminal", "power_bus")
+# Classes whose terminals sit where a wire stops inside the box (the + and - dots of a card),
+# not at fixed fractions of the box. Empty disables these ports.
+WIRE_END_PORT_CLASSES: frozenset[str] = frozenset({"other"})
+# A two-port contact sits on a wire that runs through its box; a wire passing just beside the box
+# (axis_padding_px allows it) belongs to the next contact when the box also covers the label.
+CONTACT_PREFERS_WIRES_INSIDE_BOX = True
+# Card input contacts are two open circles with a gap: the template points fall in the blank gap and
+# fail the ink check. Such a contact takes its ports at the box edges instead, only where a wire
+# reaches the edge; a point off the wire would attach to whatever node lies within reach.
+CONTACT_EDGE_FALLBACK = True
+# A contact boxed together with its label can also cover the return wire drawn just beside the label
+# (ER21282: a box drawn around each contact doubles as its wiring). A two-port contact sits on one line,
+# so when ports land on parallel lines, keep the line deepest inside the box.
+CONTACT_KEEPS_INNERMOST_LINE = True
 
 FONT_XS = load_font(12)
 FONT_SM = load_font(15)
@@ -178,6 +192,7 @@ def infer_ports_for_symbol(
     contact_max_wire_axes = int(config.get("contact_max_wire_axes", 0) or 0)
     contact_min_terminal_rel_x = config.get("contact_min_terminal_rel_x")
     contact_max_terminal_rel_x = config.get("contact_max_terminal_rel_x")
+    wire_end_ports = class_name in config.get("wire_end_port_classes", WIRE_END_PORT_CLASSES)
 
     candidates: list[dict[str, Any]] = []
     for wire in wires:
@@ -197,8 +212,11 @@ def infer_ports_for_symbol(
             overlap = min(span_end, y1 + margin_px) - max(span_start, y0 - margin_px)
             if overlap <= 0:
                 continue
+            inner_ends = [(clamp(axis, x0, x1), end) for end in (span_start, span_end) if y0 + margin_px <= end <= y1 - margin_px]
             if mode == "bbox_edge":
                 points = [(clamp(axis, x0, x1), y0), (clamp(axis, x0, x1), y1)]
+                if config.get("edge_on_span"):
+                    points = [p for p in points if span_start - margin_px <= p[1] <= span_end + margin_px]
             elif class_name in {"contact_a", "contact_b"} and contact_outer_terminal_margin_px > 0 and not four_port:
                 y_values = [y0 - contact_outer_terminal_margin_px, y0 + 0.32 * height, y0 + 0.68 * height, y1 + contact_outer_terminal_margin_px]
                 points = [
@@ -219,8 +237,11 @@ def infer_ports_for_symbol(
             overlap = min(span_end, x1 + margin_px) - max(span_start, x0 - margin_px)
             if overlap <= 0:
                 continue
+            inner_ends = [(end, clamp(axis, y0, y1)) for end in (span_start, span_end) if x0 + margin_px <= end <= x1 - margin_px]
             if mode == "bbox_edge":
                 points = [(x0, clamp(axis, y0, y1)), (x1, clamp(axis, y0, y1))]
+                if config.get("edge_on_span"):
+                    points = [p for p in points if span_start - margin_px <= p[0] <= span_end + margin_px]
             elif class_name in {"contact_a", "contact_b"} and contact_outer_terminal_margin_px > 0 and not four_port:
                 x_values = [x0 - contact_outer_terminal_margin_px, x0 + 0.32 * width, x0 + 0.68 * width, x1 + contact_outer_terminal_margin_px]
                 points = [
@@ -235,6 +256,8 @@ def infer_ports_for_symbol(
                     if not require_point_on_wire_span or span_start - margin_px <= x0 + ratio * width <= span_end + margin_px
                 ]
             side = "horizontal_axis"
+        if wire_end_ports:
+            points = [*points, *inner_ends]
 
         for point in points:
             ink_ratio = point_ink_ratio(source_image, point, ink_radius)
@@ -253,8 +276,25 @@ def infer_ports_for_symbol(
                     "wire_visible_coverage": wire.get("visible_coverage"),
                     "reason": f"{mode}:{side}",
                     "ink_ratio": round(ink_ratio, 4),
+                    "wire_inside_box": (x0 <= axis <= x1) if orientation == "v" else (y0 <= axis <= y1),
                 }
             )
+
+    if CONTACT_PREFERS_WIRES_INSIDE_BOX and class_name in {"contact_a", "contact_b"} and not four_port:
+        inside = [candidate for candidate in candidates if candidate["wire_inside_box"]]
+        candidates = inside or candidates
+
+    if CONTACT_KEEPS_INNERMOST_LINE and class_name in {"contact_a", "contact_b"} and not four_port and candidates:
+        def cross(candidate: dict[str, Any]) -> float:
+            return float(candidate["point"][0] if candidate["wire_orientation"] == "v" else candidate["point"][1])
+
+        def depth(candidate: dict[str, Any]) -> float:
+            lo, hi = (x0, x1) if candidate["wire_orientation"] == "v" else (y0, y1)
+            return min(cross(candidate) - lo, hi - cross(candidate))
+
+        deepest = max(candidates, key=depth)
+        candidates = [c for c in candidates
+                      if c["wire_orientation"] != deepest["wire_orientation"] or abs(cross(c) - cross(deepest)) <= 3]
 
     if class_name in {"contact_a", "contact_b"} and (
         contact_min_terminal_rel_x is not None or contact_max_terminal_rel_x is not None
@@ -291,6 +331,8 @@ def infer_ports_for_symbol(
         previous = deduped.get(key)
         if previous is None or float(candidate["ink_ratio"]) > float(previous["ink_ratio"]):
             deduped[key] = candidate
+    if CONTACT_EDGE_FALLBACK and mode == "template" and class_name in {"contact_a", "contact_b"} and not four_port and len(deduped) < 2:
+        return infer_ports_for_symbol(symbol, wires, source_image, config={**config, "mode": "bbox_edge", "edge_on_span": True})
     return sorted(deduped.values(), key=lambda item: (str(item["wire_id"]), item["point"][1], item["point"][0]))
 
 

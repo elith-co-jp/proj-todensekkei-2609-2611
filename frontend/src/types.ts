@@ -14,6 +14,8 @@ export type Terminal = {
   /** 画像に対する正規化座標 (0-1) */
   tx: number
   ty: number
+  /** 登録の経緯。inference=AI の解析から取り込んだ候補 */
+  origin?: SymbolOrigin
 }
 
 export type SymbolOrigin = 'manual' | 'inference'
@@ -49,6 +51,8 @@ export type Connection = {
   kind: ConnectionKind
   external_ref: string | null
   note: string | null
+  /** 登録の経緯。inference=AI の解析から取り込んだ候補 */
+  origin?: SymbolOrigin
 }
 
 export type ProjectDetail = {
@@ -82,6 +86,9 @@ export type ProjectRow = {
   connection_count: number
   terminal_count: number
   prediction_count: number
+  /** AI 解析（構造解析）で検出した配線の本数。未解析なら null */
+  analysis_wire_count: number | null
+  analysis_connection_count: number | null
   updated_at: string | null
 }
 
@@ -135,6 +142,9 @@ export type ProjectPredictions = {
   model_id: number | null
   count: number
   detections: Detection[]
+  /** シンボル対象外として除外した大きな枠（作図領域・DI範囲・雲マーク・LOC など） */
+  regions?: Detection[]
+  region_count?: number
 }
 
 export type PredictionSummary = {
@@ -147,6 +157,7 @@ export type InferenceRunResult = {
   project_id: number
   name: string
   detections: number
+  region_count?: number
   skipped_images?: number
   structure_available?: boolean
   wire_count?: number
@@ -177,6 +188,7 @@ export type StructureResult = {
 export type InferenceRunResponse = {
   model: MlModel
   conf: number
+  connector_conf?: number | null
   results: InferenceRunResult[]
   detection_count: number
 }
@@ -186,6 +198,58 @@ export type InferenceImportResult = {
   unmatched_files: string[]
   missing_project_ids: number[]
   count: number
+}
+
+/** エディタに足す AI の候補。既存のシンボル・端子・配線は含まない（追加分だけ） */
+export type AiImportResult = {
+  /** 取り込み元。structure=AI 解析（端子・配線あり）/ predictions=推論のシンボルだけ / null=結果なし */
+  source: 'structure' | 'predictions' | null
+  symbols: SymbolBox[]
+  /** 既存のシンボルに足す端子 */
+  terminals: (Terminal & { symbol_ref: string })[]
+  connections: Connection[]
+  counts: {
+    /** AI の候補と重なった既存シンボルの数（追加しない） */
+    existing_symbols: number
+    region_excluded: number
+    duplicate_dots: number
+    text_zone: number
+  }
+}
+
+export type WiringReviewCounts = {
+  ai_count: number
+  imported: boolean
+  kept: number
+  deleted: number
+  manual_added: number
+}
+
+export type ReviewSummary = {
+  project_id: number
+  status: 'draft' | 'review' | 'done'
+  in_next_training: boolean
+  ai_detection_count: number
+  region_excluded_count: number
+  imported: boolean
+  kept: number
+  relabeled: number
+  deleted: number
+  manual_added: number
+  /** AI 解析の端子・配線の確認状況。AI 解析の結果が無い図面は null */
+  wiring?: { terminals: WiringReviewCounts; connections: WiringReviewCounts } | null
+}
+
+export type SheetNumberCandidate = {
+  text: string
+  score: number
+  region: 'title_block' | 'margin'
+}
+
+export type EvalScope = {
+  mode: 'holdout' | 'train'
+  train_project_ids: number[]
+  val_project_ids: number[]
 }
 
 export type TrainingRun = {
@@ -204,10 +268,63 @@ export type TrainingRun = {
   baseline_label: string | null
   /** 採用判定: pending=採用待ち / adopted=採用 / rejected=見送り */
   decision: 'pending' | 'adopted' | 'rejected' | null
+  eval_scope: EvalScope | null
+  /** 評価用の図面でのクラス別の値（新モデル・比較対象） */
+  per_class?: Record<string, ClassMetric> | null
+  baseline_per_class?: Record<string, ClassMetric> | null
+  /** 採用判定の基準による推奨 */
+  review?: AdoptionReview | null
   log_tail: string | null
   started_at: string | null
   finished_at: string | null
 }
+
+export type ClassMetric = {
+  label: string
+  instances: number
+  precision: number
+  recall: number
+  map50: number
+  map50_95: number
+}
+
+export type AdoptionReview = {
+  /** adopt=採用を勧める / hold=見送りを勧める / caution=学習に使った図面での評価 / unknown=指標なし */
+  verdict: 'adopt' | 'hold' | 'caution' | 'unknown'
+  reasons: string[]
+}
+
+export type ClassStats = {
+  done_drawings: number
+  thin_threshold: number
+  classes: {
+    key: string
+    label: string
+    color: string
+    done_count: number
+    done_drawings: number
+    total_count: number
+    total_drawings: number
+    thin: boolean
+  }[]
+}
+
+export type HardDrawings = {
+  threshold: number
+  drawings: {
+    project_id: number
+    name: string
+    sheet_no: string | null
+    f1: number
+    ai_count: number
+    gold_count: number
+    missed: number
+    false_detections: number
+    relabeled: number
+    hard: boolean
+  }[]
+}
+
 
 export const STATUS_LABEL: Record<string, string> = {
   draft: '作業中',

@@ -64,6 +64,7 @@ erDiagram
         string name
         float tx
         float ty
+        string origin "manual / inference"
     }
     connections {
         int id PK
@@ -77,6 +78,7 @@ erDiagram
         string kind "wire / sheet_ref"
         string external_ref
         text note
+        string origin "manual / inference"
     }
     ml_models {
         int id PK

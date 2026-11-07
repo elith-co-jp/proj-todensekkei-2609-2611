@@ -147,8 +147,12 @@ export function restoreFailedProjectSave<T>(
   return true
 }
 
+function sortedProjectIds(projects: ReadonlyArray<{ id: number }>): number[] {
+  return projects.map(({ id }) => id).sort((left, right) => left - right)
+}
+
 export function getProjectNavigation(projects: ReadonlyArray<{ id: number }>, currentId: number): ProjectNavigation {
-  const sortedIds = projects.map(({ id }) => id).sort((left, right) => left - right)
+  const sortedIds = sortedProjectIds(projects)
   const currentIndex = sortedIds.indexOf(currentId)
 
   if (currentIndex < 0) {
@@ -166,6 +170,11 @@ export function getProjectNavigation(projects: ReadonlyArray<{ id: number }>, cu
     previousId: sortedIds[currentIndex - 1] ?? null,
     nextId: sortedIds[currentIndex + 1] ?? null,
   }
+}
+
+/** 1 始まりの表示位置（getProjectNavigation の position と同じ並び）から図面 ID を引く */
+export function projectIdAt(projects: ReadonlyArray<{ id: number }>, position: number): number | null {
+  return sortedProjectIds(projects)[position - 1] ?? null
 }
 
 export function isEditorPath(pathname: string): boolean {

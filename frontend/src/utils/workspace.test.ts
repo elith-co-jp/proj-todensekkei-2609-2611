@@ -10,6 +10,7 @@ import {
   isEditorPath,
   loadPersistedProjectSave,
   persistProjectSave,
+  projectIdAt,
   restoreFailedProjectSave,
   takeNextProjectSave,
 } from './workspace'
@@ -47,6 +48,17 @@ describe('getProjectNavigation', () => {
       previousId: null,
       nextId: null,
     })
+  })
+})
+
+describe('projectIdAt', () => {
+  it('表示位置からID順の図面IDを返し、範囲外はnullを返す', () => {
+    const projects = [{ id: 30 }, { id: 10 }, { id: 20 }]
+
+    expect(projectIdAt(projects, 1)).toBe(10)
+    expect(projectIdAt(projects, 3)).toBe(30)
+    expect(projectIdAt(projects, 0)).toBeNull()
+    expect(projectIdAt(projects, 4)).toBeNull()
   })
 })
 

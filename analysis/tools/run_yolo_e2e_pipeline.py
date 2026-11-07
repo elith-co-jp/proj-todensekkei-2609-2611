@@ -5,13 +5,15 @@ import hashlib
 import json
 import os
 import re
+import sys
 from collections import Counter, defaultdict
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 from PIL import Image, ImageDraw
 
-from analyze_pdf_structure import WIRE_GEOMETRY_REVISION, analyze_page, make_binary_mask
+from analyze_pdf_structure import WIRE_GEOMETRY_REVISION, analyze_page, make_binary_mask, support_vector_for_span
 from analyze_annotation_graph import load_zip_payload, symbol_bbox
 from build_from_to_review_outputs import build_predicted_graph_pairs
 from build_e2e_demo_outputs import (
@@ -73,8 +75,20 @@ DIRECT_TERMINAL_GAP_BRIDGE_MAX = 240.0
 DIRECT_WIRE_GAP_BRIDGE_MAX = 80.0
 DIRECT_GAP_BRIDGE_ALIGN_THRESHOLD = 28.0
 DIRECT_WIRE_GAP_TERMINAL_ANCHOR_THRESHOLD = 18.0
-DIRECT_TERMINAL_TERMINAL_BRIDGE_MAX = 140.0
+# Two junction dots are joined only through a detected wire: a bridge between aligned dots chained
+# the separate staggered wires of one column group into a single net (ER21277).
+DIRECT_TERMINAL_TERMINAL_BRIDGE_MAX = 0.0
 DIRECT_ENDPOINT_BRIDGE_MAX = 60.0
+# Join a wire end to a nearby perpendicular wire only past that end, never back over its own span.
+DIRECT_WIRE_GAP_BRIDGE_OUTWARD_ONLY = True
+# Longest run of blank pixels (at 150 dpi) a wire-gap bridge may cross. Markers on a wire stay
+# under about 38 px; the space between a card's + and - dots is over 50 px. 0 disables the check.
+DIRECT_WIRE_GAP_BRIDGE_MAX_BLANK = 45.0
+# The same limit for a terminal joined to the end of a collinear wire up to DIRECT_TERMINAL_GAP_BRIDGE_MAX away.
+DIRECT_TERMINAL_GAP_BRIDGE_MAX_BLANK = 45.0
+# A missing wire never runs through the middle of a coil: such a bridge would short it.
+DIRECT_GAP_BRIDGE_DEVICE_CLASSES = {"relay_coil", "solenoid"}
+BOX_PORTS_SKIP_COIL_INTERIOR = True
 # Classes whose electrical port is wherever a wire meets the box; when such a
 # symbol has no terminal link, attach it to every wire touching its bbox.
 TOUCHING_WIRE_FALLBACK_CLASSES = {"connector", "junction", "power_bus", "terminal"}
@@ -1103,7 +1117,16 @@ def enrich_symbols_and_graph(
     symbol_node_links: list[dict[str, Any]] = []
     symbol_wire_links: list[dict[str, Any]] = []
     symbol_terminal_links: list[dict[str, Any]] = []
+    # A wire end inside a coil or solenoid belongs to that device, never to a box drawn around it.
+    coil_boxes = [
+        s["bbox"] for s in symbols
+        if str(s.get("class_name") or "") in DIRECT_GAP_BRIDGE_DEVICE_CLASSES and not (s.get("dot_role") or {}).get("suppressed")
+    ] if BOX_PORTS_SKIP_COIL_INTERIOR else []
     for symbol in symbols:
+        if (symbol.get("dot_role") or {}).get("suppressed"):
+            symbol.update(terminals=[], nearby_node_ids=[], terminal_wire_ids=[], terminal_links=[],
+                          touching_wire_ids=[], nearby_label_ids=[])
+            continue
         bbox = symbol["bbox"]
         center = tuple(symbol["center"])
         terminal_points = terminal_points_for_symbol(
@@ -1114,6 +1137,11 @@ def enrich_symbols_and_graph(
             inferred_terminal_classes=inferred_terminal_classes,
             inferred_terminal_config=inferred_terminal_config,
         )
+        if coil_boxes and symbol.get("class_name") == "other":
+            terminal_points = [
+                t for t in terminal_points
+                if not any(b["x0"] <= t["point"][0] <= b["x1"] and b["y0"] <= t["point"][1] <= b["y1"] for b in coil_boxes)
+            ]
         symbol["terminals"] = [
             {
                 "ref": terminal.get("terminal_ref"),
@@ -1637,9 +1665,33 @@ def build_direct_terminal_records(
     return records, terminal_by_key
 
 
-def build_direct_from_to(payload: dict[str, Any]) -> dict[str, Any]:
+def blank_run_measure(source_image: Image.Image) -> Callable[[tuple[float, float], tuple[float, float]], int]:
+    binary = make_binary_mask(source_image)
+    scale = source_image.width / 1755
+
+    def longest_blank(start: tuple[float, float], end: tuple[float, float]) -> int:
+        (x0, y0), (x1, y1) = start, end
+        if abs(x1 - x0) >= abs(y1 - y0):
+            lo, hi = sorted((round(x0), round(x1)))
+            support = support_vector_for_span(binary, "h", round((y0 + y1) / 2), lo, hi + 1, half_width=2)
+        else:
+            lo, hi = sorted((round(y0), round(y1)))
+            support = support_vector_for_span(binary, "v", round((x0 + x1) / 2), lo, hi + 1, half_width=2)
+        longest = run = 0
+        for inked in support:
+            run = 0 if inked else run + 1
+            longest = max(longest, run)
+        return round(longest / scale)
+
+    return longest_blank
+
+
+def build_direct_from_to(
+    payload: dict[str, Any], source_image: Image.Image | None = None, trace: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     terminal_records, terminal_by_key = build_direct_terminal_records(payload)
     bridge_stats: Counter[str] = Counter()
+    blank_run = blank_run_measure(source_image) if source_image is not None and DIRECT_WIRE_GAP_BRIDGE_MAX_BLANK > 0 else None
     pairs = build_predicted_graph_pairs(
         payload,
         terminal_records,
@@ -1658,6 +1710,12 @@ def build_direct_from_to(payload: dict[str, Any]) -> dict[str, Any]:
         nonconductive_anchor_policy="all",
         bridge_stats=bridge_stats,
         endpoint_bridge_max=DIRECT_ENDPOINT_BRIDGE_MAX,
+        wire_gap_bridge_outward_only=DIRECT_WIRE_GAP_BRIDGE_OUTWARD_ONLY,
+        gap_blank_run=blank_run,
+        wire_gap_bridge_max_blank=DIRECT_WIRE_GAP_BRIDGE_MAX_BLANK,
+        terminal_gap_bridge_max_blank=DIRECT_TERMINAL_GAP_BRIDGE_MAX_BLANK,
+        gap_bridge_device_classes=set(DIRECT_GAP_BRIDGE_DEVICE_CLASSES),
+        trace=trace,
     )
     valid_pairs = sorted(
         pair for pair in pairs if pair[0] in terminal_by_key and pair[1] in terminal_by_key
@@ -1713,6 +1771,9 @@ def build_direct_from_to(payload: dict[str, Any]) -> dict[str, Any]:
             "wire_gap_terminal_anchor_threshold": DIRECT_WIRE_GAP_TERMINAL_ANCHOR_THRESHOLD,
             "terminal_terminal_bridge_classes": sorted(DIRECT_TERMINAL_TERMINAL_BRIDGE_CLASSES),
             "terminal_terminal_bridge_max": DIRECT_TERMINAL_TERMINAL_BRIDGE_MAX,
+            "wire_gap_bridge_outward_only": DIRECT_WIRE_GAP_BRIDGE_OUTWARD_ONLY,
+            "wire_gap_bridge_max_blank": DIRECT_WIRE_GAP_BRIDGE_MAX_BLANK if blank_run is not None else 0.0,
+            "terminal_gap_bridge_max_blank": DIRECT_TERMINAL_GAP_BRIDGE_MAX_BLANK if blank_run is not None else 0.0,
             "bridge_stats": dict(sorted(bridge_stats.items())),
         },
     }
@@ -2063,6 +2124,24 @@ def load_symbol_ocr_reader(engine: str, language: str) -> tuple[Any | None, str,
         warning = f"symbol label OCR '{engine}' is unavailable ({caught}); continuing without symbol label OCR"
         return None, "none", warning
     raise ValueError(f"unsupported symbol OCR engine: {engine}")
+
+
+def load_crop_ocr_reader(page_reader: Any) -> Any:
+    """The recognizer for the 4x reads of each connector / contact / coil box (the page is read with page_reader).
+
+    SEQANNO_OCR_REC_MODEL names a recognizer fine-tuned on the customer's drawings (ocr_finetune.py), which
+    ships outside the repository. It reads only these boxes: relay tables, notes and sheet numbers keep the
+    bundled recognizer, which the fine-tuning was not checked against.
+    """
+    rec_model = os.environ.get("SEQANNO_OCR_REC_MODEL")
+    if not rec_model or page_reader is None:
+        return page_reader
+    if not Path(rec_model).is_file():
+        print(f"SEQANNO_OCR_REC_MODEL={rec_model} does not exist; using the bundled recognizer", file=sys.stderr)
+        return page_reader
+    from rapidocr_onnxruntime import RapidOCR
+
+    return RapidOCR(rec_model_path=rec_model)
 
 
 def main() -> None:

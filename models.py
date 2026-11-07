@@ -150,6 +150,7 @@ class SymbolTerminal(Base):
     name = Column(String(50), nullable=False)  # "13" / "NC1" など
     tx = Column(Float, nullable=False)  # 画像に対する正規化座標
     ty = Column(Float, nullable=False)
+    origin = Column(String(20), nullable=False, default="manual", server_default="manual")
 
     symbol = relationship("AnnotationSymbol", back_populates="terminals")
 
@@ -180,6 +181,7 @@ class Connection(Base):
     kind = Column(String(20), nullable=False, default="wire")  # wire / sheet_ref
     external_ref = Column(String(200), nullable=True)  # (610-2F-9) 等のシート間参照
     note = Column(Text, nullable=True)
+    origin = Column(String(20), nullable=False, default="manual", server_default="manual")
     created_at = Column(DateTime, default=utc_now_naive)
 
     project = relationship("AnnotationProject", back_populates="connections")
@@ -228,6 +230,8 @@ class Prediction(Base):
     w = Column(Float, nullable=False)
     h = Column(Float, nullable=False)
     confidence = Column(Float, nullable=True)
+    kind = Column(String(20), nullable=False, default="symbol", server_default="symbol")
+    # kind: symbol=シンボル候補 / region=作図領域・DI 範囲などの大枠（シンボル件数に含めない）
     created_at = Column(DateTime, default=utc_now_naive)
 
     project = relationship("AnnotationProject", back_populates="predictions")
@@ -272,6 +276,7 @@ class TrainingRun(Base):
     decision = Column(String(20), nullable=False, default="")
     baseline_metrics_json = Column(Text, nullable=True)  # 旧モデルの評価指標
     baseline_label = Column(String(500), nullable=True)  # 旧モデルの表示名
+    eval_scope_json = Column(Text, nullable=True)  # 評価に使った図面の範囲（holdout / train）
     log_tail = Column(Text, nullable=True)
     started_at = Column(DateTime, default=utc_now_naive)
     finished_at = Column(DateTime, nullable=True)
