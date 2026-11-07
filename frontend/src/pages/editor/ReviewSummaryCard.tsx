@@ -28,14 +28,18 @@ export function ReviewSummaryCard({
   projectId,
   visible,
   serverSynced,
+  onSplitCoilWires,
 }: {
   projectId: number
   visible: boolean
   serverSynced: boolean
+  /** コイルを通り抜ける配線を分けて端子を付ける（エディタの状態に反映し、保存は自動保存に任せる） */
+  onSplitCoilWires?: () => Promise<void>
 }) {
   const [summary, setSummary] = useState<ReviewSummary | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
+  const [splitting, setSplitting] = useState(false)
   const latestRequest = useRef(0)
 
   const load = useCallback(async () => {
@@ -59,6 +63,17 @@ export function ReviewSummaryCard({
   }, [load, serverSynced, visible])
 
   const line = summary ? statusLine(summary) : null
+  const throughCount = summary?.coils?.issues.filter((issue) => issue.kind === 'through').length ?? 0
+
+  const split = async () => {
+    if (!onSplitCoilWires) return
+    setSplitting(true)
+    try {
+      await onSplitCoilWires()
+    } finally {
+      setSplitting(false)
+    }
+  }
 
   return (
     <section
@@ -115,6 +130,11 @@ export function ReviewSummaryCard({
                     </li>
                   ))}
                 </ul>
+              )}
+              {throughCount > 0 && onSplitCoilWires && (
+                <button type="button" className="btn btn-sm mt-2" onClick={() => void split()} disabled={splitting}>
+                  通り抜ける配線を分けて端子を付ける（{throughCount} 個）
+                </button>
               )}
             </div>
           )}

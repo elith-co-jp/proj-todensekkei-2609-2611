@@ -4,6 +4,7 @@ import type {
   AttributeImportReport,
   CircuitResult,
   CircuitSummary,
+  CoilWiringSplitResult,
   ClassStats,
   HardDrawings,
   InferenceImportResult,
@@ -274,6 +275,13 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ project_ids: projectIds, inputs }),
     }, 'circuit.cir'),
+
+  splitCoilWires: (annotations: { symbols: unknown[]; connections: unknown[] }, imageWidth: number, imageHeight: number) =>
+    req<CoilWiringSplitResult>('/api/circuit/split-coil-wires', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...annotations, image_width: imageWidth, image_height: imageHeight }),
+    }),
 
   attributeDefinitions: () => req<AttributeDefinitions>('/api/attributes/definitions'),
 

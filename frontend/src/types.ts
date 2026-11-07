@@ -373,6 +373,12 @@ export type CircuitSummary = {
 
 export type CircuitBox = { cx: number; cy: number; w: number; h: number }
 
+export type CoilWiringSplitResult = {
+  symbols: SymbolBox[]
+  connections: Connection[]
+  counts: { split: number; multiple: number; none: number; has_terminals: number }
+}
+
 export type CircuitOverlay = {
   project_id: number
   wires: { x1: number; y1: number; x2: number; y2: number; live: boolean }[]

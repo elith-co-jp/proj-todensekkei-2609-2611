@@ -30,7 +30,7 @@ from eval_editor_import import apply_plan, imported_items  # noqa: E402
 from holdout_cv import gold_items, load_gold, match  # noqa: E402
 
 from services.ai_candidates import from_structure, plan_import  # noqa: E402
-from services.circuit_model import build_circuit, simulate  # noqa: E402
+from services.circuit_model import build_circuit, canonical_device, simulate  # noqa: E402
 
 RANDOM_SCENARIOS = 10
 
@@ -65,18 +65,22 @@ def scenarios(inputs: list[str], seed: int) -> list[dict[str, bool]]:
 
 def compare(gold_pages: list[dict], ai_pages: list[dict], texts: dict[int, list], seed: int) -> dict[str, Any]:
     gold, ai = build_circuit(gold_pages, texts), build_circuit(ai_pages, texts)
+    ai_inputs = {canonical_device(dev): dev for dev in ai.inputs}
     dropped = Counter(next(s["class_key"] for p in ai_pages for s in p["symbols"] if p["id"] == d["project_id"] and s["ref"] == d["symbol_ref"])
                       for d in ai.diagnostics if d["kind"] == "terminals_missing")
     counts: Counter = Counter()
     disagreements = []
     for scenario in scenarios(gold.inputs, seed):
         g = simulate(gold, scenario)["coils"]
-        a = simulate(ai, scenario)["coils"]
+        # 正解と AI の外部入力・コイルは、照合用の器具番号（O と 0 などをそろえた形）で対応づける。
+        ai_scenario = {ai_inputs[canonical_device(k)]: v for k, v in scenario.items() if canonical_device(k) in ai_inputs}
+        a = {canonical_device(dev): state for dev, state in simulate(ai, ai_scenario)["coils"].items()}
         counts["scenarios"] += 1
         all_agree = True
         for dev, state in g.items():
             counts["coil_states"] += 1
             counts["gold_energized"] += state["energized"]
+            dev = canonical_device(dev)
             if dev not in a:
                 counts["coil_missing"] += 1
                 counts["missing_gold_on"] += state["energized"]

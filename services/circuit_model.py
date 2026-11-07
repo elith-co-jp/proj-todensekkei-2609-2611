@@ -67,9 +67,18 @@ class Circuit:
 
 
 def device_key(label: str | None) -> str | None:
-    """「33HB FV2306 (ER21236)」→「33HB FV2306」。括弧の参照先シートは除く。"""
-    tokens = [t for t in re.split(r"\s+", (label or "").strip()) if t and not t.startswith("(")]
+    """「33HB FV2306 (ER21236)」「83D-2 ESD(ER21271)」→ 器具番号と機器名。括弧の参照先シートは空白が無くても除く。"""
+    tokens = [t for t in re.split(r"\s+", re.sub(r"[(（][^)）]*[)）]?", " ", label or "").strip()) if t]
     return " ".join(tokens[:2]) if tokens else None
+
+
+# OCR が取り違えやすい字（O と 0、I と 1、B と 8）。器具番号はこの違いだけの別の器具を使わない。
+_CONFUSABLE = str.maketrans({"O": "0", "I": "1", "B": "8"})
+
+
+def canonical_device(device: str) -> str:
+    """器具番号の照合用の形。「20VO HV2111」と「20V0 HV2111」を同じ器具とみなす。"""
+    return device.upper().translate(_CONFUSABLE)
 
 
 def _bus_side(text: str | None) -> str | None:
@@ -209,6 +218,8 @@ def build_circuit(pages: list[dict[str, Any]], bus_texts: dict[int, list[dict[st
 
     elements: list[Element] = []
     coils: dict[str, list[Element]] = defaultdict(list)
+    # 照合用の形 → 最初に見つけたコイルの器具番号。O と 0 だけが違うコイル・接点を同じリレーにする。
+    coil_by_canonical: dict[str, str] = {}
     for (pid, ref), s in sorted(symbols.items(), key=lambda kv: (kv[0][0], kv[0][1])):
         cls, terms = s["class_key"], s.get("terminals") or []
         kind = CONTACT_CLASSES.get(cls) or ("load" if cls in LOAD_CLASSES else None)
@@ -224,15 +235,20 @@ def build_circuit(pages: list[dict[str, Any]], bus_texts: dict[int, list[dict[st
                           _load_resistance(s.get("attributes") or {}))
         elements.append(element)
         if cls == "relay_coil" and element.device:
+            element.device = coil_by_canonical.setdefault(canonical_device(element.device), element.device)
             coils[element.device].append(element)
 
     # ラベルに機器名が無い接点（「33LA」）は、器具番号が同じコイルが 1 つだけなら、そのコイルで開閉する。
     by_number: dict[str, list[str]] = defaultdict(list)
     for dev in coils:
-        by_number[dev.split()[0]].append(dev)
+        by_number[canonical_device(dev.split()[0])].append(dev)
     for e in elements:
-        if e.kind in ("a", "b") and e.device and e.device not in coils and len(by_number.get(e.device.split()[0], [])) == 1:
-            e.device = by_number[e.device.split()[0]][0]
+        if e.kind not in ("a", "b") or not e.device or e.device in coils:
+            continue
+        if canonical_device(e.device) in coil_by_canonical:
+            e.device = coil_by_canonical[canonical_device(e.device)]
+        elif len(by_number.get(canonical_device(e.device.split()[0]), [])) == 1:
+            e.device = by_number[canonical_device(e.device.split()[0])][0]
     page_names = {p["id"]: p.get("sheet_no") or p.get("name") or str(p["id"]) for p in pages}
     inputs: set[str] = set()
     for e in elements:

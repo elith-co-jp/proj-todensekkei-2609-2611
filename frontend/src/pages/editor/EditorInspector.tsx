@@ -46,6 +46,7 @@ export function EditorInspector({
   metaSaveStatus,
   annotationSaveStatus,
   onQueueMetaSave,
+  onSplitCoilWires,
 }: {
   inspectorRef: React.RefObject<HTMLElement | null>
   desktopInspector: boolean
@@ -73,6 +74,7 @@ export function EditorInspector({
   metaSaveStatus: SaveStatus
   annotationSaveStatus: SaveStatus
   onQueueMetaSave: (projectId: number, payload: MetaForm, immediate?: boolean) => void
+  onSplitCoilWires: () => Promise<void>
 }) {
   const symbolListRef = useRef<HTMLDivElement | null>(null)
   const [attributeDefs, setAttributeDefs] = useState<AttributeDefinitions | null>(null)
@@ -480,6 +482,7 @@ export function EditorInspector({
             saveStatus={metaSaveStatus}
             annotationSaveStatus={annotationSaveStatus}
             onQueueSave={onQueueMetaSave}
+            onSplitCoilWires={onSplitCoilWires}
           />
         </div>
       </aside>
