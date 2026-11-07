@@ -7,19 +7,14 @@ import hashlib
 import json
 import os
 import re
-import sys
-from collections import Counter, defaultdict
-from collections.abc import Callable
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
-import numpy as np
 from PIL import Image, ImageDraw
 
 from analyze_pdf_structure import WIRE_GEOMETRY_REVISION, analyze_page
-from analysis.wiring.detect import make_binary_mask, support_vector_for_span
 from analyze_annotation_graph import load_zip_payload, symbol_bbox
-from analysis.wiring.connectivity import build_predicted_graph_pairs
 from build_e2e_demo_outputs import DEFAULT_ANALYSIS_ROOT, DEFAULT_PDF_PATH, PDF_ENV_VAR, draw_reconstruction, draw_wire_support_diff, load_font, write_json, write_visual_outputs
 from wire_detection_lab import build_final_output_from_analysis, load_json
 from analysis.wiring.geometry import wire_points
@@ -30,7 +25,6 @@ from evaluate_yolo_label_ocr import (
     read_label,
 )
 from evaluate_label_word_rules import build_word_rule_label
-from analysis.wiring.ports import EXPLICIT_NODE_CLASSES, default_configs as default_port_inference_configs, infer_ports_for_symbol, is_four_port_symbol
 from prepare_yolo_dataset import suppress_text_like_components
 from analysis.wiring.filter_wire_decorations import filter_wire_decorations, rapidocr_text_confirmation
 from analysis.wiring.connectivity import build_direct_from_to  # noqa: E402

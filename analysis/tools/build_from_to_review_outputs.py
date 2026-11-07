@@ -5,17 +5,17 @@ import _repo_path  # noqa: F401  (リポジトリの直下を import できる�
 import argparse
 import csv
 import json
-import math
+from itertools import pairwise
 from collections import Counter, defaultdict
-from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 from PIL import Image, ImageDraw
 
-from analyze_annotation_graph import load_zip_payload, parse_member, symbol_bbox
+from analyze_annotation_graph import load_zip_payload, symbol_bbox
 from build_e2e_demo_outputs import load_font
-from analysis.wiring.connectivity import build_predicted_graph_pairs, point_distance, sorted_pair  # noqa: E402
+from analysis.wiring.connectivity import build_predicted_graph_pairs, sorted_pair  # noqa: E402
+from analysis.wiring.geometry import point_distance  # noqa: E402
 
 
 FONT_XS = load_font(12)
@@ -466,7 +466,7 @@ def gold_path_through_classes(
                     continue
             next_path = [*path, next_member]
             if next_member == right:
-                return [sorted_pair(a, b) for a, b in zip(next_path, next_path[1:])]
+                return [sorted_pair(a, b) for a, b in pairwise(next_path)]
             state = (next_member, len(next_path) - 1)
             if state not in visited:
                 visited.add(state)
@@ -570,7 +570,7 @@ def gold_path_through_junctions(
             if next_member == right:
                 if len(next_path) <= 2:
                     return []
-                return [sorted_pair(a, b) for a, b in zip(next_path, next_path[1:])]
+                return [sorted_pair(a, b) for a, b in pairwise(next_path)]
             state = (next_member, len(next_path) - 1)
             if state not in visited:
                 visited.add(state)
@@ -698,7 +698,7 @@ def draw_from_to_review(
     gold_connected = connected_by_member(gold_pairs)
     pred_connected = connected_by_member(pred_pairs)
     status_counts: Counter[str] = Counter()
-    for key, info in member_info.items():
+    for key in member_info:
         status = endpoint_status_by_key.get(key)
         if not status:
             if key not in detected_member_keys:

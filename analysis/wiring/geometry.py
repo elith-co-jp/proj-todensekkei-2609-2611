@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
 
@@ -48,8 +49,8 @@ def box_center(box: dict[str, int | float]) -> tuple[float, float]:
     return ((float(box["x0"]) + float(box["x1"])) / 2, (float(box["y0"]) + float(box["y1"])) / 2)
 
 
-def point_distance(a: tuple[float, float], b: tuple[float, float]) -> float:
-    return ((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2) ** 0.5
+def point_distance(a: tuple[float, float] | list[float], b: tuple[float, float] | list[float]) -> float:
+    return math.hypot(float(a[0]) - float(b[0]), float(a[1]) - float(b[1]))
 
 
 def padded_box(box: dict[str, int | float], padding: float, width: int, height: int) -> dict[str, float]:
@@ -119,3 +120,110 @@ def point_to_wire_distance(point: tuple[float, float], wire: dict[str, Any]) -> 
         y0, y1 = float(wire["bbox"]["y0"]), float(wire["bbox"]["y1"])
     y = min(max(point[1], y0), y1)
     return point_distance(point, (float(wire["axis"]), y))
+
+
+def point_segment_projection(
+    point: tuple[float, float] | list[float],
+    start: tuple[float, float],
+    end: tuple[float, float],
+) -> tuple[float, float, tuple[float, float]]:
+    px, py = float(point[0]), float(point[1])
+    x1, y1 = start
+    x2, y2 = end
+    dx = x2 - x1
+    dy = y2 - y1
+    length_sq = dx * dx + dy * dy
+    if length_sq == 0:
+        return 0.0, point_distance((px, py), start), start
+    t = ((px - x1) * dx + (py - y1) * dy) / length_sq
+    clamped = max(0.0, min(1.0, t))
+    projected = (x1 + clamped * dx, y1 + clamped * dy)
+    return clamped, point_distance((px, py), projected), projected
+
+
+def segment_orientation(start: tuple[float, float], end: tuple[float, float]) -> str:
+    return "h" if abs(end[0] - start[0]) >= abs(end[1] - start[1]) else "v"
+
+
+def segment_bounds(start: tuple[float, float], end: tuple[float, float]) -> tuple[float, float, float, float]:
+    return min(start[0], end[0]), min(start[1], end[1]), max(start[0], end[0]), max(start[1], end[1])
+
+
+def payload_box(item: dict[str, Any]) -> dict[str, float] | None:
+    box = item.get("box") or item.get("bbox")
+    if not box:
+        return None
+    try:
+        return {
+            "x0": float(box["x0"]),
+            "y0": float(box["y0"]),
+            "x1": float(box["x1"]),
+            "y1": float(box["y1"]),
+        }
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def segment_text_overlap_ratio(
+    start: tuple[float, float],
+    end: tuple[float, float],
+    text_regions: list[dict[str, Any]],
+    *,
+    padding: float = 3.0,
+) -> float:
+    length = abs(end[0] - start[0]) + abs(end[1] - start[1])
+    if length <= 0:
+        return 0.0
+    spans: list[tuple[int, int]] = []
+    if abs(end[0] - start[0]) >= abs(end[1] - start[1]):
+        axis = (start[1] + end[1]) / 2
+        span_start, span_end = sorted((start[0], end[0]))
+        for region in text_regions:
+            box = payload_box(region)
+            if not box:
+                continue
+            if float(box["y0"]) - padding <= axis <= float(box["y1"]) + padding:
+                overlap = max(0.0, min(span_end, float(box["x1"]) + padding) - max(span_start, float(box["x0"]) - padding))
+                if overlap:
+                    spans.append((round(max(span_start, float(box["x0"]) - padding)), round(min(span_end, float(box["x1"]) + padding))))
+    else:
+        axis = (start[0] + end[0]) / 2
+        span_start, span_end = sorted((start[1], end[1]))
+        for region in text_regions:
+            box = payload_box(region)
+            if not box:
+                continue
+            if float(box["x0"]) - padding <= axis <= float(box["x1"]) + padding:
+                overlap = max(0.0, min(span_end, float(box["y1"]) + padding) - max(span_start, float(box["y0"]) - padding))
+                if overlap:
+                    spans.append((round(max(span_start, float(box["y0"]) - padding)), round(min(span_end, float(box["y1"]) + padding))))
+    return merged_span_length(spans) / max(1.0, length)
+
+
+def segment_box_overlap_ratio(
+    start: tuple[float, float],
+    end: tuple[float, float],
+    box: dict[str, float],
+    *,
+    padding: float = 0.0,
+) -> float:
+    length = abs(end[0] - start[0]) + abs(end[1] - start[1])
+    if length <= 0:
+        return 0.0
+    if abs(end[0] - start[0]) >= abs(end[1] - start[1]):
+        axis = (start[1] + end[1]) / 2
+        span_start, span_end = sorted((start[0], end[0]))
+        if not (float(box["y0"]) - padding <= axis <= float(box["y1"]) + padding):
+            return 0.0
+        overlap = max(0.0, min(span_end, float(box["x1"]) + padding) - max(span_start, float(box["x0"]) - padding))
+        return overlap / max(1.0, length)
+    axis = (start[0] + end[0]) / 2
+    span_start, span_end = sorted((start[1], end[1]))
+    if not (float(box["x0"]) - padding <= axis <= float(box["x1"]) + padding):
+        return 0.0
+    overlap = max(0.0, min(span_end, float(box["y1"]) + padding) - max(span_start, float(box["y0"]) - padding))
+    return overlap / max(1.0, length)
+
+
+def node_point(node: dict[str, Any]) -> tuple[float, float]:
+    return float(node["x"]), float(node["y"])

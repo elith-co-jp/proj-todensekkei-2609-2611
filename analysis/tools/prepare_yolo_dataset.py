@@ -11,7 +11,7 @@ import zipfile
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-from typing import Iterable
+from collections.abc import Iterable
 
 import cv2
 import numpy as np

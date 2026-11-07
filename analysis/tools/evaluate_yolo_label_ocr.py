@@ -4,7 +4,6 @@ import argparse
 import io
 import json
 import re
-import tempfile
 import zipfile
 from collections import Counter
 from dataclasses import dataclass
@@ -240,10 +239,7 @@ def normalize_cn_token(match_text: str) -> str:
 
 
 def normalize_tb_token(match_text: str) -> str:
-    if re.match(r"T[B8]", match_text):
-        suffix = match_text[2:]
-    else:
-        suffix = match_text[1:]
+    suffix = match_text[2:] if re.match(r"T[B8]", match_text) else match_text[1:]
     digits = re.sub(r"\D", "", suffix.translate(DIGIT_CONFUSION_TRANS))
     return f"TB{digits}" if digits else ""
 
