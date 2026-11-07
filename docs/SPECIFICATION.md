@@ -121,6 +121,15 @@ ZIP を選択してインポートすると、`bundle.json` の有無で復元�
 - **Windows 配布版**: CPU 版 PyTorch・Ultralytics・学習開始用の検証済み YOLO11s 重み・学習済みの初期推論モデル（`assets/models/yolo11n_all_symbols_best.pt`）を単一 EXE に同梱。モデル未登録の初回起動時に同梱モデルを使用中の推論モデルとして自動登録する。初回学習は使用中のモデル（同梱モデル等）をベースに行われ、登録モデルが無い環境では内蔵 yolo11s 重みが起点になる（図面単位の交差検証で yolo11n より未学習図面の検出 F1 が高かった、DD-0007 §4.11）。学習済み `best.pt` は採用判定で推論モデルになる。シーケンス図向け未学習の初期重みを推論モデルとして自動登録しない
 - **外部実行への誘導**: `ultralytics` が無い場合、推論・学習 API は日本語メッセージで外部フロー（エクスポート → 外部 predict/学習 → 取込）を案内する
 
+### 3.6 回路シミュレーション（`/circuit`）
+
+図面のアノテーションから回路を組み、接点の On/Off で電気がどこまで通り、どのリレーが動くかを確かめる画面（DD-0009）。
+
+- 選んだ図面の記号・端子・配線から回路を組む。コネクタ・分岐点は通り抜けの点、接点はコイルで開閉する接点、コイル・電磁弁・表示灯は負荷。母線（PER…/NER…）と器具番号が同じリレーは図面をまたいでつなぐ
+- 選んだ図面にコイルが無い接点は外部入力として On/Off を切り替える。切り替えるたびに前の励磁状態から解くので、自己保持の回路は保持される
+- 図面の上に、電圧のかかった配線（赤）、閉じた接点（緑）、励磁したコイル（赤）を重ねる。端子の足りない記号や PER と NER の直結など、回路にできない箇所を一覧に出す
+- 電気は SPICE（ngspice があればそれ、無ければ同じネットリストを内蔵の節点解析）で解く。LTspice・ngspice で開けるネットリスト（.cir）を書き出せる
+
 ## 4. API 仕様
 
 ベースパス `/api`。エラーは `HTTPException` で日本語メッセージを返す。
@@ -181,6 +190,9 @@ ZIP を選択してインポートすると、`bundle.json` の有無で復元�
 | `GET` | `/api/ml/training/class-stats` | クラス別の正解件数（完了の図面と全図面）、その記号がある図面数、30 件未満の印 `thin` |
 | `GET` | `/api/ml/training/hard-drawings` | 完了の図面ごとの AI の検出と正解の一致（`f1`・`missed`・`false_detections`・`relabeled`）。一致の低い順。0.9 未満は `hard: true` |
 | `POST` | `/api/ml/training/runs/{id}/decision` | `{decision: adopt\|reject}`。採用で成果物モデルを使用中に切替え |
+| `POST` | `/api/circuit/build` | `{project_ids[]}`。回路を組み、コイルと接点、外部入力、確認が必要な箇所（`diagnostics`）、電源、解き方（`engine`）を返す |
+| `POST` | `/api/circuit/simulate` | `{project_ids[], inputs: {器具番号: bool}, energized: {器具番号: bool}}`。前の励磁状態から解き、`coil_states`・`warnings`・図面ごとの重ね表示（`overlay`）を返す |
+| `POST` | `/api/circuit/netlist` | `{project_ids[], inputs}`。LTspice・ngspice で開けるネットリスト（circuit.cir） |
 
 ### `PUT /api/projects/{id}/annotations` のリクエスト
 

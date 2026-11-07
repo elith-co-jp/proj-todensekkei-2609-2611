@@ -331,3 +331,42 @@ export const STATUS_LABEL: Record<string, string> = {
   review: 'レビュー待ち',
   done: '完了',
 }
+
+// ---------- 回路シミュレーション ----------
+export type CircuitSymbolRef = { project_id: number; symbol_ref: string }
+
+export type CircuitDiagnostic = {
+  kind: string
+  message: string
+  page?: string | null
+  project_id?: number
+  symbol_ref?: string
+  device?: string
+}
+
+export type CircuitSummary = {
+  engine: 'ngspice' | 'builtin'
+  pages: { id: number; name: string }[]
+  element_count: number
+  node_count: number
+  supplies: string[]
+  coils: { device: string; symbols: CircuitSymbolRef[]; contacts: (CircuitSymbolRef & { kind: 'a' | 'b' })[] }[]
+  inputs: { device: string; contacts: (CircuitSymbolRef & { kind: 'a' | 'b' })[] }[]
+  diagnostics: CircuitDiagnostic[]
+}
+
+export type CircuitBox = { cx: number; cy: number; w: number; h: number }
+
+export type CircuitOverlay = {
+  project_id: number
+  wires: { x1: number; y1: number; x2: number; y2: number; live: boolean }[]
+  contacts: (CircuitBox & CircuitSymbolRef & { device: string; kind: 'a' | 'b'; closed: boolean; label: string | null })[]
+  coils: (CircuitBox & { device: string; symbol_ref: string; energized: boolean })[]
+}
+
+export type CircuitResult = CircuitSummary & {
+  steps: number
+  warnings: string[]
+  coil_states: Record<string, { energized: boolean; voltage: number }>
+  overlay: CircuitOverlay[]
+}

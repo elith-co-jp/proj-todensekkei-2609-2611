@@ -1,5 +1,7 @@
 import type {
   AiImportResult,
+  CircuitResult,
+  CircuitSummary,
   ClassStats,
   HardDrawings,
   InferenceImportResult,
@@ -249,4 +251,25 @@ export const api = {
   trainingClassStats: () => req<ClassStats>('/api/ml/training/class-stats'),
 
   trainingHardDrawings: () => req<HardDrawings>('/api/ml/training/hard-drawings'),
+
+  buildCircuit: (projectIds: number[]) =>
+    req<CircuitSummary>('/api/circuit/build', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ project_ids: projectIds }),
+    }),
+
+  simulateCircuit: (projectIds: number[], inputs: Record<string, boolean>, energized: Record<string, boolean>) =>
+    req<CircuitResult>('/api/circuit/simulate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ project_ids: projectIds, inputs, energized }),
+    }),
+
+  downloadNetlist: (projectIds: number[], inputs: Record<string, boolean>) =>
+    download('/api/circuit/netlist', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ project_ids: projectIds, inputs }),
+    }, 'circuit.cir'),
 }
