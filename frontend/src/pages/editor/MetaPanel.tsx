@@ -18,12 +18,14 @@ export function MetaPanel({
   saveStatus,
   annotationSaveStatus,
   onQueueSave,
+  onSplitCoilWires,
 }: {
   project: ProjectDetail
   visible: boolean
   saveStatus: SaveStatus
   annotationSaveStatus: SaveStatus
   onQueueSave: (projectId: number, payload: MetaForm, immediate?: boolean) => void
+  onSplitCoilWires: () => Promise<void>
 }) {
   const initialForm = buildMetaForm(project)
   const [form, setForm] = useState(initialForm)
@@ -69,6 +71,7 @@ export function MetaPanel({
         projectId={project.id}
         visible={visible}
         serverSynced={saveStatus === 'saved' && annotationSaveStatus === 'saved'}
+        onSplitCoilWires={onSplitCoilWires}
       />
       {renderField('名称', 'name')}
       <div>

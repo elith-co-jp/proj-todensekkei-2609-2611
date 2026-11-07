@@ -90,6 +90,11 @@ def test_review_summary_api_reports_training_effect(client):
         "deleted": 1,
         "manual_added": 1,
         "wiring": None,
+        "coils": {
+            "count": 1,
+            "issues": [{"symbol_ref": "SYM-0001", "class_key": "relay_coil", "label": "", "kind": "terminals",
+                        "message": "端子が 0 個です（2 個必要）"}],
+        },
     }
     assert client.get(f"/api/ml/projects/{pid}/review-summary").json() == expected
 

@@ -11,6 +11,7 @@ from models import AnnotationProject
 from services.ai_candidates import AiCandidates, plan_import
 from services.ai_import_service import project_candidates
 from services.annotation_service import classes_ordered, serialize_project
+from services.coil_wiring import COIL_CLASSES, coil_issues
 from services.geometry import denormalize_box
 
 MATCH_IOU = 0.5
@@ -141,12 +142,13 @@ def review_boxes(db: Session, project: AnnotationProject) -> tuple[list[Box], li
 
 
 def project_review_summary(db: Session, project: AnnotationProject) -> dict:
-    """AI 検出を人がどう確認したか（採用・種別修正・削除・手動追加）と、端子・配線の確認状況。"""
+    """AI 検出を人がどう確認したか（採用・種別修正・削除・手動追加）と、端子・配線・コイルの配線の確認状況。"""
     predictions, symbols, analysis = review_boxes(db, project)
+    saved = serialize_project(db, project, with_image_meta=False)
     wiring = None
     if analysis is not None:
-        saved = serialize_project(db, project, with_image_meta=False)
         wiring = summarize_wiring(analysis, saved["symbols"], saved["connections"], project.image_width, project.image_height)
+    issues = coil_issues(saved["symbols"], saved["connections"], project.image_width, project.image_height)
     return {
         "project_id": project.id,
         "status": project.status,
@@ -155,4 +157,8 @@ def project_review_summary(db: Session, project: AnnotationProject) -> dict:
         "region_excluded_count": sum(1 for p in project.predictions if p.kind == "region"),
         **summarize_review(predictions, symbols),
         "wiring": wiring,
+        "coils": {
+            "count": sum(1 for s in saved["symbols"] if s["class_key"] in COIL_CLASSES),
+            "issues": issues,
+        },
     }

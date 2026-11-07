@@ -23,6 +23,9 @@ annotation people entered by hand in the same editor.
   boxed on top of a frame terminal (no terminals of its own, the wires go to the frame terminal) is not such a symbol.
 - connector names: gold connectors whose label carries pin numbers (eval_wiring_cv.gold_terminal_numbers)
   against the imported terminal name of the matched symbol, read as DEVICE-NUMBER tokens.
+- coils: on gold that follows the coil wiring rule (two terminals per coil, analysis/tools/coil_wiring_gold.py),
+  each wired coil is complete when every gold wire on it is recalled, and shorted when the import puts its two
+  terminals in one node (the simulation could never energize it).
 - rerun: importing again into the imported result must add nothing.
 - onto_gold: what the import would add to the finished gold annotation.
 
@@ -50,6 +53,7 @@ from eval_wiring_cv import gold_terminal_numbers  # noqa: E402
 from holdout_cv import gold_items, is_wire_bend, load_gold, match, prf, score_symbols, to_box  # noqa: E402
 
 from services.ai_candidates import from_structure, plan_import  # noqa: E402
+from services.coil_wiring import COIL_CLASSES  # noqa: E402
 from services.detection_rules import detection_kind  # noqa: E402
 
 def apply_plan(symbols: list[dict], connections: list[dict], plan: Any) -> tuple[list[dict], list[dict]]:
@@ -196,6 +200,16 @@ def wire_nodes(
     for edge in gold_wires:
         out["recall"].update({"gold": 1, "hit": int(recalled(edge)),
                               "gold_region_terminal": int(bool(edge & region_keys))})
+    out["coils"] = Counter()
+    for s in project["symbols"]:
+        terms = [endpoint_key(s["ref"], t["ref"]) for t in s.get("terminals") or []]
+        on_coil = [e for e in gold_wires if s["ref"] in {parse_member(k)[0] for k in e}]
+        if s["class_key"] not in COIL_CLASSES or len(terms) != 2 or not on_coil:
+            continue
+        complete = all(recalled(e) for e in on_coil)
+        shorted = bool(ai_of_gold.get(terms[0], set()) & ai_of_gold.get(terms[1], set()))
+        out["coils"].update({"gold": 1, "complete": int(complete), "shorted": int(shorted),
+                             "usable": int(complete and not shorted)})
     for edge in conv_wires:
         a, b = sorted(edge)
         if a in gold_pos and b in gold_pos and any(_crosses(gold_pos[a], gold_pos[b], box) for box in unwired_boxes):
@@ -317,6 +331,7 @@ def score_drawing(drawing: dict[str, Any], structure: dict[str, Any], class_keys
         "net_pairs": {"tp": len(gold_net_pairs & import_net_pairs), "fp": len(import_net_pairs - gold_net_pairs),
                       "fn": len(gold_net_pairs - import_net_pairs)},
         "wire_nodes": {"recall": dict(nodes["recall"]), "precision": dict(nodes["precision"])},
+        "coils": dict(nodes["coils"]),
         "wire_errors": {"missed": nodes["missed"], "wrong": nodes["wrong"]},
         "not_judged": not_judged,
         "fp_reasons": dict(fp),
@@ -344,11 +359,13 @@ def aggregate(rows: list[dict[str, Any]]) -> dict[str, Any]:
     fn: Counter = Counter()
     rec: Counter = Counter()
     pre: Counter = Counter()
+    coils: Counter = Counter()
     for r in rows:
         tot.update(r["connections"])
         nets.update(r["net_pairs"])
         rec.update(r["wire_nodes"]["recall"])
         pre.update(r["wire_nodes"]["precision"])
+        coils.update(r.get("coils", {}))
         det.update(r["detection"])
         names.update(r["names"])
         imported.update(r["imported"])
@@ -377,6 +394,8 @@ def aggregate(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "gold_connections": tot["tp"] + tot["fn"],
         "net_pairs": prf(nets["tp"], nets["fp"], nets["fn"]),
         "wire_nodes": wire_nodes_summary,
+        "coils": {"gold": coils["gold"], "complete": rate(coils["complete"], coils["gold"]),
+                  "shorted": coils["shorted"], "usable": rate(coils["usable"], coils["gold"])},
         "not_judged": sum(r["not_judged"] for r in rows),
         "fp_reasons": dict(fp.most_common()),
         "fn_reasons": dict(fn.most_common()),
@@ -430,6 +449,7 @@ def main() -> None:
               f" tp={c['tp']} fp={c['fp']} fn={c['fn']} gold={a['gold_connections']} not_judged={a['not_judged']}"
               f" | net_pairs f1={net['f1']} p={net['precision']} r={net['recall']} tp={net['tp']} fp={net['fp']} fn={net['fn']}"
               f"\n         wire_nodes {a['wire_nodes']}"
+              f"\n         coils {a['coils']}"
               f" | names numbers={n['numbers_agree']} pairs={n['pairs_agree']} scored={n['scored']}/{n['gold']}"
               f" | symbols f1={a['symbol_detection']['f1']} class={a['class_agreement']['agree']}"
               f" label={a['label_agreement']['agree']}"

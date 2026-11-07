@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Link, useBlocker, useParams } from 'react-router-dom'
+import { Link, useBlocker, useParams, useSearchParams } from 'react-router-dom'
 import {
   AlertCircle,
   ArrowLeft,
@@ -61,6 +61,10 @@ import type {
 export default function EditorPage() {
   const { id } = useParams()
   const projectId = Number(id)
+  // 回路シミュレーションの「確認が必要な箇所」から ?symbol=SYM-0001 で開いたときに選ぶ記号
+  const [searchParams] = useSearchParams()
+  const focusRef = searchParams.get('symbol')
+  const focusedRef = useRef<string | null>(null)
 
   const [project, setProject] = useState<ProjectDetail | null>(null)
   const [projectRows, setProjectRows] = useState<ProjectRow[]>([])
@@ -523,6 +527,42 @@ export default function EditorPage() {
     const bottom = top + s.h * ih * zoom
     if (left >= 0 && top >= 0 && right <= rect.width && bottom <= rect.height) return
     setPan({ x: rect.width / 2 - s.cx * iw * zoom, y: rect.height / 2 - s.cy * ih * zoom })
+  }
+
+  useEffect(() => {
+    const key = `${projectId}:${focusRef}`
+    if (!focusRef || !project || focusedRef.current === key) return
+    const s = symbols.find((item) => item.ref === focusRef)
+    if (!s) return
+    focusedRef.current = key
+    setSelectedRef(focusRef)
+    setTab('symbols')
+    setInspectorOpen(true)
+    const rect = canvasRef.current?.getBoundingClientRect()
+    if (rect) setPan({ x: rect.width / 2 - s.cx * iw * zoom, y: rect.height / 2 - s.cy * ih * zoom })
+  }, [focusRef, project, projectId, symbols, iw, ih, zoom])
+
+  /* コイルの中を通り抜ける配線を、コイルの枠の出入りの点で 2 本に分けて端子を付ける（DD-0009 §6） */
+  const splitCoilWires = async () => {
+    try {
+      const result = await api.splitCoilWires(buildAnnotationPayload(symbols, connections), iw, ih)
+      if (result.counts.split === 0) {
+        setNotice('分けられる配線はありませんでした（通り抜ける配線が 2 本以上のコイルは手で直してください）')
+        return
+      }
+      const terminals = new Map(result.symbols.map((s) => [s.ref, s.terminals]))
+      pushHistory()
+      setSymbols((prev) =>
+        prev.map((s) => {
+          const next = terminals.get(s.ref)
+          return next && next.length !== s.terminals.length ? { ...s, terminals: next } : s
+        }),
+      )
+      setConnections(withWireRefs(result.connections))
+      setNotice(`コイル ${result.counts.split} 個の通り抜ける配線を分け、端子を付けました`)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    }
   }
 
   const addSymbol = (x1: number, y1: number, x2: number, y2: number) => {
@@ -1282,6 +1322,7 @@ export default function EditorPage() {
             metaSaveStatus={metaSaveStatus}
             annotationSaveStatus={saveStatus}
             onQueueMetaSave={queueMetaSave}
+            onSplitCoilWires={splitCoilWires}
           />
         )}
       </div>
