@@ -244,6 +244,16 @@ export type ReviewSummary = {
   manual_added: number
   /** AI 解析の端子・配線の確認状況。AI 解析の結果が無い図面は null */
   wiring?: { terminals: WiringReviewCounts; connections: WiringReviewCounts } | null
+  /** コイル（リレーコイル・電磁弁・表示灯）の配線の取り決め（端子 2 個・両方に配線・通り抜け無し）に合わないもの */
+  coils?: { count: number; issues: CoilIssue[] }
+}
+
+export type CoilIssue = {
+  symbol_ref: string
+  class_key: string
+  label: string
+  kind: 'terminals' | 'unwired' | 'through'
+  message: string
 }
 
 export type SheetNumberCandidate = {

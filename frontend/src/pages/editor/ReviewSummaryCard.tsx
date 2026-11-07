@@ -102,6 +102,22 @@ export function ReviewSummaryCard({
               <p className="mt-1 font-semibold text-slate-800">{wiringLine('AI配線', summary.wiring.connections)}</p>
             </>
           )}
+          {summary.coils && summary.coils.count > 0 && (
+            <div className="mt-1">
+              <p className={`font-semibold ${summary.coils.issues.length ? 'text-amber-800' : 'text-slate-800'}`}>
+                コイルの配線 {summary.coils.count - summary.coils.issues.length}/{summary.coils.count} 個が取り決めどおり
+              </p>
+              {summary.coils.issues.length > 0 && (
+                <ul aria-label="取り決めに合わないコイル" className="mt-1 list-disc pl-4 text-amber-800">
+                  {summary.coils.issues.map((issue) => (
+                    <li key={issue.symbol_ref}>
+                      {issue.label || issue.symbol_ref}: {issue.message}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
           <p className={`mt-2 ${line.tone}`}>{line.text}</p>
         </>
       )}
