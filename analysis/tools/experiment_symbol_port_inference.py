@@ -30,6 +30,9 @@ CONTACT_EDGE_FALLBACK = True
 # (ER21282: a box drawn around each contact doubles as its wiring). A two-port contact sits on one line,
 # so when ports land on parallel lines, keep the line deepest inside the box.
 CONTACT_KEEPS_INNERMOST_LINE = True
+# A junction (dot or wire bend) lies on one horizontal and one vertical line. Lines farther from its
+# centre than the nearest one plus this tolerance are neighbouring parallel wires (ER21276).
+JUNCTION_AXIS_TOLERANCE_PX = 3.0
 
 FONT_XS = load_font(12)
 FONT_SM = load_font(15)
@@ -272,6 +275,7 @@ def infer_ports_for_symbol(
                     "point": [round(point[0], 1), round(point[1], 1)],
                     "wire_id": wire.get("id"),
                     "wire_orientation": orientation,
+                    "wire_axis": axis,
                     "wire_confidence": wire.get("confidence"),
                     "wire_visible_coverage": wire.get("visible_coverage"),
                     "reason": f"{mode}:{side}",
@@ -284,6 +288,15 @@ def infer_ports_for_symbol(
         inside = [candidate for candidate in candidates if candidate["wire_inside_box"]]
         candidates = inside or candidates
 
+    if class_name == "junction" and candidates:
+        # 分岐点は横線 1 本と縦線 1 本の上にしか乗らない。枠に触れる隣の平行な線（約 11 px 間隔）は別の配線
+        # なので、向きごとに中心に最も近い線だけにする（DD-0009 §8）。
+        centre = {"v": (x0 + x1) / 2, "h": (y0 + y1) / 2}
+        nearest = {o: min((abs(c["wire_axis"] - centre[o]) for c in candidates if c["wire_orientation"] == o), default=None)
+                   for o in ("v", "h")}
+        candidates = [c for c in candidates
+                      if abs(c["wire_axis"] - centre[c["wire_orientation"]]) <= nearest[c["wire_orientation"]] + JUNCTION_AXIS_TOLERANCE_PX]
+
     if CONTACT_KEEPS_INNERMOST_LINE and class_name in {"contact_a", "contact_b"} and not four_port and candidates:
         def cross(candidate: dict[str, Any]) -> float:
             return float(candidate["point"][0] if candidate["wire_orientation"] == "v" else candidate["point"][1])
@@ -293,8 +306,9 @@ def infer_ports_for_symbol(
             return min(cross(candidate) - lo, hi - cross(candidate))
 
         deepest = max(candidates, key=depth)
+        # 2 端子の接点は 1 本の線の上にある。枠の辺をかすめる別の向きの線（ラベルの下線・隣の横線）の端子は捨てる。
         candidates = [c for c in candidates
-                      if c["wire_orientation"] != deepest["wire_orientation"] or abs(cross(c) - cross(deepest)) <= 3]
+                      if c["wire_orientation"] == deepest["wire_orientation"] and abs(cross(c) - cross(deepest)) <= 3]
 
     if class_name in {"contact_a", "contact_b"} and (
         contact_min_terminal_rel_x is not None or contact_max_terminal_rel_x is not None

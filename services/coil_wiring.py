@@ -135,9 +135,11 @@ def split_through_wires(symbols: list[dict[str, Any]], connections: list[dict[st
                          "origin": c.get("origin", "manual")})
         s["terminals"] = ends
         common = {k: v for k, v in c.items() if k not in ("from_symbol_ref", "from_terminal_ref", "to_symbol_ref", "to_terminal_ref")}
+        # 参照名（W-0001）と属性は元の配線の上側に残す。下側は新しい配線で、参照名はエディタが振る。
+        lower = {**common, "ref": None, "attributes": {}}
         added.append({**common, "from_symbol_ref": c["from_symbol_ref"], "from_terminal_ref": c.get("from_terminal_ref"),
                       "to_symbol_ref": s["ref"], "to_terminal_ref": ends[0]["ref"]})
-        added.append({**common, "from_symbol_ref": s["ref"], "from_terminal_ref": ends[1]["ref"],
+        added.append({**lower, "from_symbol_ref": s["ref"], "from_terminal_ref": ends[1]["ref"],
                       "to_symbol_ref": c["to_symbol_ref"], "to_terminal_ref": c.get("to_terminal_ref")})
         drop.add(i)
         counts["split"] += 1

@@ -62,3 +62,17 @@ def test_missing_terminal_and_unwired_terminal_are_reported():
     assert [(i["symbol_ref"], i["kind"]) for i in issues] == [("C1", "terminals"), ("C2", "unwired")]
     assert issues[1]["terminal_refs"] == ["C2-T2"]
 
+
+def test_split_api_returns_split_wires_without_saving(client):
+    symbols, connections = _old_style()
+    connections[0] |= {"ref": "W-0001", "attributes": {"length_m": 3}}
+    res = client.post("/api/circuit/split-coil-wires",
+                      json={"symbols": symbols, "connections": connections, "image_width": W, "image_height": H})
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["counts"]["split"] == 1
+    coil = next(s for s in body["symbols"] if s["ref"] == "C1")
+    assert [t["ref"] for t in coil["terminals"]] == ["C1-T1", "C1-T2"]
+    # 参照名と属性は上側の配線に残り、下側は新しい配線になる。
+    assert [(c["ref"], c["attributes"]) for c in body["connections"]] == [("W-0001", {"length_m": 3}), (None, {})]
+
