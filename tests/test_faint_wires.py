@@ -37,12 +37,23 @@ def test_faint_dotted_line_joins_contact_and_connector(bridge):
     assert payload["from_to"]["connection_count"] == 1
 
 
-@pytest.mark.parametrize("image", [
-    Image.new("RGB", (1755, 1241), "white"),  # nothing drawn: no wire
-    _page(40, dotted=False),                  # a dark line left unconnected by the wiring stays so
-])
-def test_no_line_or_dark_line_is_not_bridged(bridge, image):
-    assert bridge(_payload(), image) == []
+def test_no_line_is_not_bridged(bridge):
+    assert bridge(_payload(), Image.new("RGB", (1755, 1241), "white")) == []
+
+
+def test_dark_line_the_wiring_holds_or_dropped_is_not_bridged(bridge):
+    # A dark line the wiring detected (or dropped as a card frame) but left unconnected stays so.
+    held = {**_payload(), "wires": [{"id": "w", "orientation": "v", "axis": 300, "polyline": [[300, 240], [300, 340]]}]}
+    assert bridge(held, _page(40, dotted=False)) == []
+    dropped = {**_payload(), "quality": {"wire_decoration_filter": {"excluded_segments": [
+        {"orientation": "v", "axis": 300, "start": 230, "end": 345}]}}}
+    assert bridge(dropped, _page(40, dotted=False)) == []
+
+
+def test_dark_line_detection_missed_is_bridged(bridge):
+    # A solid 1 px stroke the line detection missed (ER21281): nothing in the wiring runs along it.
+    added = bridge(_payload(), _page(40, dotted=False))
+    assert [(c["from"]["terminal_ref"], c["to"]["terminal_ref"]) for c in added] == [("c-P2", "n-P1")]
 
 
 def test_already_connected_terminals_are_not_bridged_again(bridge):

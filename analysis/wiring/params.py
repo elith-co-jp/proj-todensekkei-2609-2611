@@ -47,6 +47,10 @@ class PortParams:
     faint_coverage: float = 0.35
     # 点線をたどるときに許す途切れ。
     faint_gap_px: int = 6
+    # 枠の外に線が見えない接点で、記号の中の引き出し線から端子を決める（DD-0016）。上の線は枠の上から高さの
+    # lead_reach 以内で始まり、下の線も同じ。どちらも高さの lead_min_share 以上続く（文字の画は 1 行ぶんで短い）。
+    lead_reach: float = 0.2
+    lead_min_share: float = 0.25
 
 
 @dataclass(frozen=True)
