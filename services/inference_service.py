@@ -15,6 +15,7 @@ import zipfile
 from importlib.util import find_spec
 from pathlib import PurePosixPath
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from models import AnnotationProject, MlModel, Prediction, StructurePrediction, SymbolClass
@@ -361,19 +362,14 @@ def predictions_payload(db: Session, project: AnnotationProject) -> dict:
 
 
 def predictions_summary(db: Session) -> list[dict]:
-    """プロジェクトごとのシンボル候補の件数（一覧表示用）。領域枠は数えない。"""
-    rows = (
-        db.query(Prediction.project_id, Prediction.model_label, Prediction.id)
-        .filter(Prediction.kind == "symbol")
-        .order_by(Prediction.id.asc())
-        .all()
+    """プロジェクトごとのシンボル候補の件数と、最後に記録したモデル名（一覧表示用）。領域枠は数えない。"""
+    symbol = Prediction.kind == "symbol"
+    counts = db.query(Prediction.project_id, func.count(Prediction.id)).filter(symbol).group_by(Prediction.project_id).all()
+    latest = (
+        db.query(func.max(Prediction.id)).filter(symbol, Prediction.model_label != "").group_by(Prediction.project_id)
     )
-    by_project: dict[int, dict] = {}
-    for project_id, model_label, _ in rows:
-        entry = by_project.setdefault(
-            project_id, {"project_id": project_id, "count": 0, "model_label": model_label}
-        )
-        entry["count"] += 1
-        if model_label:
-            entry["model_label"] = model_label
-    return sorted(by_project.values(), key=lambda e: e["project_id"])
+    labels = dict(db.query(Prediction.project_id, Prediction.model_label).filter(Prediction.id.in_(latest)).all())
+    return [
+        {"project_id": project_id, "count": count, "model_label": labels.get(project_id, "")}
+        for project_id, count in sorted(counts)
+    ]

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import logging
 from datetime import UTC, datetime
 
@@ -31,6 +30,7 @@ from schemas import (
     YoloExportRequest,
 )
 from services.annotation_service import (
+    WITH_ANNOTATIONS,
     classes_ordered,
     ensure_class,
     ensure_thumbnail,
@@ -53,7 +53,7 @@ def _stamp() -> str:
 
 
 def _collect(db: Session, ids: list[int]) -> list[AnnotationProject]:
-    q = db.query(AnnotationProject)
+    q = db.query(AnnotationProject).options(*WITH_ANNOTATIONS)
     if ids:
         q = q.filter(AnnotationProject.id.in_(ids))
     projects = q.order_by(AnnotationProject.id.asc()).all()
@@ -188,12 +188,13 @@ def list_projects(q: str | None = Query(default=None), db: Session = Depends(get
         .group_by(AnnotationSymbol.project_id)
         .all()
     )
-    analysis_counts = {}
-    for project_id, payload_json in db.query(
-        StructurePrediction.project_id, StructurePrediction.payload_json
-    ):
-        payload = json.loads(payload_json)
-        analysis_counts[project_id] = (len(payload["wires"]), payload["from_to"]["connection_count"])
+    # 構造解析の JSON は 1 枚 400 KB ほどあるので開かず、保存時に数えた列を読む。
+    analysis_counts = {
+        project_id: (wires, connections)
+        for project_id, wires, connections in db.query(
+            StructurePrediction.project_id, StructurePrediction.wire_count, StructurePrediction.connection_count
+        )
+    }
     out = []
     for p in query.order_by(AnnotationProject.id.desc()).all():
         analysis_wire_count, analysis_connection_count = analysis_counts.get(p.id, (None, None))
@@ -222,7 +223,7 @@ def list_projects(q: str | None = Query(default=None), db: Session = Depends(get
 
 @router.get("/projects/{project_id}")
 def get_project(project_id: int, db: Session = Depends(get_db)):
-    return serialize_project(db, get_project_or_404(db, project_id))
+    return serialize_project(db, get_project_or_404(db, project_id, *WITH_ANNOTATIONS))
 
 
 @router.put("/projects/{project_id}/meta")
@@ -318,7 +319,7 @@ def export_one(
     project_id: int,
     db: Session = Depends(get_db),
 ):
-    p = get_project_or_404(db, project_id)
+    p = get_project_or_404(db, project_id, *WITH_ANNOTATIONS)
     blob = write_export_zip(db, [p])
     return Response(
         content=blob,
@@ -356,12 +357,11 @@ async def import_bundle(archive: UploadFile = File(...), db: Session = Depends(g
 
 @router.get("/stats")
 def stats(db: Session = Depends(get_db)):
-    projects = db.query(AnnotationProject).all()
     symbols = db.query(AnnotationSymbol).count()
     connections = db.query(Connection).count()
-    by_status: dict[str, int] = {}
-    for p in projects:
-        by_status[p.status] = by_status.get(p.status, 0) + 1
+    by_status: dict[str, int] = dict(
+        db.query(AnnotationProject.status, func.count(AnnotationProject.id)).group_by(AnnotationProject.status).all()
+    )
     class_key_by_id = {c.id: c.key for c in classes_ordered(db)}
     by_class: dict[str, int] = {}
     for class_id, n in (
@@ -379,7 +379,7 @@ def stats(db: Session = Depends(get_db)):
     )
     prediction_total = db.query(Prediction).filter(Prediction.kind == "symbol").count()
     return {
-        "project_count": len(projects),
+        "project_count": sum(by_status.values()),
         "symbol_count": symbols,
         "connection_count": connections,
         "by_status": by_status,

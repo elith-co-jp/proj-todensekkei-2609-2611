@@ -9,11 +9,10 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from sqlalchemy import create_engine, inspect, text
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 from runtime import data_base
-from services.detection_rules import detection_kind
 
 DATA_DIR = Path(os.environ.get("SEQANNO_DATA_DIR", data_base() / "data"))
 DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -30,6 +29,20 @@ _connect_args = {"check_same_thread": False} if DATABASE_URL.startswith("sqlite"
 engine = create_engine(DATABASE_URL, connect_args=_connect_args, pool_pre_ping=True)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
+# 学習の裏の処理と画面の操作が同時に書くとき、ロックの解除を待つ時間（ミリ秒）。
+SQLITE_BUSY_TIMEOUT_MS = 5000
+
+
+@event.listens_for(engine, "connect")
+def _sqlite_pragmas(dbapi_connection, _record) -> None:
+    """SQLite は外部キーの制約（ON DELETE CASCADE など）を接続ごとに有効にしないと効かない。"""
+    if engine.dialect.name != "sqlite":
+        return
+    cursor = dbapi_connection.cursor()
+    cursor.execute("PRAGMA foreign_keys=ON")
+    cursor.execute(f"PRAGMA busy_timeout={SQLITE_BUSY_TIMEOUT_MS}")
+    cursor.close()
+
 
 class Base(DeclarativeBase):
     pass
@@ -43,75 +56,13 @@ def get_db():
         db.close()
 
 
-def _migrate_columns() -> None:
-    """既存 DB への列追加（Alembic なしの軽量マイグレーション）。"""
-    inspector = inspect(engine)
-    statements = []
-    symbols_cols = {c["name"] for c in inspector.get_columns("annotation_symbols")}
-    if "origin" not in symbols_cols:
-        statements.append(
-            "ALTER TABLE annotation_symbols ADD COLUMN origin VARCHAR(20) NOT NULL DEFAULT 'manual'"
-        )
-    if "attributes_json" not in symbols_cols:
-        statements.append("ALTER TABLE annotation_symbols ADD COLUMN attributes_json TEXT")
-    connection_cols = {c["name"] for c in inspector.get_columns("connections")}
-    if "ref" not in connection_cols:
-        statements.append("ALTER TABLE connections ADD COLUMN ref VARCHAR(50)")
-    if "attributes_json" not in connection_cols:
-        statements.append("ALTER TABLE connections ADD COLUMN attributes_json TEXT")
-    if "confidence" not in symbols_cols:
-        statements.append(
-            "ALTER TABLE annotation_symbols ADD COLUMN confidence FLOAT"
-        )
-    for table in ("symbol_terminals", "connections"):
-        if "origin" not in {c["name"] for c in inspector.get_columns(table)}:
-            statements.append(f"ALTER TABLE {table} ADD COLUMN origin VARCHAR(20) NOT NULL DEFAULT 'manual'")
-    run_cols = {c["name"] for c in inspector.get_columns("training_runs")}
-    if "decision" not in run_cols:
-        statements.append(
-            "ALTER TABLE training_runs ADD COLUMN decision VARCHAR(20) NOT NULL DEFAULT ''"
-        )
-    if "baseline_metrics_json" not in run_cols:
-        statements.append(
-            "ALTER TABLE training_runs ADD COLUMN baseline_metrics_json TEXT"
-        )
-    if "baseline_label" not in run_cols:
-        statements.append(
-            "ALTER TABLE training_runs ADD COLUMN baseline_label VARCHAR(500)"
-        )
-    if "eval_scope_json" not in run_cols:
-        statements.append(
-            "ALTER TABLE training_runs ADD COLUMN eval_scope_json TEXT"
-        )
-    prediction_cols = {c["name"] for c in inspector.get_columns("predictions")}
-    backfill_prediction_kind = "kind" not in prediction_cols
-    if backfill_prediction_kind:
-        statements.append(
-            "ALTER TABLE predictions ADD COLUMN kind VARCHAR(20) NOT NULL DEFAULT 'symbol'"
-        )
-    if not statements:
-        return
-    with engine.begin() as conn:
-        for stmt in statements:
-            conn.execute(text(stmt))
-        if backfill_prediction_kind:
-            _backfill_prediction_kind(conn)
-
-
-def _backfill_prediction_kind(conn) -> None:
-    """列追加前の推論結果にも同じ規則を当て、再推論しなくても件数が揃うようにする。"""
-    rows = conn.execute(text("SELECT id, w, h FROM predictions")).all()
-    region_ids = [{"id": row.id} for row in rows if detection_kind(row.w, row.h) == "region"]
-    if region_ids:
-        conn.execute(text("UPDATE predictions SET kind = 'region' WHERE id = :id"), region_ids)
-
-
 def init_db() -> None:
     """テーブル作成と初期クラスマスタの投入。"""
+    from db_migrations import migrate
     from models import SymbolClass
 
     Base.metadata.create_all(bind=engine)
-    _migrate_columns()
+    migrate(engine)
     db = SessionLocal()
     try:
         if db.query(SymbolClass).count() == 0:

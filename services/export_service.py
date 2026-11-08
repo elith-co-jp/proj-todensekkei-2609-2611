@@ -388,7 +388,7 @@ def _restore_project_from_bundle(db: Session, proj: dict, images: dict[str, byte
         cx, cy, w, h = sanitize_box(s.get("cx", 0), s.get("cy", 0), s.get("w", 0), s.get("h", 0))
         sym = AnnotationSymbol(
             project_id=p.id,
-            class_id=cls.id,
+            symbol_class=cls,
             ref=s.get("ref") or f"SYM-{len(sym_by_ref) + 1:04d}",
             label=s.get("label"),
             cx=cx,
@@ -401,18 +401,15 @@ def _restore_project_from_bundle(db: Session, proj: dict, images: dict[str, byte
             attributes_json=dump_attributes(s.get("attributes")),
         )
         db.add(sym)
-        db.flush()
         sym_by_ref[sym.ref] = sym
         for t in s.get("terminals", []):
             term = SymbolTerminal(
-                symbol_id=sym.id,
                 name=str(t.get("name") or ""),
                 tx=float(t.get("tx") or 0.0),
                 ty=float(t.get("ty") or 0.0),
                 origin=t.get("origin") or "manual",
             )
-            db.add(term)
-            db.flush()
+            sym.terminals.append(term)
             term_by_ref[t.get("ref") or f"{sym.ref}-T{len(term_by_ref) + 1}"] = term
 
     wire_refs = connection_refs([c.get("ref") for c in proj.get("connections", [])])
@@ -426,10 +423,10 @@ def _restore_project_from_bundle(db: Session, proj: dict, images: dict[str, byte
         db.add(
             Connection(
                 project_id=p.id,
-                from_symbol_id=src.id,
-                from_terminal_id=ft.id if ft else None,
-                to_symbol_id=dst.id,
-                to_terminal_id=tt.id if tt else None,
+                from_symbol=src,
+                from_terminal=ft,
+                to_symbol=dst,
+                to_terminal=tt,
                 wire_no=c.get("wire_no"),
                 net_id=c.get("net_id"),
                 kind=c.get("kind") or "wire",

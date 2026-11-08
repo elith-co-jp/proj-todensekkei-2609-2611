@@ -8,6 +8,7 @@ import json
 from sqlalchemy import text
 
 import database
+import db_migrations
 from models import StructurePrediction
 from services.ai_candidates import from_structure, plan_import
 from tests.conftest import create_project
@@ -333,7 +334,7 @@ def test_existing_database_gets_origin_columns_defaulting_to_manual(client):
         conn.execute(text("ALTER TABLE symbol_terminals DROP COLUMN origin"))
         conn.execute(text("ALTER TABLE connections DROP COLUMN origin"))
 
-    database._migrate_columns()
+    db_migrations.migrate(database.engine)
 
     saved = client.get(f"/api/projects/{pid}").json()
     assert saved["symbols"][0]["terminals"][0]["origin"] == "manual"
