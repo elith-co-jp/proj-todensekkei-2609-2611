@@ -5,10 +5,16 @@ Corrections are a JSON list. Each item names the drawing (sheet, e.g. ER21276) a
 - {"op": "relabel", "ref": "SYM-0008", "was": "<label in the ZIP>", "label": "<label printed on the drawing>"}
 - {"op": "add_symbol", "class_key": "connector", "label": "...", "bbox_px": [x0, y0, x1, y1]}
   for a symbol the annotators boxed on the other drawings but missed here. It gets no terminals and no wires.
+- {"op": "rebox", "ref": "SYM-0045", "was_bbox_px": [x0, y0, x1, y1], "bbox_px": [x0, y0, x1, y1]}
+  for a box drawn to a different convention than the same symbol on the other drawings (DD-0017).
+- {"op": "two_terminal_contact", "ref": "SYM-0005", "bbox_px": [x0, y0, x1, y1]}
+  for a contact annotated with four terminals (the card's outer dots too). It keeps the two inner terminals,
+  moves wires on an outer terminal to the inner terminal on the same side and takes the box of a two-terminal contact.
 
 Every item also carries "reason" (what the drawing shows). A relabel whose current label is neither "was" nor
-the new label stops the run, so corrections are never applied to a different version of the data. Applying the
-same corrections twice changes nothing. The original ZIP is not modified.
+the new label, or a box that is neither "was_bbox_px" nor the new box, stops the run, so corrections are never
+applied to a different version of the data. Applying the same corrections twice changes nothing. The original
+ZIP is not modified.
 
 The corrected bundle is imported into a scratch database and exported again with the app's own exporter, so
 the YOLO labels, netlist and connection list in the new ZIP match the corrected bundle.
@@ -38,6 +44,8 @@ from holdout_cv import sheet_of  # noqa: E402
 
 ADDED_NOTE = "正解データの修正で追加"
 OVERLAP_IOU = 0.3
+# 確かめた枠と同じとみなすずれ（px）。書き出しで座標を丸めるので、少しずれる。
+BOX_TOLERANCE_PX = 1.5
 
 
 class CorrectionError(ValueError):
@@ -58,6 +66,48 @@ def _box(symbol: dict[str, Any]) -> tuple[float, float, float, float]:
 def _next_ref(symbols: list[dict[str, Any]]) -> str:
     numbers = [int(s["ref"].split("-")[-1]) for s in symbols if s["ref"].startswith("SYM-") and s["ref"].split("-")[-1].isdigit()]
     return f"SYM-{max(numbers, default=0) + 1:04d}"
+
+
+def _box_px(symbol: dict[str, Any], width: float, height: float) -> tuple[float, float, float, float]:
+    x0, y0, x1, y1 = _box(symbol)
+    return (x0 * width, y0 * height, x1 * width, y1 * height)
+
+
+def _same_box(a: tuple[float, ...], b: list[float] | tuple[float, ...]) -> bool:
+    return all(abs(p - q) <= BOX_TOLERANCE_PX for p, q in zip(a, b, strict=True))
+
+
+def _set_box(symbol: dict[str, Any], box: list[float], width: float, height: float) -> None:
+    x0, y0, x1, y1 = box
+    symbol.update(cx=(x0 + x1) / 2 / width, cy=(y0 + y1) / 2 / height, w=(x1 - x0) / width, h=(y1 - y0) / height)
+
+
+def _two_terminal_contact(project: dict[str, Any], symbol: dict[str, Any], item: dict[str, Any]) -> str:
+    """4 端子の接点を内側の 2 端子にする。外側の端子の配線は同じ側の内側の端子へ移し、移して自分どうしになった配線は消す。"""
+    width, height = float(project["image_width"]), float(project["image_height"])
+    terminals = sorted(symbol.get("terminals") or [], key=lambda t: t["ty"])
+    if len(terminals) == 2 and _same_box(_box_px(symbol, width, height), item["bbox_px"]):
+        return "already"
+    if len(terminals) != 4 or max(t["tx"] for t in terminals) - min(t["tx"] for t in terminals) > 0.01:
+        raise CorrectionError(f"{item['sheet']} {item['ref']}: expected four terminals on one vertical line")
+    outer_top, inner_top, inner_bottom, outer_bottom = terminals
+    moved = {outer_top["ref"]: inner_top["ref"], outer_bottom["ref"]: inner_bottom["ref"]}
+    ref = symbol["ref"]
+    kept, seen = [], set()
+    for conn in project.get("connections") or []:
+        conn = dict(conn)
+        for side in ("from", "to"):
+            if conn[f"{side}_symbol_ref"] == ref and conn.get(f"{side}_terminal_ref") in moved:
+                conn[f"{side}_terminal_ref"] = moved[conn[f"{side}_terminal_ref"]]
+        ends = frozenset(((conn["from_symbol_ref"], conn.get("from_terminal_ref")), (conn["to_symbol_ref"], conn.get("to_terminal_ref"))))
+        if len(ends) == 1 or ends in seen:
+            continue
+        seen.add(ends)
+        kept.append(conn)
+    project["connections"] = kept
+    symbol["terminals"] = [inner_top, inner_bottom]
+    _set_box(symbol, item["bbox_px"], width, height)
+    return "applied"
 
 
 def apply_corrections(bundle: dict[str, Any], corrections: list[dict[str, Any]]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
@@ -98,6 +148,25 @@ def apply_corrections(bundle: dict[str, Any], corrections: list[dict[str, Any]])
                     "label": item["label"], **new, "note": ADDED_NOTE, "terminals": [],
                 })
                 status = "applied"
+        elif item["op"] == "rebox":
+            symbol = next((s for s in symbols if s["ref"] == item["ref"]), None)
+            if symbol is None:
+                raise CorrectionError(f"{item['sheet']} {item['ref']}: symbol not found")
+            width, height = float(project["image_width"]), float(project["image_height"])
+            current = _box_px(symbol, width, height)
+            if _same_box(current, item["bbox_px"]):
+                status = "already"
+            elif _same_box(current, item["was_bbox_px"]):
+                _set_box(symbol, item["bbox_px"], width, height)
+                status = "applied"
+            else:
+                raise CorrectionError(f"{item['sheet']} {item['ref']}: box is {[round(v, 1) for v in current]}, "
+                                      f"expected {item['was_bbox_px']}")
+        elif item["op"] == "two_terminal_contact":
+            symbol = next((s for s in symbols if s["ref"] == item["ref"]), None)
+            if symbol is None:
+                raise CorrectionError(f"{item['sheet']} {item['ref']}: symbol not found")
+            status = _two_terminal_contact(project, symbol, item)
         else:
             raise CorrectionError(f"unknown op {item['op']!r}")
         results.append({**item, "status": status})

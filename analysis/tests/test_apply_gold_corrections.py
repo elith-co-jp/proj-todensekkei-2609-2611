@@ -65,3 +65,47 @@ def test_corrections_for_other_drawings_are_skipped():
     _, results = apply_corrections(bundle(), [{**RELABEL, "sheet": "ER21301"}])
     assert results == []
 
+
+REBOX = {"sheet": "ER21276", "op": "rebox", "ref": "SYM-0009", "was_bbox_px": [180, 90, 220, 110],
+         "bbox_px": [180, 80, 220, 110], "reason": "横棒まで含める"}
+
+
+def test_a_box_is_moved_once_and_only_from_the_reviewed_box():
+    fixed, results = apply_corrections(bundle(), [REBOX])
+    symbol = fixed["projects"][0]["symbols"][1]
+    assert (round(symbol["cy"] * 500), round(symbol["h"] * 500)) == (95, 30)
+    assert [r["status"] for r in results] == ["applied"]
+    _, results = apply_corrections(fixed, [REBOX])
+    assert [r["status"] for r in results] == ["already"]
+    with pytest.raises(CorrectionError, match="expected"):
+        apply_corrections(bundle(), [{**REBOX, "was_bbox_px": [100, 90, 140, 110]}])
+
+
+def four_terminal_bundle():
+    data = bundle()
+    project = data["projects"][0]
+    contact = project["symbols"][0]
+    contact["terminals"] = [{"ref": f"SYM-0008-T{i}", "name": str(i), "tx": 0.49, "ty": y}
+                            for i, y in enumerate((0.42, 0.47, 0.53, 0.58), start=1)]
+    project["connections"] = [
+        {"from_symbol_ref": "SYM-0009", "from_terminal_ref": None, "to_symbol_ref": "SYM-0008", "to_terminal_ref": "SYM-0008-T1"},
+        {"from_symbol_ref": "SYM-0008", "from_terminal_ref": "SYM-0008-T1", "to_symbol_ref": "SYM-0008", "to_terminal_ref": "SYM-0008-T2"},
+        {"from_symbol_ref": "SYM-0008", "from_terminal_ref": "SYM-0008-T4", "to_symbol_ref": "SYM-0009", "to_terminal_ref": None},
+    ]
+    return data
+
+
+TWO = {"sheet": "ER21276", "op": "two_terminal_contact", "ref": "SYM-0008", "bbox_px": [480, 225, 520, 275], "reason": "内側の 2 端子"}
+
+
+def test_a_four_terminal_contact_keeps_its_inner_terminals_and_their_wires():
+    """外側の端子の配線は同じ側の内側の端子へ移り、外側と内側を結んでいた配線は自分どうしになって消える。"""
+    fixed, results = apply_corrections(four_terminal_bundle(), [TWO])
+    project = fixed["projects"][0]
+    assert [t["ref"] for t in project["symbols"][0]["terminals"]] == ["SYM-0008-T2", "SYM-0008-T3"]
+    assert [(c["from_terminal_ref"], c["to_terminal_ref"]) for c in project["connections"]] == [
+        (None, "SYM-0008-T2"), ("SYM-0008-T3", None)]
+    assert [r["status"] for r in results] == ["applied"]
+    again, results = apply_corrections(fixed, [TWO])
+    assert again == fixed and [r["status"] for r in results] == ["already"]
+
