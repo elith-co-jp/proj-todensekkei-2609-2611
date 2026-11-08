@@ -279,20 +279,29 @@ def sorted_pair(left: str, right: str) -> tuple[str, str]:
     return tuple(sorted((left, right)))  # type: ignore[return-value]
 
 
-def _wire_ends_at_node(wires: list[dict[str, Any]], node_x: float, node_y: float, tol: float = 8.0) -> bool:
+# T 字の判定: 配線の端が交点から線の向きにこれ以内なら、そこで終わるとみなす。
+TEE_ALONG_PX = 8.0
+# 線に直角な向きは、配線の枠からこれ以内。8 px にしていたとき、11 px おきの平行線（ER21276）で隣の線の端を
+# この交点で終わる線とみなし、黒丸の無い交差をつないでいた。
+TEE_ACROSS_PX = 3.0
+
+
+def _wire_ends_at_node(
+    wires: list[dict[str, Any]], node_x: float, node_y: float, tol: float = TEE_ALONG_PX, across: float = TEE_ACROSS_PX,
+) -> bool:
     """True when some wire's span terminates at the node (tee join), rather
     than all incident wires passing straight through it (bare crossing)."""
     for wire in wires:
         box = wire.get("bbox") or wire.get("box") or {}
         if wire.get("orientation") == "h":
-            if not (float(box.get("y0", -1)) - tol <= node_y <= float(box.get("y1", -1)) + tol):
+            if not (float(box.get("y0", -1)) - across <= node_y <= float(box.get("y1", -1)) + across):
                 continue
             if not (float(box.get("x0", -1)) - tol <= node_x <= float(box.get("x1", -1)) + tol):
                 continue
             if abs(node_x - float(box.get("x0", -999))) <= tol or abs(node_x - float(box.get("x1", -999))) <= tol:
                 return True
         elif wire.get("orientation") == "v":
-            if not (float(box.get("x0", -1)) - tol <= node_x <= float(box.get("x1", -1)) + tol):
+            if not (float(box.get("x0", -1)) - across <= node_x <= float(box.get("x1", -1)) + across):
                 continue
             if not (float(box.get("y0", -1)) - tol <= node_y <= float(box.get("y1", -1)) + tol):
                 continue
@@ -427,6 +436,30 @@ def build_predicted_graph_pairs(
                 continue
             along, across = (sy, sx - start[0]) if vertical else (sx, sy - start[1])
             if abs(across) <= device_jump_across and lo + device_jump_end < along < hi - device_jump_end:
+                return True
+        return False
+
+    ported = Counter(symbol_id for symbol_id, _point in device_terminals)
+    # 端子を決められなかった機器は端子の記録に現れないので、枠は検出した記号から取る。
+    unported_device_boxes = [
+        (str(symbol.get("id") or ""), box) for symbol in payload.get("symbols", [])
+        if str(symbol.get("class_name") or "") in classes.TWO_TERMINAL_DEVICES
+        and ported[str(symbol.get("id") or "")] < 2 and (box := payload_box(symbol))
+    ]
+
+    def passes_unported_device(start: tuple[float, float], end: tuple[float, float], own_symbol_id: str) -> bool:
+        """端子が 2 個に満たない接点・コイル（線が薄く端子を決められなかった）の枠を、橋渡しの線がまるごと越える。
+        端子で見る passes_device_terminal では見えない（ER21302 の母線の黒丸からコネクタへの橋渡しが接点をまたいだ）。"""
+        if device_jump_across <= 0:
+            return False
+        vertical = abs(end[1] - start[1]) > abs(end[0] - start[0])
+        lo, hi = sorted((start[1], end[1]) if vertical else (start[0], end[0]))
+        axis = (start[0] + end[0]) / 2 if vertical else (start[1] + end[1]) / 2
+        for symbol_id, box in unported_device_boxes:
+            if symbol_id == own_symbol_id:
+                continue
+            a0, a1, c0, c1 = (box["y0"], box["y1"], box["x0"], box["x1"]) if vertical else (box["x0"], box["x1"], box["y0"], box["y1"])
+            if c0 <= axis <= c1 and lo < a0 and a1 < hi:
                 return True
         return False
 
@@ -605,6 +638,9 @@ def build_predicted_graph_pairs(
         if passes_device_terminal(terminal_point, bridge_end, str(record.get("symbol_id") or "")):
             stats["terminal_gap_bridge_rejected_device_jump_count"] += 1
             return False
+        if passes_unported_device(terminal_point, bridge_end, str(record.get("symbol_id") or "")):
+            stats["terminal_gap_bridge_rejected_unported_device_count"] += 1
+            return False
         if endpoint_node:
             add_graph_edge(stop_id, graph_node_id(endpoint_node, wire_id), "terminal_gap_bridge")
         else:
@@ -643,6 +679,23 @@ def build_predicted_graph_pairs(
                 return True
             for _t, stop_id in stops_by_edge.get(target_edge_id, []):
                 if stop_id in terminal_by_stop and point_distance(coords[stop_id], projection) <= wire_gap_bridge_terminal_anchor_threshold:
+                    return True
+            return False
+
+        def is_corner(node_id: str, wire_id: str, orientation: str) -> bool:
+            """この点で直交する配線も終わっている（線がここで向きを変える角）。角から先へは線が続かないので、
+            角からの橋渡しは間隔の狭い隣の平行線へ渡る（ER21277・ER21276 の 11 px おきの横線）。"""
+            node = nodes_by_id.get(node_id)
+            if node is None:
+                return False
+            point = node_point(node)
+            for other in incident_wire_by_node.get(node_id, set()):
+                segments = edges_by_wire.get(other, [])
+                if not other or other == wire_id or not segments or str(segments[0]["orientation"]) == orientation:
+                    continue
+                along = 0 if str(segments[0]["orientation"]) == "h" else 1
+                lo, hi = wire_span[other]
+                if min(abs(point[along] - lo), abs(point[along] - hi)) <= 2.0:
                     return True
             return False
 
@@ -710,6 +763,9 @@ def build_predicted_graph_pairs(
                 beyond = past_end_stop(source_edge_id, point, end_t)
                 if beyond is not None:
                     endpoint_key, point = beyond, coords[beyond]
+                elif is_corner(str(end_node), source_wire_id, source_orientation):
+                    stats["wire_gap_bridge_rejected_corner_count"] += 1
+                    continue
                 is_wire_end = str(nodes_by_id.get(str(end_node), {}).get("type") or "") == "endpoint"
                 px, py = point
                 for target_edge_id, target in edge_segments.items():

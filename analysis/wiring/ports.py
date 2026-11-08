@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from collections.abc import Iterable
 from typing import Any, NamedTuple
 
 from PIL import Image
@@ -253,9 +254,36 @@ def infer_ports_for_symbol(
         previous = deduped.get(key)
         if previous is None or float(candidate["ink_ratio"]) > float(previous["ink_ratio"]):
             deduped[key] = candidate
+    if symbol.get("other_kind") == "card":
+        for mirrored in card_ports_across(deduped.values(), wires, (x0, y0, x1, y1), margin_px):
+            deduped.setdefault(candidate_key(mirrored), mirrored)
     if CONTACT_EDGE_FALLBACK and mode == "template" and class_name in {"contact_a", "contact_b"} and not four_port and len(deduped) < 2:
         return infer_ports_for_symbol(symbol, wires, source_image, config={**config, "mode": "bbox_edge", "edge_on_span": True}, params=params)
     return sorted(deduped.values(), key=lambda item: (str(item["wire_id"]), item["point"][1], item["point"][0]))
+
+
+def card_ports_across(
+    candidates: Iterable[dict[str, Any]], wires: list[dict[str, Any]], box: tuple[float, float, float, float], margin_px: float,
+) -> list[dict[str, Any]]:
+    """カードを端から端まで貫く線に端子が 1 個しか見つからなければ、枠の中心で折り返した位置にもう 1 個置く。
+    カードの入力は + と - の 2 端子で、1 個だけだと線がカードを素通りし、+ 側が下のコネクタにつながる（ER21303、ER21326）。"""
+    x0, y0, x1, y1 = box
+    by_wire: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for candidate in candidates:
+        by_wire[str(candidate.get("wire_id") or "")].append(candidate)
+    spans = {str(wire.get("id") or ""): wire_axis_and_range(wire) for wire in wires}
+    added = []
+    for wire_id, found in by_wire.items():
+        if len(found) != 1 or wire_id not in spans:
+            continue
+        orientation, _axis, span_start, span_end = spans[wire_id]
+        lo, hi = (y0, y1) if orientation == "v" else (x0, x1)
+        if not (span_start <= lo + margin_px and span_end >= hi - margin_px):
+            continue
+        (px, py), along = found[0]["point"], 1 if orientation == "v" else 0
+        point = [px, round(y0 + y1 - py, 1)] if along else [round(x0 + x1 - px, 1), py]
+        added.append({**found[0], "point": point, "reason": "card_mirror", "ink_ratio": 0.0})
+    return added
 
 
 def default_configs() -> list[dict[str, Any]]:
