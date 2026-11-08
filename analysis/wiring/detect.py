@@ -6,7 +6,7 @@ OCR で文字を消す実験の分岐、デバッグ画像、ファイルへの�
 from __future__ import annotations
 
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import cv2
 import numpy as np
@@ -29,6 +29,16 @@ from analysis.wiring.shapes import (
 # longer piece keeps the x position: a text or dot fragment beside a thin wire must not pull the wire's axis
 # off its ink, or the ink check rejects the wire (ER21282). Overlapping pieces still merge as a union.
 MERGE_SPINE_MIN_SPREAD = 6
+
+# 配線の端が、自分のインクの無いまま直交する配線を 2 本以上越えて伸びていたら、自分のインクの最後まで縮める。
+# 間隔の狭い平行線（ER21277 の 11〜12 px おき）を縦線が曲がり角の先まで越え、越えた先の線と T 字につながっていた。
+# 母線や曲がり角に着く正しい端は、着いた先の線を 1 本越えるだけなので縮めない。
+OVERHANG_TRIM_PX = 8
+# 直交する配線の太さに足す幅（その幅の中のインクは相手の線のものとみなす）。
+OVERHANG_BAND_PX = 2
+# はみ出しの中の、帯と帯の間の隙間の上限。これより長い隙間は記号（接点など）で線が途切れているところで、
+# はみ出しではない（母線から下りる線は、すぐ下の接点で 90 px ほど途切れる）。
+OVERHANG_MAX_GAP_PX = 10
 
 
 def make_binary_mask(image: Image.Image) -> np.ndarray:
@@ -842,7 +852,62 @@ def build_detected_wires(
                 nearby_label_ids=nearby_label_ids_for_line(line, labels),
             )
         )
-    return detected
+    return trim_overhangs(binary, detected)
+
+
+def _crossed_bands_before_ink(binary: np.ndarray, wire: DetectedWire, bands: list[tuple[int, int]], from_end: bool) -> tuple[int, int]:
+    """端から内側へたどり、直交する配線の帯を除いて最初にインクのある位置と、そこまでに越えた帯の数。
+
+    帯の外の隙間が OVERHANG_MAX_GAP_PX を超えたら（記号で線が途切れているところ）、端の位置と 0 を返す。"""
+    height, width = binary.shape[:2]
+    # 線の太さの中のどこにインクがあるかは揺れる（ER21277 の軸 782 に対しインクは 784〜786）ので、枠の幅で見る。
+    lo_across, hi_across = (wire.box.x0, wire.box.x1) if wire.orientation == "v" else (wire.box.y0, wire.box.y1)
+    lo_across, hi_across = max(0, lo_across - 1), hi_across + 2
+    edge = wire.span_end if from_end else wire.span_start
+    positions = range(wire.span_end, wire.span_start, -1) if from_end else range(wire.span_start, wire.span_end)
+    crossed, gap, in_band = 0, 0, False
+    for pos in positions:
+        if any(lo <= pos <= hi for lo, hi in bands):
+            crossed += not in_band
+            in_band, gap = True, 0
+            continue
+        in_band = False
+        if wire.orientation == "v":
+            inked = 0 <= pos < height and bool(binary[pos, lo_across:min(width, hi_across)].any())
+        else:
+            inked = 0 <= pos < width and bool(binary[lo_across:min(height, hi_across), pos].any())
+        if inked:
+            return pos, crossed
+        gap += 1
+        if gap > OVERHANG_MAX_GAP_PX:
+            return edge, 0
+    return edge, 0
+
+
+def trim_overhangs(binary: np.ndarray, wires: list[DetectedWire]) -> list[DetectedWire]:
+    """直交する配線を、自分のインク無しで 2 本以上・OVERHANG_TRIM_PX より長く越えて伸びた端を縮める。"""
+    trimmed = []
+    for wire in wires:
+        across = [other for other in wires if other.orientation != wire.orientation]
+        if wire.orientation == "v":
+            bands = [(o.box.y0 - OVERHANG_BAND_PX, o.box.y1 + OVERHANG_BAND_PX) for o in across
+                     if o.box.x0 - OVERHANG_BAND_PX <= wire.axis <= o.box.x1 + OVERHANG_BAND_PX]
+        else:
+            bands = [(o.box.x0 - OVERHANG_BAND_PX, o.box.x1 + OVERHANG_BAND_PX) for o in across
+                     if o.box.y0 - OVERHANG_BAND_PX <= wire.axis <= o.box.y1 + OVERHANG_BAND_PX]
+        start, end = wire.span_start, wire.span_end
+        last, crossed = _crossed_bands_before_ink(binary, wire, bands, from_end=True)
+        if crossed >= 2 and end - last > OVERHANG_TRIM_PX:
+            end = last
+        first, crossed = _crossed_bands_before_ink(binary, wire, bands, from_end=False)
+        if crossed >= 2 and first - start > OVERHANG_TRIM_PX:
+            start = first
+        if (start, end) == (wire.span_start, wire.span_end) or end - start < OVERHANG_TRIM_PX:
+            trimmed.append(wire)
+            continue
+        box = Box(wire.box.x0, start, wire.box.x1, end) if wire.orientation == "v" else Box(start, wire.box.y0, end, wire.box.y1)
+        trimmed.append(replace(wire, box=box, span_start=start, span_end=end, length=end - start))
+    return trimmed
 
 
 DEFAULT_WIRE_TEXT_MASK = "components"
