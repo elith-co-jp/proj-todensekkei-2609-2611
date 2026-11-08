@@ -409,11 +409,15 @@ def terminal_points_for_symbol(
             ]
 
     if class_name in EXPLICIT_NODE_CLASSES:
+        # 黒丸が見つかっていれば端子はその中心。枠の中心は番号の文字の分だけ黒丸からずれ、細い線の上の
+        # 端子どうしがそろわなかった（ER21281 の 2AT3 14 は 12 px）。
+        dot = ((symbol.get("dot_role") or {}).get("dot") or {}).get("center")
+        center = dot or symbol["center"]
         return [
             {
                 "terminal_ref": f"{symbol['id']}-N01",
                 "terminal_name": "N1",
-                "point": [float(symbol["center"][0]), float(symbol["center"][1])],
+                "point": [float(center[0]), float(center[1])],
                 "source": "explicit_node_center",
             }
         ]

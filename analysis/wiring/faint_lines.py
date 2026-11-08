@@ -207,3 +207,105 @@ def bridge_faint_wires(payload: dict[str, Any], image: Image.Image) -> list[dict
         from_to.setdefault("connections", []).extend(added)
         from_to["connection_count"] = len(from_to["connections"])
     return added
+
+
+# 並列の接点の迂回の線（DD-0016）。並んだ 2 つの接点の片方（B）の端子がどこにもつながらず、B の端子のすぐ外で
+# 灰色の横線がもう片方（A）の列まで続き、その先へは続かないとき、B と A の同じ側の端子を結ぶ（10ESD の 5 枚）。
+BYPASS_MAX_REACH = 30      # B の端子から横線までの距離
+BYPASS_COLUMN_SLACK = 8    # B の端子と、横線から下りる縦線の列のずれ
+BYPASS_MIN_SPAN, BYPASS_MAX_SPAN = 30, 200
+BYPASS_ROW_COVERAGE = 0.85
+BYPASS_DROP_COVERAGE = 0.6
+BYPASS_BEYOND_PX = 20      # 横線が A・B の外へ続かないことを見る長さ
+BYPASS_BEYOND_COVERAGE = 0.5
+
+
+def _vertical_pair(symbol: dict[str, Any]) -> list[dict[str, Any]] | None:
+    terms = [t for t in symbol.get("terminals") or [] if t.get("point")]
+    if len(terms) != 2 or abs(terms[0]["point"][0] - terms[1]["point"][0]) > 4:
+        return None
+    return sorted(terms, key=lambda t: t["point"][1])
+
+
+def _row_coverage(ink: np.ndarray, y: int, x0: int, x1: int) -> float:
+    if x1 <= x0 or not 1 <= y < ink.shape[0] - 1:
+        return 0.0
+    return float(ink[y - 1:y + 2, max(0, x0):x1].any(axis=0).mean())
+
+
+def bridge_parallel_contacts(payload: dict[str, Any], image: Image.Image) -> list[dict[str, Any]]:
+    """迂回の線で並列につながった接点の端子を結び、payload["from_to"] に足して返す。"""
+    ink = np.asarray(image.convert("L")) <= GREY_MAX
+    scale = max(0.5, image.width / 1755)
+    from_to = payload.get("from_to") or {}
+    wired = {
+        side["id"] for conn in from_to.get("connections", [])
+        if conn["from"]["symbol_id"] != conn["to"]["symbol_id"] for side in (conn["from"], conn["to"])
+    }
+    contacts = [(s, pair) for s in payload.get("symbols", []) if _class(s) in classes.CONTACTS and (pair := _vertical_pair(s))]
+    added: list[dict[str, Any]] = []
+    for b_symbol, b_pair in contacts:
+        for index, term in enumerate(b_pair):
+            if f"{b_symbol['id']}:{term['ref']}" in wired:
+                continue
+            step = -1 if index == 0 else 1
+            bx, by = (round(v) for v in term["point"])
+            edge = b_symbol["bbox"]["y0"] if step < 0 else b_symbol["bbox"]["y1"]
+            match = _bypass(ink, (bx, by), step, edge, b_symbol, contacts, scale)
+            if match is None:
+                continue
+            a_symbol, a_term = match
+            added.append({
+                "id": f"from_to_bypass_{len(added) + 1:04d}", "type": "wire", "directed": False,
+                **{
+                    side: {"id": f"{s['id']}:{t['ref']}", "symbol_id": s["id"], "class_name": _class(s), "label": s.get("label"),
+                           "terminal_ref": t["ref"], "terminal_name": t.get("name"), "point": t["point"]}
+                    for side, (s, t) in (("from", (b_symbol, term)), ("to", (a_symbol, a_term)))
+                },
+                "basis": "parallel_contact_bypass", "status": "predicted",
+            })
+            wired.add(f"{b_symbol['id']}:{term['ref']}")
+    if added:
+        from_to.setdefault("connections", []).extend(added)
+        from_to["connection_count"] = len(from_to["connections"])
+    return added
+
+
+def _bypass(
+    ink: np.ndarray, start: tuple[int, int], step: int, edge: float, b_symbol: dict[str, Any],
+    contacts: list[tuple[dict[str, Any], list[dict[str, Any]]]], scale: float,
+) -> tuple[dict[str, Any], dict[str, Any]] | None:
+    bx, by = start
+    bb = b_symbol["bbox"]
+    for a_symbol, a_pair in contacts:
+        if a_symbol is b_symbol:
+            continue
+        ab = a_symbol["bbox"]
+        overlap = min(ab["y1"], bb["y1"]) - max(ab["y0"], bb["y0"])
+        a_term = a_pair[0 if step < 0 else 1]
+        ax = round(a_term["point"][0])
+        if overlap < 0.5 * min(ab["y1"] - ab["y0"], bb["y1"] - bb["y0"]) \
+                or not BYPASS_MIN_SPAN * scale <= abs(ax - bx) <= BYPASS_MAX_SPAN * scale:
+            continue
+        lo, hi = sorted((ax, bx))
+        for reach in range(2, round(BYPASS_MAX_REACH * scale) + 1):
+            y = by + step * reach
+            if (y - edge) * step < 0:  # 横線は B の枠の外
+                continue
+            if _row_coverage(ink, y, lo + 3, hi - 3) < BYPASS_ROW_COVERAGE:
+                continue
+            beyond = BYPASS_BEYOND_PX * scale
+            outside = max(_row_coverage(ink, y, round(lo - beyond), lo - 6), _row_coverage(ink, y, hi + 6, round(hi + beyond)))
+            if outside >= BYPASS_BEYOND_COVERAGE:
+                break  # 母線のように A・B の外へ続く線は迂回の線ではない
+            slack = round(BYPASS_COLUMN_SLACK * scale)
+            y0, y1 = sorted((by, y))
+            drop = max(
+                (float(ink[y0:y1 + 1, max(0, c - 1):c + 2].any(axis=1).mean()) for c in range(bx - slack, bx + slack + 1)),
+                default=0.0,
+            )
+            if y1 - y0 <= 3 or drop >= BYPASS_DROP_COVERAGE:
+                return a_symbol, a_term
+            break
+    return None
+

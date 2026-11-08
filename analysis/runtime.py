@@ -22,7 +22,7 @@ from analysis.wiring.assemble import structure_from_detection
 from analysis.wiring.connectivity import build_direct_from_to
 from analysis.wiring.detect import detect_wiring, make_binary_mask
 from analysis.wiring.dot_roles import annotate_dots
-from analysis.wiring.faint_lines import bridge_faint_wires
+from analysis.wiring.faint_lines import bridge_faint_wires, bridge_parallel_contacts
 from analysis.wiring.filter_wire_decorations import filter_wire_decorations, rapidocr_text_confirmation
 from analysis.wiring.linking import enrich_symbols_and_graph
 from analysis.wiring.ocr import load_crop_ocr_reader, load_symbol_ocr_reader
@@ -97,6 +97,8 @@ def analyze_detections(
     # 細い線は 150 dpi のスキャンで途切れた薄い灰色になり、配線から落ちる。一直線に並んだ未接続の端子の間に
     # 薄い線があれば配線として足す（DD-0007 §4.22）。
     faint_wires = bridge_faint_wires(payload, image) if params.faint_lines else []
+    # 並列の接点の迂回の線（L 字の灰色の線）で、片方の接点の端子をもう片方の同じ側の端子に結ぶ（DD-0016）。
+    faint_wires += bridge_parallel_contacts(payload, image) if params.faint_lines else []
 
     for symbol in symbols:
         symbol.pop("text_items", None)
