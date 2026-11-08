@@ -26,17 +26,15 @@ def test_adapter_reuses_wire_detector_and_removes_temp_files(tmp_path, monkeypat
     image_path = tmp_path / "input.png"
     image.save(image_path)
     monkeypatch.setattr(runtime, "load_symbol_ocr_reader", lambda *_: (None, "none", "not available"))
-    work = tmp_path / "work"
     result = runtime.analyze_detections(image_path, [{
         "class_key": "connector", "class_label": "Connector", "cx": 0.125,
         "cy": 0.3125, "w": 0.03, "h": 0.05, "confidence": 0.9,
-    }], source={"project_id": 123}, work_dir=work)
+    }], source={"project_id": 123})
     assert result["symbols"][0]["bbox"] == {"x0": 132, "y0": 230, "x1": 168, "y1": 270}
     assert result["status"] == "partial" and result["warnings"]
     assert result["quality"]["annotation_assistance"] is False
     assert all(t["source"] != "annotation" for s in result["symbols"] for t in s["terminals"])
     assert result["wires"]
-    assert not list(work.iterdir())
     assert result["source"] == {"project_id": 123}
     assert result["from_to"]["source"] == {"project_id": 123}
     assert "base_image" not in result["source"]
@@ -44,10 +42,14 @@ def test_adapter_reuses_wire_detector_and_removes_temp_files(tmp_path, monkeypat
 
 
 def test_image_and_pdf_entry_points_produce_identical_wire_geometry(tmp_path, monkeypatch):
-    runtime = _runtime()
+    """PDF の入口（CLI、ページのフォルダに書き出して読み戻す）と、アプリの入口（メモリ上で組み立てる）の配線が同じ。"""
+    _runtime()
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "analysis" / "tools"))  # PDF の入口は CLI 側にある
     import analyze_pdf_structure as detector
-    from analysis.wiring.assemble import build_final_output_from_analysis
+    from wire_detection_lab import build_final_output_from_analysis
+
+    from analysis.wiring.assemble import structure_from_detection
+    from analysis.wiring.detect import detect_wiring
 
     image = Image.new("RGB", (1200, 800), "white")
     draw = ImageDraw.Draw(image)
@@ -56,10 +58,9 @@ def test_image_and_pdf_entry_points_produce_identical_wire_geometry(tmp_path, mo
     draw.line([(600, 150), (600, 650)], fill="black", width=3)
     monkeypatch.setattr(detector, "render_page", lambda *_: image)
     detector.analyze_page(Path("synthetic.pdf"), 1, 150, tmp_path / "pdf", False, "components")
-    runtime.analyze_image(image, 1, 150, tmp_path / "image", False, "components", write_debug_images=False)
     original = build_final_output_from_analysis(tmp_path / "pdf" / "page_001", "test")
-    registered = build_final_output_from_analysis(tmp_path / "image" / "page_001", "test")
-    for key in ("wires", "nodes", "edges", "text_regions"):
+    registered = structure_from_detection(detect_wiring(image), original["source"])
+    for key in ("wires", "nodes", "edges", "text_regions", "connections", "regions", "quality"):
         assert original[key] == registered[key]
 
 
@@ -88,7 +89,7 @@ def test_text_extraction_hook_reads_relay_table_and_keeps_text_zone_symbols_unwi
         {"class_key": "connector", "class_label": "Connector", "cx": 0.07, "cy": 0.8, "w": 0.03, "h": 0.03, "confidence": 0.9},
         {"class_key": "contact_a", "class_label": "Contact", "cx": 0.5, "cy": 0.42, "w": 0.04, "h": 0.06, "confidence": 0.9},
     ]
-    result = runtime.analyze_detections(image_path, detections, source={}, work_dir=tmp_path / "work")
+    result = runtime.analyze_detections(image_path, detections, source={})
     assert result["relay_table"]["rows"][:2] == [
         {"device": "33HB FV2306", "terminal": "5-9-1", "contact": "a", "sheet": "本", "position": "10D"},
         {"device": "33HB FV2306", "terminal": "8-12-4", "contact": "a", "sheet": "本", "position": "14D"},

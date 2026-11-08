@@ -10,9 +10,13 @@ import re
 import unicodedata
 from collections import Counter
 from collections.abc import Callable, Iterable
+from dataclasses import dataclass
+from functools import partial
 from typing import Any, Literal, TypedDict
 
 from PIL import Image
+
+from analysis.parallel import run_all
 
 
 class TextItem(TypedDict):
@@ -101,8 +105,17 @@ def _tile_starts(length: int) -> list[int]:
     return [round(i * (length - OCR_TILE_PX) / (count - 1)) for i in range(count)]
 
 
-def read_page_text(image: Image.Image, reader: Any) -> list[TextItem]:
-    """ページを 2 倍に拡大し、OCR が縮小しない大きさのタイルに分けて読む。
+@dataclass(frozen=True)
+class PageTile:
+    """2 倍にしたページの一部。origin はタイルの左上、core はこのタイルが受け持つ文字の中心の範囲（2 倍の座標）。"""
+
+    pixels: Any
+    origin: tuple[int, int]
+    core: tuple[float, float, float, float]
+
+
+def page_tiles(image: Image.Image) -> list[PageTile]:
+    """ページを 2 倍に拡大し、OCR が縮小しない大きさの重なったタイルに分ける。
 
     150 dpi の図面の文字は 10 px 前後で、等倍では a・D・ハイフンを読み落とす。RapidOCR は長辺
     2000 px を超える画像を縮小するため、重ねたタイルで読み、各文字列は中心を持つタイルの分だけ残す。
@@ -118,20 +131,34 @@ def read_page_text(image: Image.Image, reader: Any) -> list[TextItem]:
         hi = float(length) if index == len(starts) - 1 else (starts[index + 1] + starts[index] + OCR_TILE_PX) / 2
         return lo, hi
 
-    items: list[TextItem] = []
+    tiles = []
     for xi, x0 in enumerate(xs):
         for yi, y0 in enumerate(ys):
-            tile = np.asarray(page.crop((x0, y0, min(x0 + OCR_TILE_PX, page.width), min(y0 + OCR_TILE_PX, page.height))))
-            results, _ = reader(tile)
+            pixels = np.asarray(page.crop((x0, y0, min(x0 + OCR_TILE_PX, page.width), min(y0 + OCR_TILE_PX, page.height))))
             (cx_lo, cx_hi), (cy_lo, cy_hi) = core(xs, xi, page.width), core(ys, yi, page.height)
-            for points, text, score in results or []:
-                px = [float(x) + x0 for x, _ in points]
-                py = [float(y) + y0 for _, y in points]
-                cx, cy = (min(px) + max(px)) / 2, (min(py) + max(py)) / 2
-                if cx_lo <= cx < cx_hi and cy_lo <= cy < cy_hi:
-                    box = (min(px) / OCR_SCALE, min(py) / OCR_SCALE, max(px) / OCR_SCALE, max(py) / OCR_SCALE)
-                    items.append({"text": str(text), "score": float(score), "box": box})
+            tiles.append(PageTile(pixels, (x0, y0), (cx_lo, cy_lo, cx_hi, cy_hi)))
+    return tiles
+
+
+def read_tile(tile: PageTile, reader: Any) -> list[TextItem]:
+    """タイルを OCR し、タイルが受け持つ文字だけをページの座標で返す。"""
+    results, _ = reader(tile.pixels)
+    x0, y0 = tile.origin
+    cx_lo, cy_lo, cx_hi, cy_hi = tile.core
+    items: list[TextItem] = []
+    for points, text, score in results or []:
+        px = [float(x) + x0 for x, _ in points]
+        py = [float(y) + y0 for _, y in points]
+        cx, cy = (min(px) + max(px)) / 2, (min(py) + max(py)) / 2
+        if cx_lo <= cx < cx_hi and cy_lo <= cy < cy_hi:
+            box = (min(px) / OCR_SCALE, min(py) / OCR_SCALE, max(px) / OCR_SCALE, max(py) / OCR_SCALE)
+            items.append({"text": str(text), "score": float(score), "box": box})
     return items
+
+
+def read_page_text(image: Image.Image, reader: Any) -> list[TextItem]:
+    """ページ全体の文字（タイルを並べて読む）。"""
+    return [item for tile_items in run_all([partial(read_tile, t, reader) for t in page_tiles(image)]) for item in tile_items]
 
 
 def normalize(text: str) -> str:
@@ -725,14 +752,22 @@ def extract_text_structure(
     label_reader があれば器具番号の形でない接点・コイルのラベルを、text_reader があれば日本語の名称・注記を読み直す。
     """
     width, height = image.size
-    items = read_page_text(image, reader)
+    # ページのタイルと記号ごとの拡大読みは互いに依存しないので、まとめて並べて読む（analysis.parallel）。
+    tiles = page_tiles(image)
+    cropped = [s for s in symbols if (s.get("class_name") or "") in CROP_OCR_CLASSES]
+    results = run_all([
+        *(partial(read_tile, t, reader) for t in tiles),
+        *(partial(read_crop_text, image, s["bbox"], crop_reader or reader) for s in cropped),
+    ])
+    items = [item for tile_items in results[:len(tiles)] for item in tile_items]
+    crop_items_of = {id(s): crop_items for s, crop_items in zip(cropped, results[len(tiles):], strict=True)}
     lexicon = page_lexicon(items)
     zones = text_zones(items, width, height)
     for symbol in symbols:
         class_name = symbol.get("class_name") or ""
         label = symbol_label(items, symbol["bbox"], class_name, lexicon)
         if class_name in CROP_OCR_CLASSES:
-            crop_items = read_crop_text(image, symbol["bbox"], crop_reader or reader)
+            crop_items = crop_items_of[id(symbol)]
             crop = symbol_label(crop_items, symbol["bbox"], class_name, lexicon)
             label = best_label(crop, label, lexicon)
             if class_name in TERMINAL_NUMBER_CLASSES:

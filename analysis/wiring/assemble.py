@@ -2,15 +2,11 @@
 
 from __future__ import annotations
 
-import json
-from pathlib import Path
+from dataclasses import asdict
 from typing import Any
 
+from analysis.wiring.detect import DEFAULT_WIRE_TEXT_MASK, WiringDetection
 from analysis.wiring.geometry import wire_points
-
-
-def load_json(path: Path) -> Any:
-    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def label_text(label: dict[str, Any]) -> str:
@@ -55,12 +51,12 @@ def build_connection_candidates(graph: dict[str, Any], labels: list[dict[str, An
     return connections
 
 
-def build_final_output_from_analysis(page_dir: Path, source_type: str) -> dict[str, Any]:
-    labels_json = load_json(page_dir / "detected_labels.json")
-    wires_json = load_json(page_dir / "detected_wires.json")
-    graph_json = load_json(page_dir / "connection_graph.json")
-    summary = load_json(page_dir / "summary.json")
-
+def assemble_structure(
+    *, labels: list[dict[str, Any]], wires: list[dict[str, Any]], nodes: list[dict[str, Any]], edges: list[dict[str, Any]],
+    text_regions: list[dict[str, Any]], regions: dict[str, Any], image_size: dict[str, int], coordinate_unit: str,
+    ocr_status: str | None, wire_text_mask: str, source: dict[str, Any],
+) -> dict[str, Any]:
+    """検出した配線・ラベル・グラフ（dataclass を asdict した形）から構造 JSON を組み立てる。"""
     labels = [
         {
             "id": label["id"],
@@ -72,14 +68,14 @@ def build_final_output_from_analysis(page_dir: Path, source_type: str) -> dict[s
             "source": label["source"],
             "status": "detected",
         }
-        for label in labels_json.get("labels", [])
+        for label in labels
     ]
     wires = [
         {
             "id": wire["id"],
             "orientation": wire["orientation"],
             "bbox": wire["box"],
-            "polyline": [list(wire_points(wire)[0]), list(wire_points(wire)[1])],
+            "polyline": [list(point) for point in wire_points(wire)],
             "axis": wire["axis"],
             "length": wire["length"],
             "confidence": wire["confidence"],
@@ -88,46 +84,38 @@ def build_final_output_from_analysis(page_dir: Path, source_type: str) -> dict[s
             "nearby_label_ids": wire.get("nearby_label_ids", []),
             "status": "detected",
         }
-        for wire in wires_json.get("wires", [])
+        for wire in wires
     ]
-    graph_for_connections = {**graph_json, "wires": wires}
-    connections = build_connection_candidates(graph_for_connections, labels)
-    text_regions = graph_json.get("text_regions", [])
-
+    connections = build_connection_candidates({"nodes": nodes, "edges": edges, "wires": wires}, labels)
+    coverages = [float(wire["visible_coverage"] or 0.0) for wire in wires]
     return {
         "schema_version": "todensekkei.sequence_extraction.demo.v1",
-        "source": {
-            "type": source_type,
-            "page": summary["page"],
-            "dpi": summary["dpi"],
-            "base_image": str(page_dir / "base.png"),
-            "analysis_dir": str(page_dir),
-        },
+        "source": source,
         "status": "prototype",
-        "image_size": summary["image_size"],
-        "coordinate_unit": summary["coordinate_unit"],
-        "regions": summary.get("regions", {}),
+        "image_size": image_size,
+        "coordinate_unit": coordinate_unit,
+        "regions": regions,
         "symbols": [],
         "labels": labels,
         "text_regions": text_regions,
         "wires": wires,
-        "nodes": graph_json.get("nodes", []),
-        "edges": graph_json.get("edges", []),
+        "nodes": nodes,
+        "edges": edges,
         "connections": connections,
         "quality": {
             "wire_count": len(wires),
             "horizontal_wire_count": sum(wire["orientation"] == "h" for wire in wires),
             "vertical_wire_count": sum(wire["orientation"] == "v" for wire in wires),
             "label_count": len(labels),
-            "node_count": len(graph_json.get("nodes", [])),
-            "edge_count": len(graph_json.get("edges", [])),
+            "node_count": len(nodes),
+            "edge_count": len(edges),
             "connection_count": len(connections),
             "candidate_connection_count": sum(item["type"] == "candidate_connection" for item in connections),
-            "wire_visible_coverage_min": summary.get("wire_visible_coverage_min"),
-            "wire_visible_coverage_avg": summary.get("wire_visible_coverage_avg"),
-            "ocr_status": summary.get("ocr_status"),
-            "wire_text_mask": summary.get("wire_text_mask", "none"),
-            "detected_text_region_count": summary.get("detected_text_region_count", 0),
+            "wire_visible_coverage_min": round(min(coverages, default=0.0), 3),
+            "wire_visible_coverage_avg": round(sum(coverages) / max(1, len(coverages)), 3),
+            "ocr_status": ocr_status,
+            "wire_text_mask": wire_text_mask,
+            "detected_text_region_count": len(text_regions),
         },
         "notes": [
             "symbols is empty for validation PDF because real symbol classes and trained detector are pending.",
@@ -135,3 +123,14 @@ def build_final_output_from_analysis(page_dir: Path, source_type: str) -> dict[s
             "wire_visible_coverage compares detected wire spans against source image ink support.",
         ],
     }
+
+
+def structure_from_detection(detection: WiringDetection, source: dict[str, Any]) -> dict[str, Any]:
+    """本番の検出結果（メモリ上）から構造 JSON を組み立てる。ファイルには書き出さない。"""
+    return assemble_structure(
+        labels=[], wires=[asdict(wire) for wire in detection.wires],
+        nodes=detection.graph["nodes"], edges=detection.graph["edges"],
+        text_regions=[asdict(region) for region in detection.text_regions],
+        regions=asdict(detection.regions), image_size=detection.image_size,
+        coordinate_unit="rendered_pixel", ocr_status="disabled", wire_text_mask=DEFAULT_WIRE_TEXT_MASK, source=source,
+    )

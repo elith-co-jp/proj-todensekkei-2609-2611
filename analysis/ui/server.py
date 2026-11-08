@@ -12,7 +12,7 @@ import sys
 import threading
 import uuid
 import zipfile
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 from dataclasses import dataclass
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -52,7 +52,7 @@ class RequestError(Exception):
 
 
 def utc_now() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+    return datetime.now(UTC).isoformat(timespec="seconds")
 
 
 def read_json(path: Path, default: Any) -> Any:
@@ -213,7 +213,7 @@ def parse_multipart_form(content_type: str, body: bytes) -> dict[str, list[FormF
         raise RequestError(HTTPStatus.BAD_REQUEST, "multipart/form-data is required")
 
     # email パーサに委譲して、コンテンツ中に偶然現れる境界文字列を区切りと誤認しないようにする
-    envelope = f"Content-Type: {content_type}\r\nMIME-Version: 1.0\r\n\r\n".encode("utf-8") + body
+    envelope = f"Content-Type: {content_type}\r\nMIME-Version: 1.0\r\n\r\n".encode() + body
     message = email.message_from_bytes(envelope, policy=email.policy.default)
 
     form: dict[str, list[FormField]] = {}
@@ -260,7 +260,7 @@ def discover_models() -> list[dict[str, Any]]:
                     "path": str(path),
                     "name": path.name,
                     "size_mb": round(stat.st_size / 1024 / 1024, 2),
-                    "modified_at": datetime.fromtimestamp(stat.st_mtime, timezone.utc).isoformat(timespec="seconds"),
+                    "modified_at": datetime.fromtimestamp(stat.st_mtime, UTC).isoformat(timespec="seconds"),
                 }
             )
     return sorted(candidates, key=lambda item: item["modified_at"], reverse=True)[:30]

@@ -17,6 +17,7 @@ import cv2
 import numpy as np
 from PIL import Image, ImageOps
 
+from analysis.parallel import ordered_map
 from analysis.wiring.assemble import build_connection_candidates
 from analysis.wiring.detect import (
     Box,
@@ -176,8 +177,7 @@ def _label_rules(
         for symbol in symbols
         if (symbol.get("class_name") or symbol.get("type")) != "other"
     ]
-    confirmed: set[Rule] = set()
-    checked = 0
+    candidates: list[tuple[Rule, Rule, Image.Image]] = []
     tolerance = max(3, round(4 * scale))
     for index, upper in enumerate(rules):
         for lower in rules[index + 1 :]:
@@ -213,10 +213,11 @@ def _label_rules(
                 continue
             inset = max(2, round(3 * scale))
             crop = image.crop((band.x0 + inset, band.y0 + inset, band.x1 - inset, band.y1 - inset))
-            checked += 1
-            if confirm_text(crop):
-                confirmed.update((upper, lower))
-    return sorted(confirmed, key=lambda rule: (rule.axis, rule.start)), checked
+            candidates.append((upper, lower, crop))
+    # 候補ごとの OCR は互いに依存しないので並べて読む（analysis.parallel）。
+    answers = ordered_map(confirm_text, [crop for _upper, _lower, crop in candidates])
+    confirmed = {rule for (upper, lower, _crop), ok in zip(candidates, answers, strict=True) if ok for rule in (upper, lower)}
+    return sorted(confirmed, key=lambda rule: (rule.axis, rule.start)), len(candidates)
 
 
 def rapidocr_text_confirmation(reader: Any) -> Callable[[Image.Image], bool]:

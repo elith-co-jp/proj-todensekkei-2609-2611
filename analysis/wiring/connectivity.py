@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import math
 from collections import Counter, defaultdict
 from collections.abc import Callable
 from typing import Any
@@ -11,7 +10,16 @@ from PIL import Image
 
 from analysis.wiring import classes
 from analysis.wiring.detect import make_binary_mask, support_vector_for_span
-from analysis.wiring.geometry import merged_span_length
+from analysis.wiring.geometry import (
+    node_point,
+    payload_box,
+    point_distance,
+    point_segment_projection,
+    segment_bounds,
+    segment_box_overlap_ratio,
+    segment_orientation,
+    segment_text_overlap_ratio,
+)
 from analysis.wiring.params import DEFAULT, BridgeParams
 
 # 端子どうしを記号の中で結ぶ記号（2 端子の機器）。
@@ -269,117 +277,6 @@ def build_direct_from_to(
 
 def sorted_pair(left: str, right: str) -> tuple[str, str]:
     return tuple(sorted((left, right)))  # type: ignore[return-value]
-
-
-def point_distance(a: tuple[float, float] | list[float], b: tuple[float, float] | list[float]) -> float:
-    return math.hypot(float(a[0]) - float(b[0]), float(a[1]) - float(b[1]))
-
-
-def point_segment_projection(
-    point: tuple[float, float] | list[float],
-    start: tuple[float, float],
-    end: tuple[float, float],
-) -> tuple[float, float, tuple[float, float]]:
-    px, py = float(point[0]), float(point[1])
-    x1, y1 = start
-    x2, y2 = end
-    dx = x2 - x1
-    dy = y2 - y1
-    length_sq = dx * dx + dy * dy
-    if length_sq == 0:
-        return 0.0, point_distance((px, py), start), start
-    t = ((px - x1) * dx + (py - y1) * dy) / length_sq
-    clamped = max(0.0, min(1.0, t))
-    projected = (x1 + clamped * dx, y1 + clamped * dy)
-    return clamped, point_distance((px, py), projected), projected
-
-
-def segment_orientation(start: tuple[float, float], end: tuple[float, float]) -> str:
-    return "h" if abs(end[0] - start[0]) >= abs(end[1] - start[1]) else "v"
-
-
-def segment_bounds(start: tuple[float, float], end: tuple[float, float]) -> tuple[float, float, float, float]:
-    return min(start[0], end[0]), min(start[1], end[1]), max(start[0], end[0]), max(start[1], end[1])
-
-
-def payload_box(item: dict[str, Any]) -> dict[str, float] | None:
-    box = item.get("box") or item.get("bbox")
-    if not box:
-        return None
-    try:
-        return {
-            "x0": float(box["x0"]),
-            "y0": float(box["y0"]),
-            "x1": float(box["x1"]),
-            "y1": float(box["y1"]),
-        }
-    except (KeyError, TypeError, ValueError):
-        return None
-
-
-def segment_text_overlap_ratio(
-    start: tuple[float, float],
-    end: tuple[float, float],
-    text_regions: list[dict[str, Any]],
-    *,
-    padding: float = 3.0,
-) -> float:
-    length = abs(end[0] - start[0]) + abs(end[1] - start[1])
-    if length <= 0:
-        return 0.0
-    spans: list[tuple[int, int]] = []
-    if abs(end[0] - start[0]) >= abs(end[1] - start[1]):
-        axis = (start[1] + end[1]) / 2
-        span_start, span_end = sorted((start[0], end[0]))
-        for region in text_regions:
-            box = payload_box(region)
-            if not box:
-                continue
-            if float(box["y0"]) - padding <= axis <= float(box["y1"]) + padding:
-                overlap = max(0.0, min(span_end, float(box["x1"]) + padding) - max(span_start, float(box["x0"]) - padding))
-                if overlap:
-                    spans.append((round(max(span_start, float(box["x0"]) - padding)), round(min(span_end, float(box["x1"]) + padding))))
-    else:
-        axis = (start[0] + end[0]) / 2
-        span_start, span_end = sorted((start[1], end[1]))
-        for region in text_regions:
-            box = payload_box(region)
-            if not box:
-                continue
-            if float(box["x0"]) - padding <= axis <= float(box["x1"]) + padding:
-                overlap = max(0.0, min(span_end, float(box["y1"]) + padding) - max(span_start, float(box["y0"]) - padding))
-                if overlap:
-                    spans.append((round(max(span_start, float(box["y0"]) - padding)), round(min(span_end, float(box["y1"]) + padding))))
-    return merged_span_length(spans) / max(1.0, length)
-
-
-def segment_box_overlap_ratio(
-    start: tuple[float, float],
-    end: tuple[float, float],
-    box: dict[str, float],
-    *,
-    padding: float = 0.0,
-) -> float:
-    length = abs(end[0] - start[0]) + abs(end[1] - start[1])
-    if length <= 0:
-        return 0.0
-    if abs(end[0] - start[0]) >= abs(end[1] - start[1]):
-        axis = (start[1] + end[1]) / 2
-        span_start, span_end = sorted((start[0], end[0]))
-        if not (float(box["y0"]) - padding <= axis <= float(box["y1"]) + padding):
-            return 0.0
-        overlap = max(0.0, min(span_end, float(box["x1"]) + padding) - max(span_start, float(box["x0"]) - padding))
-        return overlap / max(1.0, length)
-    axis = (start[0] + end[0]) / 2
-    span_start, span_end = sorted((start[1], end[1]))
-    if not (float(box["x0"]) - padding <= axis <= float(box["x1"]) + padding):
-        return 0.0
-    overlap = max(0.0, min(span_end, float(box["y1"]) + padding) - max(span_start, float(box["y0"]) - padding))
-    return overlap / max(1.0, length)
-
-
-def node_point(node: dict[str, Any]) -> tuple[float, float]:
-    return float(node["x"]), float(node["y"])
 
 
 def _wire_ends_at_node(wires: list[dict[str, Any]], node_x: float, node_y: float, tol: float = 8.0) -> bool:
@@ -1029,6 +926,15 @@ def build_predicted_graph_pairs(
         trace.update(graph=graph, edge_kind=edge_kind, coords=coords, terminal_by_stop=terminal_by_stop,
                      members_by_graph_node=terminal_members_by_graph_node, gap_bridged_stops=gap_bridged_stops)
 
+    return pairs_reached_through_graph(graph, terminal_by_stop, terminal_members_by_graph_node) | pairs_inside_symbols(
+        terminal_records, internal_bridge_classes,
+    )
+
+
+def pairs_reached_through_graph(
+    graph: dict[str, set[str]], terminal_by_stop: dict[str, str], terminal_members_by_graph_node: dict[str, set[str]],
+) -> set[tuple[str, str]]:
+    """各端子からグラフをたどり、最初に当たる端子（停留点か、端子の結ばれたノード）との組。その先へは進まない。"""
     pairs: set[tuple[str, str]] = set()
     terminal_stops = set(terminal_by_stop)
     for start_stop, start_member in terminal_by_stop.items():
@@ -1055,7 +961,12 @@ def build_predicted_graph_pairs(
                         continue
                     visited_edges.add(edge_key)
                     stack.append((next_node, current))
+    return pairs
 
+
+def pairs_inside_symbols(terminal_records: list[dict[str, Any]], internal_bridge_classes: set[str]) -> set[tuple[str, str]]:
+    """記号の中を通り抜ける種類（端子台など）の端子を、並んだ順に隣どうしで組にする。"""
+    pairs: set[tuple[str, str]] = set()
     terminals_by_symbol: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for record in terminal_records:
         if str(record.get("class_name") or "") in internal_bridge_classes:

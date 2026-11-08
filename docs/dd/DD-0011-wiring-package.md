@@ -40,9 +40,9 @@
 
 ## 4. 残課題
 
-- `detect.py`（約 1,500 行）は、線の検出・文字領域・OCR の結果の整理が 1 つのモジュールに入っている。次に分けるならここ。
+- `detect.py`（約 1,500 行）は、線の検出・文字領域・OCR の結果の整理が 1 つのモジュールに入っている。次に分けるならここ。→ DD-0012 で本番の検出（`detect_wiring`）と実験・書き出し（`analysis/tools/wire_detection_lab.py`）に分けた。
 - 端子の位置の推定の設定は、実験の設定表（`ports.default_configs`）から名前で選ぶ形のまま（`runtime.PORT_INFERENCE_CONFIG`）。`PortParams` へ移すと設定の置き場が 1 つになる。
-- `point_distance` の 2 つの実装の統一は、出力が変わり得るので評価で確かめてから行う。
+- `point_distance` の 2 つの実装の統一は、出力が変わり得るので評価で確かめてから行う。→ DD-0012 で `math.hypot` に統一し、30 枚の出力が同じことを確かめた。
 
 ## 5. ロールバック
 

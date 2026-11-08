@@ -69,6 +69,19 @@ a = Analysis(
     noarchive=False,
 )
 
+# アプリが使わない大きなファイルは詰めない（EXE の作成時間と起動時の展開が短くなる）。
+# PyMuPDF はページを画像にするだけで、レイアウト解析のモデル（layout）と C の開発用ファイルは使わない。
+# OpenCV は画像だけを扱い、動画の入出力（ffmpeg）は使わない。
+UNUSED_BUNDLE_PREFIXES = ("pymupdf/layout/", "pymupdf/mupdf-devel/", "cv2/opencv_videoio_ffmpeg")
+
+
+def _used(entry):
+    return not entry[0].replace("\\", "/").startswith(UNUSED_BUNDLE_PREFIXES)
+
+
+a.datas = [entry for entry in a.datas if _used(entry)]
+a.binaries = [entry for entry in a.binaries if _used(entry)]
+
 pyz = PYZ(a.pure)
 
 exe = EXE(

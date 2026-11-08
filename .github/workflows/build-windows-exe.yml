@@ -9,9 +9,23 @@ on:
         default: true
   push:
     branches: [main]
+    # EXE に入らない変更（文書・テスト・評価と実験のスクリプト）ではビルドしない。
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
+      - "tests/**"
+      - "analysis/tests/**"
+      - "analysis/tools/**"
+      - "frontend/src/**/*.test.ts"
+      - "frontend/src/**/*.test.tsx"
 
 permissions:
   contents: read
+
+# 同じブランチで新しいビルドが始まったら、古いビルドは止める（配るのは最新の 1 つだけ）。
+concurrency:
+  group: build-windows-exe-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
@@ -99,10 +113,11 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
 
       - name: Install Python dependencies
+        # uv は pip と同じ版を並べて入れるので速い。Drive へのアップロードに使う版もここで入れる。
         run: |
-          python -m pip install --upgrade pip
-          pip install torch==2.5.1 torchvision==0.20.1 --index-url https://download.pytorch.org/whl/cpu
-          pip install -r requirements.txt -r requirements-ml.txt "pyinstaller>=6.17,<7"
+          python -m pip install uv==0.13.7
+          uv pip install --system torch==2.5.1 torchvision==0.20.1 --index-url https://download.pytorch.org/whl/cpu
+          uv pip install --system -r requirements.txt -r requirements-ml.txt "pyinstaller>=6.17,<7" google-api-python-client==2.200.0
 
       - name: Build frontend
         working-directory: frontend
@@ -116,6 +131,9 @@ jobs:
       - name: Build executable
         run: |
           pyinstaller seq-annotator.spec --noconfirm --clean
+
+      - name: Report bundled size
+        run: python scripts/report_bundle.py build/seq-annotator/PKG-00.toc
 
       - name: Verify packaged output
         run: |
@@ -195,5 +213,4 @@ jobs:
           if (-not $env:GOOGLE_DRIVE_CREDENTIALS_JSON) {
             throw "GOOGLE_DRIVE_CREDENTIALS_JSON が未設定です。README の「Google Drive への自動アップロード」を参照してください。"
           }
-          pip install google-api-python-client==2.200.0
           python scripts/upload_to_drive.py dist/TodenYOLO.exe

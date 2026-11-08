@@ -36,7 +36,7 @@ def _analyze(tmp_path, monkeypatch, path):
     from analysis import runtime
 
     monkeypatch.setattr(runtime, "load_symbol_ocr_reader", lambda *_: (None, "none", "not available"))
-    return runtime.analyze_detections(path, [], source={}, work_dir=tmp_path / "work")
+    return runtime.analyze_detections(path, [], source={})
 
 
 def _wires_along(result, axis: float) -> list[dict]:

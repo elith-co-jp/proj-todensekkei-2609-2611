@@ -14,7 +14,6 @@ from PIL import Image, ImageDraw
 
 from analyze_annotation_graph import load_zip_payload, symbol_bbox
 from build_e2e_demo_outputs import load_font
-from analysis.wiring.geometry import wire_points
 from analysis.wiring.ports import default_configs, infer_ports_for_symbol  # noqa: E402
 
 

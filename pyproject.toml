@@ -5,7 +5,7 @@ description = "シーケンス図のシンボル(bbox)と配線(from-to)を登�
 requires-python = ">=3.11"
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["tests", "analysis/tests"]
 addopts = "-q"
 
 [tool.ruff]
