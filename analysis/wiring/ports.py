@@ -6,6 +6,7 @@ from collections import defaultdict
 from collections.abc import Iterable
 from typing import Any, NamedTuple
 
+import numpy as np
 from PIL import Image
 
 from analysis.wiring import classes
@@ -317,6 +318,32 @@ def default_configs() -> list[dict[str, Any]]:
     ]
 
 
+
+# 行き先の札（「ER21276へ」）は、母線がその札の中で終わる点を 1 つの端子にする（DD-0016）。枠の外にこれ以内で
+# 終わる配線も札に着いたとみなす。
+DESTINATION_REACH_PX = 12.0
+
+
+def destination_port(symbol: dict[str, Any], wires: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """行き先の札の端子。札の枠（DESTINATION_REACH_PX 広げた範囲）の中で終わる配線の端のうち、枠の中心に最も近いもの。
+    テンプレートの位置で端子を置くと、母線の上の 2 点になって札に着く端が分からなかった（ER21275 など 9 枚）。"""
+    box = symbol["bbox"]
+    reach = DESTINATION_REACH_PX
+    cx, cy = (box["x0"] + box["x1"]) / 2, (box["y0"] + box["y1"]) / 2
+    ends = [
+        (float(p[0]), float(p[1]), wire)
+        for wire in wires for p in (wire.get("polyline") or [])[::max(1, len(wire.get("polyline") or []) - 1)]
+        if box["x0"] - reach <= p[0] <= box["x1"] + reach and box["y0"] - reach <= p[1] <= box["y1"] + reach
+    ]
+    if not ends:
+        return []
+    x, y, wire = min(ends, key=lambda e: (e[0] - cx) ** 2 + (e[1] - cy) ** 2)
+    return [{
+        "terminal_ref": f"{symbol['id']}-P01", "terminal_name": "P1", "point": [x, y], "source": "destination_wire_end",
+        "wire_id_hint": wire.get("id"), "wire_orientation": wire.get("orientation"),
+    }]
+
+
 # Ports are inferred from ink touching each box edge, so any class can take part
 # in connectivity when a wire visibly meets its outline.
 DEFAULT_INFERRED_TERMINAL_CLASSES = {
@@ -363,6 +390,8 @@ def terminal_points_for_symbol(
             return points
 
     if terminal_source in {"inferred", "annotation-or-inferred"} and class_name in inferred_terminal_classes:
+        if symbol.get("other_kind") == "destination":
+            return destination_port(symbol, wires)
         candidates = infer_ports_for_symbol(symbol, wires, source_image, config=inferred_terminal_config)
         if candidates:
             return [
@@ -402,8 +431,9 @@ def terminal_points_for_symbol(
 # 端子が 2 個に満たないとき、画像の線から 2 端子を決める記号（DD-0009 §8）。短い引き出し線や信頼度の低い縦線は
 # 配線として検出されず、端子が付かないため回路から外れていた。
 LINE_PORT_CLASSES = classes.CONTACTS | classes.COILS
-# 細い点線のような薄い灰色の線（ER21256 のコイルの上下）は二値化で消える。コイルに限り灰色の濃さで線を探す（DD-0009 §9）。
-FAINT_PORT_CLASSES = classes.COILS
+# 細い点線のような薄い灰色の線（ER21256 のコイルの上下、ER21302 の接点の上下）は二値化で消える。
+# 接点・コイルでは灰色の濃さで線を探す（DD-0009 §9、DD-0016）。
+FAINT_PORT_CLASSES = classes.COILS | classes.CONTACTS
 
 
 def _ink_run(mask: Any, x: int, y: int, dx: int, dy: int, limit: int, gap: int) -> int:
@@ -489,8 +519,11 @@ def _pass_through_on_line(symbol: dict[str, Any], start: tuple[int, int], step: 
     return str(symbol["id"]) if abs(across) <= params.line_pass_through_px else None
 
 
-def _faint_coil_column(faint: Any, x0: int, y0: int, x1: int, y1: int, params: PortParams) -> int | None:
-    """コイルの中央の半分の列から、枠の上下の外に薄い線が続く列。無ければ None。
+def _faint_column(faint: Any, x0: int, y0: int, x1: int, y1: int, params: PortParams, *, middle_only: bool) -> int | None:
+    """枠の上下の外に薄い線が続く列。無ければ None。
+
+    コイルは線が枠の中央を通るので中央の半分の列だけ見る（middle_only）。接点は線が枠の左寄りを通り
+    （右に名前の欄がある）、枠全体を見る。
 
     枠の外の line_probe_px の行のうち faint_coverage 以上の行に線がある列（近くの文字の列は 0.25 前後）。
     """
@@ -499,15 +532,57 @@ def _faint_coil_column(faint: Any, x0: int, y0: int, x1: int, y1: int, params: P
     bottom = faint[min(height, y1 + 2):min(height, y1 + params.line_probe_px)]
     if not len(top) or not len(bottom):
         return None
-    quarter = (x1 - x0) // 4
+    inset = (x1 - x0) // 4 if middle_only else 2
     best: tuple[float, list[int]] = (params.faint_coverage, [])
-    for c in range(x0 + quarter, x1 - quarter + 1):
+    for c in range(x0 + inset, x1 - inset + 1):
         score = min(top[:, max(0, c - 1):c + 2].any(axis=1).mean(), bottom[:, max(0, c - 1):c + 2].any(axis=1).mean())
         if score > best[0] + 1e-9:
             best = (score, [c])
         elif abs(score - best[0]) <= 1e-9 and best[1] and c == best[1][-1] + 1:
             best[1].append(c)
     return best[1][len(best[1]) // 2] if best[1] else None
+
+
+def _lead_column(mask: Any, x0: int, y0: int, x1: int, y1: int, params: PortParams) -> tuple[int, int, int] | None:
+    """接点の枠の左半分で、上と下に引き出し線（縦の画）がある列と、上の線の上端・下の線の下端。無ければ None。
+
+    枠の外の線が薄すぎて見えない接点（ER21302・ER21293）でも、記号の中の引き出し線は濃く描かれる。名前の欄は
+    枠の右側にあるので左半分だけ見る。上の線は枠の上から lead_reach、下の線は枠の下から lead_reach の範囲で始まり、
+    どちらも枠の高さの lead_min_share 以上続く。
+    """
+    height = y1 - y0
+    if height <= 0:
+        return None
+    reach, need = params.lead_reach * height, params.lead_min_share * height
+    # 線の太さの揺れを 1 px 許して見るので、同じ強さの列が線の幅だけ続く。その真ん中を選ぶ。
+    best_score, best = need - 1e-9, []
+    for c in range(x0 + 2, (x0 + x1) // 2 + 1):
+        inked = mask[y0:y1 + 1, max(0, c - 1):c + 2].any(axis=1)
+        rows = np.flatnonzero(inked)
+        if rows.size == 0 or rows[0] > reach or rows[-1] < height - reach:
+            continue
+        top, bottom = _run(inked, int(rows[0]), 1), _run(inked, int(rows[-1]), -1)
+        score = min(top, bottom)
+        found = (c, y0 + int(rows[0]), y0 + int(rows[-1]))
+        if score > best_score + 1e-9:
+            best_score, best = score, [found]
+        elif abs(score - best_score) <= 1e-9 and best and c == best[-1][0] + 1:
+            best.append(found)
+    return best[len(best) // 2] if best else None
+
+
+def _run(inked: Any, start: int, step: int) -> int:
+    """start から step の向きに続くインクの長さ（1 px の途切れは許す）。"""
+    length, i, miss = 0, start, 0
+    while 0 <= i < len(inked):
+        if inked[i]:
+            length, miss = abs(i - start) + 1, 0
+        else:
+            miss += 1
+            if miss > 1:
+                break
+        i += step
+    return length
 
 
 def line_ports(
@@ -543,9 +618,13 @@ def line_ports(
     if best_columns:
         axis, c = best_axis, best_columns[len(best_columns) // 2]
     elif faint is not None and symbol.get("class_name") in FAINT_PORT_CLASSES:
-        found = _faint_coil_column(faint, x0, y0, x1, y1, params)
-        if found is None:
+        found = _faint_column(faint, x0, y0, x1, y1, params, middle_only=symbol.get("class_name") in classes.COILS)
+        lead = _lead_column(mask, x0, y0, x1, y1, params) if found is None and symbol.get("class_name") in classes.CONTACTS else None
+        if found is None and lead is None:
             return []
+        if lead is not None:
+            # 端子は引き出し線の先に置き、そこから薄い線をたどる。
+            found, y0, y1 = lead
         axis, c, trace_mask, gap = "v", found, faint, params.faint_gap_px
     else:
         return []

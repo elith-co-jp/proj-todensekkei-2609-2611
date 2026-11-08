@@ -26,6 +26,15 @@ HALF_WIDTH = 3
 MIN_GREY_SHARE = 0.3
 MAX_DARK_SHARE = 0.35
 MAX_WHITE_RUN = 24      # longest dropout along the line
+# A dark line counts too when no wire was detected along it: a 1 px stroke that alternates dark and mid grey
+# breaks into pieces shorter than the line kernel, so detection drops it (ER21281, ER21283). It must be solid.
+SOLID_MIN_GREY_SHARE = 0.9
+SOLID_MAX_WHITE_RUN = 6
+# ...and the terminals must line up closely: the band between offset terminals widens and, among parallel wires
+# 11 px apart, picks up the neighbours' ink as a solid line (ER21276, ER21279).
+SOLID_ALIGN = 3
+WIRE_ALONG_ACROSS = 6   # a detected wire within this of the line axis
+WIRE_ALONG_SHARE = 0.5  # covering this much of the gap
 PASS_CLASSES = classes.PASS_THROUGH
 # Devices are passed through only between their two terminals. A connector box holds its labels beside the
 # dot, so a horizontal line leaving the dot through its own box runs over text.
@@ -68,6 +77,36 @@ def _faint_line(core: np.ndarray, scale: float) -> bool:
         and float((core <= DARK_MAX).mean()) <= MAX_DARK_SHARE
         and _longest(core > GREY_MAX) <= MAX_WHITE_RUN * scale
     )
+
+
+def _solid_line(core: np.ndarray, scale: float) -> bool:
+    return (
+        core.size > 0
+        and float((core <= GREY_MAX).mean()) >= SOLID_MIN_GREY_SHARE
+        and _longest(core > GREY_MAX) <= SOLID_MAX_WHITE_RUN * scale
+    )
+
+
+def _left_out(payload: dict[str, Any], a: tuple[float, float], b: tuple[float, float], vertical: bool, scale: float) -> bool:
+    """The wiring already holds this stretch, or dropped it on purpose (a card frame): a dark line there is not a missed wire."""
+    axis = (a[0] + b[0]) / 2 if vertical else (a[1] + b[1]) / 2
+    lo, hi = sorted((a[1], b[1]) if vertical else (a[0], b[0]))
+    orientation = "v" if vertical else "h"
+    spans = [
+        (float(w["axis"]), *_wire_span(w, vertical))
+        for w in payload.get("wires", []) if w.get("orientation") == orientation and w.get("axis") is not None
+    ]
+    excluded = (payload.get("quality") or {}).get("wire_decoration_filter", {}).get("excluded_segments", [])
+    spans += [(float(s["axis"]), float(s["start"]), float(s["end"])) for s in excluded if s.get("orientation") == orientation]
+    for at, start, end in spans:
+        if abs(at - axis) <= WIRE_ALONG_ACROSS * scale and min(hi, end) - max(lo, start) >= WIRE_ALONG_SHARE * (hi - lo):
+            return True
+    return False
+
+
+def _wire_span(wire: dict[str, Any], vertical: bool) -> tuple[float, float]:
+    values = [float(p[1] if vertical else p[0]) for p in wire.get("polyline") or []]
+    return (min(values), max(values)) if values else (0.0, 0.0)
 
 
 def _leaves_device(symbol: dict[str, Any], term: dict[str, Any], toward: tuple[float, float]) -> bool:
@@ -146,7 +185,10 @@ def bridge_faint_wires(payload: dict[str, Any], image: Image.Image) -> list[dict
             step = (0.0, 1.0) if vertical else (1.0, 0.0)
             if crossed or not _leaves_device(symbols[sid], term, step)                     or not _leaves_device(symbols[other_sid], other, (-step[0], -step[1])):
                 continue
-            if not _faint_line(_profile(gray, here, (ox, oy), vertical, scale), scale):
+            profile = _profile(gray, here, (ox, oy), vertical, scale)
+            aligned = abs((ox, oy)[axis] - here[axis]) <= SOLID_ALIGN * scale
+            if not (_faint_line(profile, scale)
+                    or (aligned and _solid_line(profile, scale) and not _left_out(payload, here, (ox, oy), vertical, scale))):
                 continue
             parent[find(a)] = find(b)
             ends_of = [(sid, symbols[sid], term), (other_sid, symbols[other_sid], other)]

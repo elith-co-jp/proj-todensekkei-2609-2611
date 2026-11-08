@@ -425,15 +425,15 @@ def build_predicted_graph_pairs(
         for record in terminal_records if str(record.get("class_name") or "") in classes.TWO_TERMINAL_DEVICES
     ]
 
-    def passes_device_terminal(start: tuple[float, float], end: tuple[float, float], own_symbol_id: str) -> bool:
-        """橋渡しの線の途中にほかの機器の端子が乗っている。線はそこで機器に入るので、橋渡しで越えるとその機器を飛ばす。"""
+    def passes_device_terminal(start: tuple[float, float], end: tuple[float, float]) -> bool:
+        """橋渡しの線の途中に機器の端子が乗っている。線はそこで機器に入るので、橋渡しで越えるとその機器を飛ばす。
+        自分の機器のもう一方の端子も数える。越えると機器の中を突き抜けて両端子をつなぐ（ER21302 の接点の上の端子から
+        下の配線への橋渡し）。橋渡しを始める端子は範囲の端にあるので数えない。"""
         if device_jump_across <= 0:
             return False
         vertical = abs(end[1] - start[1]) > abs(end[0] - start[0])
         lo, hi = sorted((start[1], end[1]) if vertical else (start[0], end[0]))
-        for symbol_id, (sx, sy) in device_terminals:
-            if symbol_id == own_symbol_id:
-                continue
+        for _symbol_id, (sx, sy) in device_terminals:
             along, across = (sy, sx - start[0]) if vertical else (sx, sy - start[1])
             if abs(across) <= device_jump_across and lo + device_jump_end < along < hi - device_jump_end:
                 return True
@@ -635,7 +635,7 @@ def build_predicted_graph_pairs(
         if crosses_blocking_symbol(terminal_point, bridge_end, allowed_symbol_ids={str(record.get("symbol_id") or "")}):
             stats["terminal_gap_bridge_rejected_symbol_overlap_count"] += 1
             return False
-        if passes_device_terminal(terminal_point, bridge_end, str(record.get("symbol_id") or "")):
+        if passes_device_terminal(terminal_point, bridge_end):
             stats["terminal_gap_bridge_rejected_device_jump_count"] += 1
             return False
         if passes_unported_device(terminal_point, bridge_end, str(record.get("symbol_id") or "")):
