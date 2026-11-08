@@ -4,13 +4,16 @@ from __future__ import annotations
 
 from fastapi import HTTPException, UploadFile
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.interfaces import LoaderOption
 
 from models import AnnotationProject
 
 
-def get_project_or_404(db: Session, project_id: int) -> AnnotationProject:
+def get_project_or_404(db: Session, project_id: int, *options: LoaderOption) -> AnnotationProject:
+    """options には一緒に読む関連（例: annotation_service.WITH_ANNOTATIONS）を渡す。"""
     p = (
         db.query(AnnotationProject)
+        .options(*options)
         .filter(AnnotationProject.id == project_id)
         .one_or_none()
     )

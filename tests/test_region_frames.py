@@ -5,6 +5,7 @@ from __future__ import annotations
 from sqlalchemy import text
 
 import database
+import db_migrations
 from tests.conftest import create_project
 from tests.test_ml_cycle import _predictions_zip, _upload_model
 from tests.test_structure_api import _fake_detector, _result
@@ -70,9 +71,10 @@ def test_existing_db_upgrade_moves_large_frames_to_regions(client):
     pid = create_project(client)
     assert _import(client, pid, [SYMBOL, DRAWING_FRAME]).status_code == 200
     with database.engine.begin() as conn:
+        conn.execute(text("DROP INDEX ix_predictions_project_id_kind"))  # 列を足す前の DB には索引も無い
         conn.execute(text("ALTER TABLE predictions DROP COLUMN kind"))
 
-    database._migrate_columns()
+    db_migrations.migrate(database.engine)
 
     data = client.get(f"/api/ml/projects/{pid}/predictions").json()
     assert (data["count"], data["region_count"]) == (1, 1)

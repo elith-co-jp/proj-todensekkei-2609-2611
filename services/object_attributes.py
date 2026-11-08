@@ -14,7 +14,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from models import AnnotationProject, AnnotationSymbol, Connection
-from services.annotation_service import dump_attributes, load_attributes, serialize_project
+from services.annotation_service import WITH_ANNOTATIONS, dump_attributes, load_attributes, serialize_project
 from services.attribute_definitions import WIRE, all_definitions, symbol_definitions
 
 SCHEMA = "todenyolo.object_attributes.v1"
@@ -37,7 +37,8 @@ def _filled(defs: list, attributes: dict, template: bool) -> dict:
 
 def export_document(db: Session, project_ids: list[int], template: bool = False) -> dict[str, Any]:
     """全オブジェクトを 1 件ずつ並べた JSON。template なら定義済みの項目を null で並べる（入力用）。"""
-    projects = db.query(AnnotationProject).filter(AnnotationProject.id.in_(project_ids)).order_by(AnnotationProject.id).all()
+    projects = (db.query(AnnotationProject).options(*WITH_ANNOTATIONS)
+                .filter(AnnotationProject.id.in_(project_ids)).order_by(AnnotationProject.id).all())
     if not projects:
         raise ValueError("図面を選んでください")
     keys = _page_keys(projects)

@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from models import AnnotationProject
 from services import circuit_model
-from services.annotation_service import serialize_project
+from services.annotation_service import WITH_ANNOTATIONS, serialize_project
 from services.circuit_model import SUPPLY_V, Circuit, build_circuit, export_netlist, simulate
 from services.structure_service import get_structure
 
@@ -16,7 +16,7 @@ LIVE_RATIO = 0.5
 
 
 def _pages(db: Session, project_ids: list[int]) -> tuple[list[dict[str, Any]], dict[int, list[dict[str, Any]]]]:
-    projects = db.query(AnnotationProject).filter(AnnotationProject.id.in_(project_ids)).all()
+    projects = db.query(AnnotationProject).options(*WITH_ANNOTATIONS).filter(AnnotationProject.id.in_(project_ids)).all()
     if not projects:
         raise ValueError("図面を選んでください")
     pages = [serialize_project(db, p, with_image_meta=False) for p in sorted(projects, key=lambda p: p.id)]

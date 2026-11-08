@@ -10,10 +10,15 @@
 
 座標はすべて画像サイズで割った正規化値（0.0-1.0）。YOLO 形式と同じ表現のため
 エクスポート時の変換が不要。
+
+削除の連鎖は DB の外部キー（ON DELETE CASCADE / SET NULL）に任せる。SQLite でも接続ごとに
+外部キーを有効にしている（database.py）。relationship の passive_deletes=True は、子を読み込まずに
+親だけ消せばよいことを ORM に伝える（DD-0015）。
 """
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 
 from sqlalchemy import (
@@ -22,12 +27,13 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
     UniqueConstraint,
 )
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import relationship, validates
 
 from database import Base
 
@@ -41,7 +47,7 @@ class SymbolClass(Base):
 
     __tablename__ = "symbol_classes"
 
-    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    id = Column(Integer, primary_key=True, autoincrement=True)
     key = Column(String(64), nullable=False, unique=True)
     label = Column(String(200), nullable=False)
     yolo_index = Column(Integer, nullable=False, unique=True)
@@ -58,7 +64,7 @@ class AnnotationProject(Base):
 
     __tablename__ = "annotation_projects"
 
-    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    id = Column(Integer, primary_key=True, autoincrement=True)
     name = Column(String(500), nullable=False)
     sheet_no = Column(String(100), nullable=True)
     page_no = Column(String(50), nullable=True)
@@ -73,19 +79,20 @@ class AnnotationProject(Base):
     updated_at = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
 
     images = relationship(
-        "AnnotationImage", back_populates="project", cascade="all, delete-orphan"
+        "AnnotationImage", back_populates="project", cascade="all, delete-orphan", passive_deletes=True
     )
     symbols = relationship(
-        "AnnotationSymbol", back_populates="project", cascade="all, delete-orphan"
+        "AnnotationSymbol", back_populates="project", cascade="all, delete-orphan", passive_deletes=True
     )
     connections = relationship(
-        "Connection", back_populates="project", cascade="all, delete-orphan"
+        "Connection", back_populates="project", cascade="all, delete-orphan", passive_deletes=True
     )
     predictions = relationship(
-        "Prediction", back_populates="project", cascade="all, delete-orphan"
+        "Prediction", back_populates="project", cascade="all, delete-orphan", passive_deletes=True
     )
     structure_prediction = relationship(
-        "StructurePrediction", back_populates="project", cascade="all, delete-orphan", uselist=False
+        "StructurePrediction", back_populates="project", cascade="all, delete-orphan", uselist=False,
+        passive_deletes=True,
     )
 
 
@@ -94,7 +101,7 @@ class AnnotationImage(Base):
 
     __tablename__ = "annotation_images"
 
-    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    id = Column(Integer, primary_key=True, autoincrement=True)
     project_id = Column(
         Integer, ForeignKey("annotation_projects.id", ondelete="CASCADE"), nullable=False
     )
@@ -104,6 +111,8 @@ class AnnotationImage(Base):
     height = Column(Integer, nullable=False)
     created_at = Column(DateTime, default=utc_now_naive)
 
+    __table_args__ = (Index("ix_annotation_images_project_id", "project_id"),)
+
     project = relationship("AnnotationProject", back_populates="images")
 
 
@@ -112,7 +121,7 @@ class AnnotationSymbol(Base):
 
     __tablename__ = "annotation_symbols"
 
-    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    id = Column(Integer, primary_key=True, autoincrement=True)
     project_id = Column(
         Integer, ForeignKey("annotation_projects.id", ondelete="CASCADE"), nullable=False
     )
@@ -136,7 +145,8 @@ class AnnotationSymbol(Base):
     project = relationship("AnnotationProject", back_populates="symbols")
     symbol_class = relationship("SymbolClass", back_populates="symbols")
     terminals = relationship(
-        "SymbolTerminal", back_populates="symbol", cascade="all, delete-orphan"
+        "SymbolTerminal", back_populates="symbol", cascade="all, delete-orphan", passive_deletes=True,
+        order_by="SymbolTerminal.id",
     )
 
 
@@ -145,7 +155,7 @@ class SymbolTerminal(Base):
 
     __tablename__ = "symbol_terminals"
 
-    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    id = Column(Integer, primary_key=True, autoincrement=True)
     symbol_id = Column(
         Integer, ForeignKey("annotation_symbols.id", ondelete="CASCADE"), nullable=False
     )
@@ -153,6 +163,8 @@ class SymbolTerminal(Base):
     tx = Column(Float, nullable=False)  # 画像に対する正規化座標
     ty = Column(Float, nullable=False)
     origin = Column(String(20), nullable=False, default="manual", server_default="manual")
+
+    __table_args__ = (Index("ix_symbol_terminals_symbol_id", "symbol_id"),)
 
     symbol = relationship("AnnotationSymbol", back_populates="terminals")
 
@@ -162,7 +174,7 @@ class Connection(Base):
 
     __tablename__ = "connections"
 
-    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    id = Column(Integer, primary_key=True, autoincrement=True)
     project_id = Column(
         Integer, ForeignKey("annotation_projects.id", ondelete="CASCADE"), nullable=False
     )
@@ -190,6 +202,16 @@ class Connection(Base):
     attributes_json = Column(Text, nullable=True)
     created_at = Column(DateTime, default=utc_now_naive)
 
+    # 配線の参照名は属性の JSON と 1 対 1 で対応するので図面内で一意（NULL は旧データのみ）。
+    # 端子・記号の外部キーには索引を付け、記号・端子を消したときの連鎖を表全体の走査にしない。
+    __table_args__ = (
+        Index("uq_connection_ref_per_project", "project_id", "ref", unique=True),
+        Index("ix_connections_from_symbol_id", "from_symbol_id"),
+        Index("ix_connections_to_symbol_id", "to_symbol_id"),
+        Index("ix_connections_from_terminal_id", "from_terminal_id"),
+        Index("ix_connections_to_terminal_id", "to_terminal_id"),
+    )
+
     project = relationship("AnnotationProject", back_populates="connections")
     from_symbol = relationship("AnnotationSymbol", foreign_keys=[from_symbol_id])
     to_symbol = relationship("AnnotationSymbol", foreign_keys=[to_symbol_id])
@@ -202,7 +224,7 @@ class MlModel(Base):
 
     __tablename__ = "ml_models"
 
-    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    id = Column(Integer, primary_key=True, autoincrement=True)
     name = Column(String(200), nullable=False)
     version = Column(Integer, nullable=False)  # 連番（全モデル共通）
     file_name = Column(String(500), nullable=False)  # アップロード時のファイル名
@@ -222,7 +244,7 @@ class Prediction(Base):
 
     __tablename__ = "predictions"
 
-    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    id = Column(Integer, primary_key=True, autoincrement=True)
     project_id = Column(
         Integer, ForeignKey("annotation_projects.id", ondelete="CASCADE"), nullable=False
     )
@@ -240,13 +262,18 @@ class Prediction(Base):
     # kind: symbol=シンボル候補 / region=作図領域・DI 範囲などの大枠（シンボル件数に含めない）
     created_at = Column(DateTime, default=utc_now_naive)
 
+    __table_args__ = (Index("ix_predictions_project_id_kind", "project_id", "kind"),)
+
     project = relationship("AnnotationProject", back_populates="predictions")
     model = relationship("MlModel", back_populates="predictions")
     symbol_class = relationship("SymbolClass")
 
 
 class StructurePrediction(Base):
-    """Latest automatic wire/graph result, independent of manual annotations."""
+    """図面ごとの最新の構造解析の結果（手入力のアノテーションとは独立）。
+
+    一覧に出す件数は JSON を開かずに読めるよう列にも持つ。JSON を書いたときに必ず数え直すので食い違わない。
+    """
 
     __tablename__ = "structure_predictions"
 
@@ -254,8 +281,20 @@ class StructurePrediction(Base):
         Integer, ForeignKey("annotation_projects.id", ondelete="CASCADE"), primary_key=True
     )
     payload_json = Column(Text, nullable=False)
+    wire_count = Column(Integer, nullable=True)
+    connection_count = Column(Integer, nullable=True)
     created_at = Column(DateTime, default=utc_now_naive)
     project = relationship("AnnotationProject", back_populates="structure_prediction")
+
+    @validates("payload_json")
+    def _count(self, _key: str, value: str) -> str:
+        self.wire_count, self.connection_count = structure_counts(json.loads(value))
+        return value
+
+
+def structure_counts(payload: dict) -> tuple[int, int]:
+    """一覧に出す件数（検出した配線の本数、端子間の接続の数）。"""
+    return len(payload.get("wires") or []), int((payload.get("from_to") or {}).get("connection_count") or 0)
 
 
 class TrainingRun(Base):
@@ -267,7 +306,7 @@ class TrainingRun(Base):
 
     __tablename__ = "training_runs"
 
-    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    id = Column(Integer, primary_key=True, autoincrement=True)
     status = Column(String(20), nullable=False, default="running")  # running / success / failed
     project_ids_json = Column(Text, nullable=False, default="[]")
     image_count = Column(Integer, nullable=False, default=0)

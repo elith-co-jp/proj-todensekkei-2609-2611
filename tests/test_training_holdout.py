@@ -12,6 +12,7 @@ import yaml
 from sqlalchemy import text
 
 import database
+import db_migrations
 from models import TrainingRun
 from services import training_service
 from tests.conftest import create_project
@@ -168,7 +169,7 @@ def test_existing_db_upgrade_adds_eval_scope(client):
     with database.engine.begin() as conn:
         conn.execute(text("ALTER TABLE training_runs DROP COLUMN eval_scope_json"))
 
-    database._migrate_columns()
+    db_migrations.migrate(database.engine)
 
     with database.SessionLocal() as db:
         db.add(TrainingRun(status="failed", project_ids_json="[]"))

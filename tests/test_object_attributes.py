@@ -8,6 +8,7 @@ import json
 from sqlalchemy import text
 
 import database
+import db_migrations
 from services.circuit_model import build_circuit, netlist
 from tests.conftest import create_project
 
@@ -143,8 +144,9 @@ def test_circuit_uses_coil_resistance_attribute(client):
 def test_existing_db_upgrade_adds_attribute_columns(client):
     with database.engine.begin() as conn:
         conn.execute(text("ALTER TABLE connections DROP COLUMN attributes_json"))
+        conn.execute(text("DROP INDEX uq_connection_ref_per_project"))  # 列を足す前の DB には索引も無い
         conn.execute(text("ALTER TABLE connections DROP COLUMN ref"))
         conn.execute(text("ALTER TABLE annotation_symbols DROP COLUMN attributes_json"))
-    database._migrate_columns()
+    db_migrations.migrate(database.engine)
     pid = _project(client)
     assert client.get(f"/api/projects/{pid}").json()["connections"][0]["ref"] == "W-0001"

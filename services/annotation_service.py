@@ -13,7 +13,7 @@ import os
 from pathlib import Path
 
 from PIL import Image
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from database import IMAGE_DIR
 from models import (
@@ -22,6 +22,7 @@ from models import (
     Connection,
     SymbolClass,
     SymbolTerminal,
+    utc_now_naive,
 )
 from services.blob_store import store_blob
 from services.geometry import sanitize_box
@@ -148,14 +149,14 @@ def replace_annotations(db: Session, project: AnnotationProject, payload) -> dic
 
     payload.symbols[].ref / payload.connections[].*_ref は「クライアント側の参照名」。
     保存時に DB の実 id へ解決する。ref が未指定なら SYM-0001 形式で採番する。
+    古い行は DB の連鎖削除で消し（記号を消すと端子と配線も消える）、新しい行は relationship でつないで
+    最後に 1 回だけ書き込む。
     """
     cls_by_key = class_map_by_key(db)
 
     db.query(Connection).filter(Connection.project_id == project.id).delete(synchronize_session=False)
-    old_symbols = db.query(AnnotationSymbol).filter(AnnotationSymbol.project_id == project.id).all()
-    for s in old_symbols:
-        db.delete(s)
-    db.flush()
+    db.query(AnnotationSymbol).filter(AnnotationSymbol.project_id == project.id).delete(synchronize_session=False)
+    db.expire(project, ["symbols", "connections"])
 
     symbol_by_ref: dict[str, AnnotationSymbol] = {}
     terminal_by_ref: dict[str, SymbolTerminal] = {}
@@ -182,7 +183,7 @@ def replace_annotations(db: Session, project: AnnotationProject, payload) -> dic
         cx, cy, w, h = sanitize_box(item.cx, item.cy, item.w, item.h)
         sym = AnnotationSymbol(
             project_id=project.id,
-            class_id=cls.id,
+            symbol_class=cls,
             ref=ref,
             label=(item.label or None),
             cx=cx,
@@ -195,20 +196,17 @@ def replace_annotations(db: Session, project: AnnotationProject, payload) -> dic
             attributes_json=dump_attributes(item.attributes),
         )
         db.add(sym)
-        db.flush()
         symbol_by_ref[ref] = sym
 
         for t_index, t in enumerate(item.terminals or [], start=1):
             t_ref = (t.ref or "").strip() or f"{ref}-T{t_index}"
             term = SymbolTerminal(
-                symbol_id=sym.id,
                 name=t.name.strip() or str(t_index),
                 tx=max(0.0, min(1.0, float(t.tx))),
                 ty=max(0.0, min(1.0, float(t.ty))),
                 origin=t.origin,
             )
-            db.add(term)
-            db.flush()
+            sym.terminals.append(term)
             terminal_by_ref[t_ref] = term
 
     skipped: list[str] = []
@@ -219,7 +217,7 @@ def replace_annotations(db: Session, project: AnnotationProject, payload) -> dic
         if src is None or dst is None:
             skipped.append(f"{c.from_symbol_ref} -> {c.to_symbol_ref}")
             continue
-        if src.id == dst.id and (c.from_terminal_ref or "") == (c.to_terminal_ref or ""):
+        if src is dst and (c.from_terminal_ref or "") == (c.to_terminal_ref or ""):
             skipped.append(f"{c.from_symbol_ref} -> {c.to_symbol_ref}（自己ループ）")
             continue
         ft = terminal_by_ref.get(c.from_terminal_ref) if c.from_terminal_ref else None
@@ -227,10 +225,10 @@ def replace_annotations(db: Session, project: AnnotationProject, payload) -> dic
         db.add(
             Connection(
                 project_id=project.id,
-                from_symbol_id=src.id,
-                from_terminal_id=ft.id if ft else None,
-                to_symbol_id=dst.id,
-                to_terminal_id=tt.id if tt else None,
+                from_symbol=src,
+                from_terminal=ft,
+                to_symbol=dst,
+                to_terminal=tt,
                 wire_no=(c.wire_no or None),
                 net_id=(c.net_id or None),
                 kind=(c.kind or "wire"),
@@ -242,6 +240,7 @@ def replace_annotations(db: Session, project: AnnotationProject, payload) -> dic
             )
         )
 
+    project.updated_at = utc_now_naive()
     db.commit()
     return {"skipped": skipped}
 
@@ -249,15 +248,20 @@ def replace_annotations(db: Session, project: AnnotationProject, payload) -> dic
 # --------------------------------------------------------------------------
 # シリアライズ
 # --------------------------------------------------------------------------
-def terminal_ref(symbol: AnnotationSymbol, terminal: SymbolTerminal) -> str:
-    order = sorted(symbol.terminals, key=lambda t: t.id)
-    idx = order.index(terminal) + 1 if terminal in order else 1
-    return f"{symbol.ref}-T{idx}"
+# serialize_project が読む記号・端子・配線・画像を、図面の数によらず表ごとに 1 回のクエリで読む。
+# 図面を読んで serialize_project に渡すクエリには `.options(*WITH_ANNOTATIONS)` を付ける。
+WITH_ANNOTATIONS = (
+    selectinload(AnnotationProject.symbols).selectinload(AnnotationSymbol.terminals),
+    selectinload(AnnotationProject.connections),
+    selectinload(AnnotationProject.images),
+)
 
 
 def serialize_project(db: Session, project: AnnotationProject, with_image_meta: bool = True) -> dict:
+    """端子の参照名は記号の中の並び（id 順）で SYM-0001-T1 のように付ける。"""
     cls_by_id = {c.id: c for c in classes_ordered(db)}
     symbols = sorted(project.symbols, key=lambda s: s.ref)
+    terminal_refs = {t.id: f"{s.ref}-T{i}" for s in symbols for i, t in enumerate(s.terminals, start=1)}
     out_symbols = []
     for s in symbols:
         cls = cls_by_id.get(s.class_id)
@@ -277,8 +281,8 @@ def serialize_project(db: Session, project: AnnotationProject, with_image_meta: 
                 "confidence": s.confidence,
                 "attributes": load_attributes(s.attributes_json),
                 "terminals": [
-                    {"ref": terminal_ref(s, t), "name": t.name, "tx": t.tx, "ty": t.ty, "origin": t.origin or "manual"}
-                    for t in sorted(s.terminals, key=lambda t: t.id)
+                    {"ref": terminal_refs[t.id], "name": t.name, "tx": t.tx, "ty": t.ty, "origin": t.origin or "manual"}
+                    for t in s.terminals
                 ],
             }
         )
@@ -293,9 +297,9 @@ def serialize_project(db: Session, project: AnnotationProject, with_image_meta: 
             {
                 "ref": c.ref,
                 "from_symbol_ref": src.ref,
-                "from_terminal_ref": terminal_ref(src, c.from_terminal) if c.from_terminal else None,
+                "from_terminal_ref": terminal_refs.get(c.from_terminal_id),
                 "to_symbol_ref": dst.ref,
-                "to_terminal_ref": terminal_ref(dst, c.to_terminal) if c.to_terminal else None,
+                "to_terminal_ref": terminal_refs.get(c.to_terminal_id),
                 "wire_no": c.wire_no,
                 "net_id": c.net_id,
                 "kind": c.kind,
