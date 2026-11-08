@@ -208,6 +208,7 @@ def build_direct_from_to(
         wire_gap_bridge_max_blank=params.wire_gap_bridge_max_blank_px,
         terminal_gap_bridge_max_blank=params.terminal_gap_bridge_max_blank_px,
         gap_bridge_device_classes=set(classes.COILS),
+        own_device_jump_classes=set(classes.COILS | classes.CONTACTS),
         device_jump_across=params.device_jump_across_px,
         device_jump_end=params.device_jump_end_px,
         trace=trace,
@@ -378,6 +379,7 @@ def build_predicted_graph_pairs(
     wire_gap_bridge_max_blank: float = 0.0,
     terminal_gap_bridge_max_blank: float = 0.0,
     gap_bridge_device_classes: set[str] | None = None,
+    own_device_jump_classes: set[str] | None = None,
     device_jump_across: float = 0.0,
     device_jump_end: float = 1.0,
     trace: dict[str, Any] | None = None,
@@ -702,7 +704,9 @@ def build_predicted_graph_pairs(
         # 端子（member）ごとの記号と、配線ごとに乗っている端子。1 つの端子が配線とノードの両方に結ばれると停留点が
         # 2 つできるので、停留点ではなく端子で見る。
         symbol_of_member = {str(record["member_key"]): str(record.get("symbol_id") or "") for record in terminal_records}
-        coil_symbols = {sid for sid, (class_name, _box) in symbol_boxes.items() if class_name in (gap_bridge_device_classes or set())}
+        # 自分の機器のもう一方の端子を越える橋渡しを止める機器。既定（None）はコイルの中を通さない機器と同じ。
+        jump_classes = gap_bridge_device_classes if own_device_jump_classes is None else own_device_jump_classes
+        coil_symbols = {sid for sid, (class_name, _box) in symbol_boxes.items() if class_name in (jump_classes or set())}
         members_on_wire: dict[str, set[str]] = defaultdict(set)
         for wire_edge_id, segment in edge_segments.items():
             for _t, stop_id in stops_by_edge.get(wire_edge_id, []):
@@ -712,6 +716,8 @@ def build_predicted_graph_pairs(
         def jumps_own_coil(wire_id: str, source_key: str, start: tuple[float, float], end: tuple[float, float]) -> bool:
             """コイルの一方の端子が乗る配線がコイルの中まで伸びて終わっているとき、その端からの橋渡しが同じコイルの
             もう一方の端子（別の配線に結ばれている）を越えると、コイルの両側がつながる（ER21298）。
+            接点も同じで、母線の黒丸から下りる線が接点の中で終わり、そこからの橋渡しが接点の下の端子を越えた
+            （ER21261・ER21276、DD-0020）。
 
             橋渡しの出発点（線の端の点）にアンカーされた端子は、そこから橋渡しが出るので越えたことにしない（ER21279）。"""
             on_wire = members_on_wire.get(wire_id, set()) | terminal_members_by_graph_node.get(source_key, set())

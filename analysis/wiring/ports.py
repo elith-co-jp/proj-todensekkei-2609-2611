@@ -39,6 +39,25 @@ CONTACT_EDGE_FALLBACK = True
 CONTACT_KEEPS_INNERMOST_LINE = True
 
 
+# 枠をかすめる線の端子を除く記号。コネクタは枠に番号の文字を含み、列の縦線は枠の中を通る。カードも列の線は枠の
+# 中にある。黒丸・接点の枠は線にぴったり沿うので、辺の上の端子が普通（対象外）。
+GRAZING_PORT_CLASSES: frozenset[str] = frozenset({"connector"})
+GRAZING_PORT_OTHER_KINDS: frozenset[str] = frozenset({"card"})
+
+
+def grazes_box_edge(symbol: dict[str, Any], point: tuple[float, float], orientation: str | None, edge_px: float) -> bool:
+    """端子の線が枠の辺に沿って走り、枠を横切らない（辺から edge_px 以内で辺と平行、かつ直交する辺からは離れている）。"""
+    if edge_px <= 0 or orientation not in {"h", "v"}:
+        return False
+    if symbol.get("class_name") not in GRAZING_PORT_CLASSES and symbol.get("other_kind") not in GRAZING_PORT_OTHER_KINDS:
+        return False
+    box = symbol["bbox"]
+    x, y = point
+    near_x = min(abs(x - box["x0"]), abs(x - box["x1"])) <= edge_px
+    near_y = min(abs(y - box["y0"]), abs(y - box["y1"])) <= edge_px
+    return (near_y and not near_x) if orientation == "h" else (near_x and not near_y)
+
+
 def point_ink_ratio(image: Image.Image, point: tuple[float, float], radius: int) -> float:
     gray = image.convert("L")
     x, y = int(round(point[0])), int(round(point[1]))

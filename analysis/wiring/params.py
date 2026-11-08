@@ -51,6 +51,10 @@ class PortParams:
     # lead_reach 以内で始まり、下の線も同じ。どちらも高さの lead_min_share 以上続く（文字の画は 1 行ぶんで短い）。
     lead_reach: float = 0.2
     lead_min_share: float = 0.25
+    # 枠の辺に沿って走る線（辺から graze_edge_px 以内で辺と平行）の上の端子は、線が枠をかすめているだけで記号に
+    # 入っていない（コネクタの枠の下を通る飛び越しの横線 ER21281・ER21282、カードの枠の端を素通りする縦線 ER21301）。
+    # 0 で確認しない。
+    graze_edge_px: float = 3.0
 
 
 @dataclass(frozen=True)
