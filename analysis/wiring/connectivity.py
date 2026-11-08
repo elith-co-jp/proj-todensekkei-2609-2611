@@ -646,6 +646,23 @@ def build_predicted_graph_pairs(
                     return True
             return False
 
+        def is_corner(node_id: str, wire_id: str, orientation: str) -> bool:
+            """この点で直交する配線も終わっている（線がここで向きを変える角）。角から先へは線が続かないので、
+            角からの橋渡しは間隔の狭い隣の平行線へ渡る（ER21277・ER21276 の 11 px おきの横線）。"""
+            node = nodes_by_id.get(node_id)
+            if node is None:
+                return False
+            point = node_point(node)
+            for other in incident_wire_by_node.get(node_id, set()):
+                segments = edges_by_wire.get(other, [])
+                if not other or other == wire_id or not segments or str(segments[0]["orientation"]) == orientation:
+                    continue
+                along = 0 if str(segments[0]["orientation"]) == "h" else 1
+                lo, hi = wire_span[other]
+                if min(abs(point[along] - lo), abs(point[along] - hi)) <= 2.0:
+                    return True
+            return False
+
         # 端子（member）ごとの記号と、配線ごとに乗っている端子。1 つの端子が配線とノードの両方に結ばれると停留点が
         # 2 つできるので、停留点ではなく端子で見る。
         symbol_of_member = {str(record["member_key"]): str(record.get("symbol_id") or "") for record in terminal_records}
@@ -710,6 +727,9 @@ def build_predicted_graph_pairs(
                 beyond = past_end_stop(source_edge_id, point, end_t)
                 if beyond is not None:
                     endpoint_key, point = beyond, coords[beyond]
+                elif is_corner(str(end_node), source_wire_id, source_orientation):
+                    stats["wire_gap_bridge_rejected_corner_count"] += 1
+                    continue
                 is_wire_end = str(nodes_by_id.get(str(end_node), {}).get("type") or "") == "endpoint"
                 px, py = point
                 for target_edge_id, target in edge_segments.items():

@@ -52,3 +52,15 @@ def test_line_broken_by_a_symbol_is_kept():
     trimmed = {w.id: w for w in trim_overhangs(binary, [vertical, *horizontals])}["v"]
     assert trimmed.span_end == 84
 
+
+def test_overhang_over_touching_bands_is_trimmed():
+    """横線が 6 px おきで帯どうしが隙間なく続いても、越えた本数で数える（ER21276 の 11 px おきの線）。"""
+    binary = np.zeros((120, 200), dtype=np.uint8)
+    horizontals = [_wire(f"h{y}", "h", y, 20, 180) for y in (60, 66, 72)]
+    for wire in horizontals:
+        _draw(binary, wire)
+    vertical = _wire("v", "v", 100, 0, 72)
+    _draw(binary, vertical, 0, 60)
+    trimmed = {w.id: w for w in trim_overhangs(binary, [vertical, *horizontals])}["v"]
+    assert trimmed.span_end < 60
+
