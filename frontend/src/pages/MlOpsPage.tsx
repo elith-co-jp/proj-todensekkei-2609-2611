@@ -542,6 +542,14 @@ export default function MlOpsPage() {
                   {status.active_model.name} v{status.active_model.version}
                 </span>
               )}
+              {status?.card_model && (
+                <span
+                  className="rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-bold text-slate-600"
+                  title="並んだカードを分けて検出するため、カード・札・領域は別のモデルで検出します"
+                >
+                  カードは別モデル（{status.card_model.name}）
+                </span>
+              )}
             </div>
             <div className="space-y-4 p-4 sm:p-5">
               <div className="flex flex-wrap items-end gap-3">

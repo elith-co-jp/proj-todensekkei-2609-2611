@@ -23,7 +23,7 @@ from services.annotation_service import classes_ordered, image_path
 from services.detection_rules import detection_kind
 from services.export_service import safe_members
 from services.geometry import sanitize_box
-from services.model_service import model_path
+from services.model_service import card_model_path, model_path
 
 # predictions ZIP でファイル名からプロジェクトを引く規則。
 # エクスポート画像名は p<project_id>_<stem>.png なので、同じ stem の labels を対応付ける。
@@ -83,6 +83,53 @@ def _record_predictions(
     return counts
 
 
+
+# 別のモデル（カード用）で検出する記号の種類。
+CARD_MODEL_CLASSES = frozenset({"other"})
+
+
+def merge_card_detections(main: list[dict], cards: list[dict]) -> list[dict]:
+    """「その他」はカード用モデルの検出に置き換え、ほかの記号はもとのモデルの検出を使う。"""
+    return [d for d in main if d["class_key"] not in CARD_MODEL_CLASSES] + [
+        d for d in cards if d["class_key"] in CARD_MODEL_CLASSES
+    ]
+
+
+def _detect(detector, page, conf: float, connector_conf: float | None, class_by_index: dict[int, SymbolClass]) -> list[dict]:
+    """1 ページを検出し、アプリの記号の種類に対応付けた検出の一覧。"""
+    class_by_key = {c.key: c for c in class_by_index.values()}
+    detector_names = getattr(detector, "names", None) or {}
+    detections: list[dict] = []
+    for result in detector.predict(page, conf=conf, verbose=False):
+        boxes = result.boxes
+        if boxes is None or boxes.xywhn is None:
+            continue
+        xywhn = boxes.xywhn.tolist()
+        confs = boxes.conf.tolist() if boxes.conf is not None else [None] * len(xywhn)
+        classes = boxes.cls.tolist() if boxes.cls is not None else [None] * len(xywhn)
+        for (cx, cy, w, h), score, cls_index in zip(xywhn, confs, classes, strict=False):
+            cls = None
+            if cls_index is not None:
+                # 学習時のクラス順はアプリの順序と一致しないことがあるため、
+                # モデルのクラス名 -> SymbolClass.key で対応付ける。
+                # 名前が一致しない検出を番号で拾うと誤分類になるため捨てる
+                det_name = detector_names.get(int(cls_index))
+                cls = class_by_key.get(det_name) if det_name is not None else class_by_index.get(int(cls_index))
+            if cls is None:
+                continue
+            if cls.key == "connector" and connector_conf is not None and score is not None and score < connector_conf:
+                continue
+            cx, cy, w, h = sanitize_box(cx, cy, w, h)
+            if w <= 0 or h <= 0:
+                continue
+            detections.append({
+                "class_id": cls.id, "class_key": cls.key, "class_label": cls.label,
+                "cx": cx, "cy": cy, "w": w, "h": h,
+                "confidence": float(score) if score is not None else None,
+            })
+    return detections
+
+
 def run_inference(
     db: Session,
     model: MlModel,
@@ -107,9 +154,10 @@ def run_inference(
     from analysis.runtime import page_for_detection
 
     detector = YOLO(str(path))
+    # 並んだカードを 1 つにまとめないよう、「その他」（カード・札・領域）は別のモデルで検出する（DD-0019）。
+    card_path = card_model_path()
+    card_detector = YOLO(str(card_path)) if card_path is not None else None
     class_by_index = _class_by_yolo_index(db)
-    class_by_key = {c.key: c for c in class_by_index.values()}
-    detector_names = getattr(detector, "names", None) or {}
     summary = []
     for project in projects:
         if include_structure and len(project.images) != 1:
@@ -121,49 +169,11 @@ def run_inference(
             if not src.exists():
                 skipped_images += 1
                 continue
-            results = detector.predict(page_for_detection(src), conf=conf, verbose=False)
-            for result in results:
-                boxes = result.boxes
-                if boxes is None or boxes.xywhn is None:
-                    continue
-                xywhn = boxes.xywhn.tolist()
-                confs = boxes.conf.tolist() if boxes.conf is not None else [None] * len(xywhn)
-                classes = boxes.cls.tolist() if boxes.cls is not None else [None] * len(xywhn)
-                for (cx, cy, w, h), score, cls_index in zip(xywhn, confs, classes, strict=False):
-                    cls = None
-                    if cls_index is not None:
-                        # 学習時のクラス順はアプリの順序と一致しないことがあるため、
-                        # モデルのクラス名 -> SymbolClass.key で対応付ける。
-                        # 名前が一致しない検出を番号で拾うと誤分類になるため捨てる
-                        det_name = detector_names.get(int(cls_index))
-                        if det_name is not None:
-                            cls = class_by_key.get(det_name)
-                        else:
-                            cls = class_by_index.get(int(cls_index))
-                    if cls is None:
-                        continue
-                    if (
-                        cls.key == "connector"
-                        and connector_conf is not None
-                        and score is not None
-                        and score < connector_conf
-                    ):
-                        continue
-                    cx, cy, w, h = sanitize_box(cx, cy, w, h)
-                    if w <= 0 or h <= 0:
-                        continue
-                    detections.append(
-                        {
-                            "class_id": cls.id,
-                            "class_key": cls.key,
-                            "class_label": cls.label,
-                            "cx": cx,
-                            "cy": cy,
-                            "w": w,
-                            "h": h,
-                            "confidence": float(score) if score is not None else None,
-                        }
-                    )
+            page = page_for_detection(src)
+            found = _detect(detector, page, conf, connector_conf, class_by_index)
+            if card_detector is not None:
+                found = merge_card_detections(found, _detect(card_detector, page, conf, connector_conf, class_by_index))
+            detections.extend(found)
         structure = None
         if include_structure:
             if skipped_images:
@@ -174,7 +184,8 @@ def run_inference(
             region_detections = [d for d in detections if detection_kind(d["w"], d["h"]) == "region"]
             structure = analyze_project(project, model, symbol_detections, region_detections)
         counts = _record_predictions(
-            db, project, detections, model, model_label=model.name
+            db, project, detections, model,
+            model_label=model.name if card_path is None else f"{model.name} + {card_path.stem}",
         )
         if structure is not None:
             from services.structure_service import save_structure

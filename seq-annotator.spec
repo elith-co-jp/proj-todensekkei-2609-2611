@@ -29,10 +29,12 @@ name_ocr_model = spec_dir / ".build-assets" / "ch_PP-OCRv5_rec_mobile.onnx"
 if not name_ocr_model.is_file():
     raise FileNotFoundError("Run python scripts/fetch_base_model.py before packaging")
 datas.append((str(name_ocr_model), "models"))
-initial_model = spec_dir / "assets" / "models" / "yolo11n_all_symbols_best.pt"
-if not initial_model.is_file():
-    raise FileNotFoundError("assets/models/yolo11n_all_symbols_best.pt is missing")
-datas.append((str(initial_model), "models"))
+# 記号の検出の初期モデルと、「その他」（カード・札・領域）を検出するカード用のモデル（DD-0019）。
+for bundled_model in ("yolo11s_symbols_best.pt", "yolo11s_cards_best.pt"):
+    path = spec_dir / "assets" / "models" / bundled_model
+    if not path.is_file():
+        raise FileNotFoundError(f"assets/models/{bundled_model} is missing")
+    datas.append((str(path), "models"))
 binaries = []
 hiddenimports = []
 
