@@ -21,6 +21,7 @@ from analysis.wiring.geometry import (
 from analysis.wiring.params import DEFAULT, PortParams
 from analysis.wiring.ports import (
     LINE_PORT_CLASSES,
+    grazes_box_edge,
     is_four_port_symbol,
     line_ports,
     terminal_points_for_symbol,
@@ -110,6 +111,10 @@ def enrich_symbols_and_graph(
                 t for t in terminal_points
                 if not any(b["x0"] <= t["point"][0] <= b["x1"] and b["y0"] <= t["point"][1] <= b["y1"] for b in coil_boxes)
             ]
+        terminal_points = [
+            t for t in terminal_points
+            if not grazes_box_edge(symbol, t["point"], t.get("wire_orientation"), port_params.graze_edge_px)
+        ]
         if (
             port_params.line_ports and symbol.get("class_name") in LINE_PORT_CLASSES
             and not is_four_port_symbol(str(symbol.get("class_name")), bbox, float(inferred_terminal_config["four_port_height_px"]))

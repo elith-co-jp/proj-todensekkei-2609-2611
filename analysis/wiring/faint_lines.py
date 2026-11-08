@@ -33,6 +33,9 @@ SOLID_MAX_WHITE_RUN = 6
 # ...and the terminals must line up closely: the band between offset terminals widens and, among parallel wires
 # 11 px apart, picks up the neighbours' ink as a solid line (ER21276, ER21279).
 SOLID_ALIGN = 3
+# 分岐の黒丸どうしも同じ。黒丸は太い線の上に描かれ、薄い線で結ばれることはない。ずれた黒丸の間の帯は、下部の
+# 交差の束で 11 px おきに並ぶ平行な横線を拾い、別々の配線をつないだ（ER21276・ER21279・ER21280 の 5 本）。
+JUNCTION_ALIGN = SOLID_ALIGN
 WIRE_ALONG_ACROSS = 6   # a detected wire within this of the line axis
 WIRE_ALONG_SHARE = 0.5  # covering this much of the gap
 PASS_CLASSES = classes.PASS_THROUGH
@@ -186,7 +189,11 @@ def bridge_faint_wires(payload: dict[str, Any], image: Image.Image) -> list[dict
             if crossed or not _leaves_device(symbols[sid], term, step)                     or not _leaves_device(symbols[other_sid], other, (-step[0], -step[1])):
                 continue
             profile = _profile(gray, here, (ox, oy), vertical, scale)
-            aligned = abs((ox, oy)[axis] - here[axis]) <= SOLID_ALIGN * scale
+            offset = abs((ox, oy)[axis] - here[axis])
+            aligned = offset <= SOLID_ALIGN * scale
+            both_junctions = _class(symbols[sid]) == _class(symbols[other_sid]) == classes.JUNCTION
+            if both_junctions and offset > JUNCTION_ALIGN * scale:
+                continue
             if not (_faint_line(profile, scale)
                     or (aligned and _solid_line(profile, scale) and not _left_out(payload, here, (ox, oy), vertical, scale))):
                 continue
