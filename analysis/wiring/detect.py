@@ -40,6 +40,11 @@ OVERHANG_BAND_PX = 2
 # はみ出しではない（母線から下りる線は、すぐ下の接点で 90 px ほど途切れる）。
 OVERHANG_MAX_GAP_PX = 10
 
+# 線に沿ったインクが 100 px あたりこの回数以上途切れる候補は、文字の並び（「5 ○ (ER21271)」の行や
+# 「2B-RCVTB(01)」の札）で、配線ではない（ER21276 など 30 枚で 8 本）。配線は記号の所以外ではほとんど途切れず、
+# 端子の小箱が乗る配線でも 8.7 回まで。
+TEXT_ROW_GAPS_PER_100PX = 10.0
+
 
 def make_binary_mask(image: Image.Image) -> np.ndarray:
     gray = np.array(image.convert("L"))
@@ -836,6 +841,9 @@ def build_detected_wires(
         if not accept:
             continue
 
+        if looks_like_text_row(binary, line):
+            continue
+
         span_start, span_end = line_span(line)
         detected.append(
             DetectedWire(
@@ -865,19 +873,21 @@ def _crossed_bands_before_ink(binary: np.ndarray, wire: DetectedWire, bands: lis
     lo_across, hi_across = max(0, lo_across - 1), hi_across + 2
     edge = wire.span_end if from_end else wire.span_start
     positions = range(wire.span_end, wire.span_start, -1) if from_end else range(wire.span_start, wire.span_end)
-    crossed, gap, in_band = 0, 0, False
+    # 越えた帯は本数で数える。間隔の狭い平行線（ER21276 の 11 px おき）では帯どうしが隙間なく続く。
+    crossed: set[int] = set()
+    gap = 0
     for pos in positions:
-        if any(lo <= pos <= hi for lo, hi in bands):
-            crossed += not in_band
-            in_band, gap = True, 0
+        inside = {index for index, (lo, hi) in enumerate(bands) if lo <= pos <= hi}
+        if inside:
+            crossed |= inside
+            gap = 0
             continue
-        in_band = False
         if wire.orientation == "v":
             inked = 0 <= pos < height and bool(binary[pos, lo_across:min(width, hi_across)].any())
         else:
             inked = 0 <= pos < width and bool(binary[lo_across:min(height, hi_across), pos].any())
         if inked:
-            return pos, crossed
+            return pos, len(crossed)
         gap += 1
         if gap > OVERHANG_MAX_GAP_PX:
             return edge, 0
@@ -908,6 +918,16 @@ def trim_overhangs(binary: np.ndarray, wires: list[DetectedWire]) -> list[Detect
         box = Box(wire.box.x0, start, wire.box.x1, end) if wire.orientation == "v" else Box(start, wire.box.y0, end, wire.box.y1)
         trimmed.append(replace(wire, box=box, span_start=start, span_end=end, length=end - start))
     return trimmed
+
+
+def looks_like_text_row(binary: np.ndarray, line: LineSegment) -> bool:
+    """線に沿ったインクが細かく途切れる（文字が並んでいる）。TEXT_ROW_GAPS_PER_100PX を見よ。"""
+    start, end = line_span(line)
+    support = support_vector_for_span(binary, line.orientation, line_axis(line), start, end + 1, half_width=1).astype(bool)
+    if support.size == 0:
+        return False
+    gaps = int(np.count_nonzero(np.diff(support.astype(np.int8)) == 1))
+    return gaps * 100 / support.size >= TEXT_ROW_GAPS_PER_100PX
 
 
 DEFAULT_WIRE_TEXT_MASK = "components"
