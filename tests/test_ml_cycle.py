@@ -313,9 +313,9 @@ def test_frozen_bundled_model_auto_registered(client, tmp_path, monkeypatch):
 
     models = client.get("/api/ml/models").json()
     assert len(models) == 1
-    assert models[0]["file_name"] == "yolo11n_all_symbols_best.pt"
+    assert models[0]["file_name"] == "yolo11s_symbols_best.pt"
     status = client.get("/api/ml/status").json()
-    assert status["active_model"]["name"] == "yolo11n_all_symbols_best"
+    assert status["active_model"]["name"] == "yolo11s_symbols_best"
 
 
 def test_frozen_bundled_model_upgrade_registers_new_version(client, tmp_path, monkeypatch):

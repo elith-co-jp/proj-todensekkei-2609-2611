@@ -78,8 +78,10 @@ def main() -> None:
             if status["ultralytics"] is not True:
                 raise AssertionError(f"ultralytics is unavailable in frozen exe: {status}")
             active = status["active_model"]
-            if not (active and active["is_active"] and active["file_name"] == "yolo11n_all_symbols_best.pt"):
+            if not (active and active["is_active"] and active["file_name"] == "yolo11s_symbols_best.pt"):
                 raise AssertionError(f"Bundled initial model was not registered: {status}")
+            if (status.get("card_model") or {}).get("name") != "yolo11s_cards_best":
+                raise AssertionError(f"Bundled card model was not found: {status}")
 
             project = _request(
                 "POST",

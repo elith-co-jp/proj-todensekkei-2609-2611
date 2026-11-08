@@ -29,6 +29,7 @@ from services.inference_service import (
 from services.model_service import (
     activate,
     active_model,
+    card_model_path,
     delete_model,
     model_path,
     next_version,
@@ -57,9 +58,12 @@ def _get_model_or_404(db: Session, model_id: int) -> MlModel:
 def ml_status(db: Session = Depends(get_db)):
     active = active_model(db)
     running = running_training(db)
+    card = card_model_path()
     return {
         "ultralytics": ultralytics_available(),
         "active_model": serialize_model(active) if active else None,
+        # 「その他」（カード・札・領域）を検出する同梱のモデル。無ければ使用中のモデルがすべてを検出する（DD-0019）。
+        "card_model": {"name": card.stem} if card is not None else None,
         "model_count": db.query(MlModel).count(),
         "training_running": serialize_run(running) if running else None,
     }

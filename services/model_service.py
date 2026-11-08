@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 from sqlalchemy.orm import Session
@@ -17,11 +18,25 @@ from runtime import is_frozen, resource_base
 from services.blob_store import store_blob
 
 MAX_MODEL_BYTES = 1024 * 1024 * 1024  # 1 GiB
-BUNDLED_MODEL_NAME = "yolo11n_all_symbols_best.pt"
+BUNDLED_MODEL_NAME = "yolo11s_symbols_best.pt"
+# 「その他」（カード・札・領域）だけを検出するのに使う同梱のモデル（DD-0019）。並んだカードを 1 つにまとめない。
+CARD_MODEL_NAME = "yolo11s_cards_best.pt"
 
 
 def model_path(sha256: str) -> Path:
     return MODEL_DIR / f"{sha256}.pt"
+
+
+def card_model_path() -> Path | None:
+    """カード用のモデルのファイル。SEQANNO_CARD_MODEL で指定でき、空文字なら使わない。無ければ None。
+
+    exe では同梱の models/ に、開発時はリポジトリの assets/models/ にある。
+    """
+    configured = os.environ.get("SEQANNO_CARD_MODEL")
+    if configured is not None:
+        return Path(configured) if configured and Path(configured).is_file() else None
+    path = resource_base() / ("models" if is_frozen() else "assets/models") / CARD_MODEL_NAME
+    return path if path.is_file() else None
 
 
 def store_model_bytes(raw: bytes, file_name: str) -> tuple[str, int]:

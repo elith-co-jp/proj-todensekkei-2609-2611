@@ -126,6 +126,7 @@ export type MlModel = {
 export type MlStatus = {
   ultralytics: boolean
   active_model: MlModel | null
+  card_model?: { name: string } | null
   model_count: number
   training_running: TrainingRun | null
 }
