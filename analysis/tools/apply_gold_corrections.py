@@ -10,6 +10,8 @@ Corrections are a JSON list. Each item names the drawing (sheet, e.g. ER21276) a
 - {"op": "two_terminal_contact", "ref": "SYM-0005", "bbox_px": [x0, y0, x1, y1]}
   for a contact annotated with four terminals (the card's outer dots too). It keeps the two inner terminals,
   moves wires on an outer terminal to the inner terminal on the same side and takes the box of a two-terminal contact.
+- {"op": "add_wire", "from": "SYM-0062-T8", "to": "SYM-0009-T1"}
+  for a wire drawn on the drawing that the annotators left out (DD-0020). Both terminals must exist.
 
 Every item also carries "reason" (what the drawing shows). A relabel whose current label is neither "was" nor
 the new label, or a box that is neither "was_bbox_px" nor the new box, stops the run, so corrections are never
@@ -110,6 +112,27 @@ def _two_terminal_contact(project: dict[str, Any], symbol: dict[str, Any], item:
     return "applied"
 
 
+def _add_wire(project: dict[str, Any], item: dict[str, Any]) -> str:
+    """図面にあるのに付け忘れた配線を 1 本足す。両端の端子が無ければ止め、同じ 2 端子の配線があれば何もしない。"""
+    symbol_of = {t["ref"]: s["ref"] for s in project["symbols"] for t in s.get("terminals") or []}
+    for end in (item["from"], item["to"]):
+        if end not in symbol_of:
+            raise CorrectionError(f"{item['sheet']} {end}: terminal not found")
+    ends = {item["from"], item["to"]}
+    connections = project.setdefault("connections", [])
+    if any({c.get("from_terminal_ref"), c.get("to_terminal_ref")} == ends for c in connections):
+        return "already"
+    numbers = [int(c["ref"].split("-")[-1]) for c in connections if str(c.get("ref", "")).split("-")[-1].isdigit()]
+    connections.append({
+        "ref": f"W-{max(numbers, default=0) + 1:04d}",
+        "from_symbol_ref": symbol_of[item["from"]], "from_terminal_ref": item["from"],
+        "to_symbol_ref": symbol_of[item["to"]], "to_terminal_ref": item["to"],
+        "wire_no": None, "net_id": None, "kind": "wire", "external_ref": None, "note": ADDED_NOTE, "origin": "manual",
+        "attributes": {},
+    })
+    return "applied"
+
+
 def apply_corrections(bundle: dict[str, Any], corrections: list[dict[str, Any]]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     """Return a corrected copy of the bundle and one result per correction whose sheet is in the bundle."""
     bundle = copy.deepcopy(bundle)
@@ -167,6 +190,8 @@ def apply_corrections(bundle: dict[str, Any], corrections: list[dict[str, Any]])
             if symbol is None:
                 raise CorrectionError(f"{item['sheet']} {item['ref']}: symbol not found")
             status = _two_terminal_contact(project, symbol, item)
+        elif item["op"] == "add_wire":
+            status = _add_wire(project, item)
         else:
             raise CorrectionError(f"unknown op {item['op']!r}")
         results.append({**item, "status": status})

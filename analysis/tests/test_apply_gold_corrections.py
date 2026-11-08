@@ -109,3 +109,21 @@ def test_a_four_terminal_contact_keeps_its_inner_terminals_and_their_wires():
     again, results = apply_corrections(fixed, [TWO])
     assert again == fixed and [r["status"] for r in results] == ["already"]
 
+
+def test_a_left_out_wire_is_added_once_between_existing_terminals():
+    """図面にあるのに付け忘れた配線（ER21226 の 33hb の端子 2 と NC2 の黒丸、DD-0020）を 1 回だけ足す。"""
+    original = bundle()
+    project = original["projects"][0]
+    project["symbols"][0]["terminals"] = [{"ref": "SYM-0008-T1"}, {"ref": "SYM-0008-T2"}]
+    project["symbols"][1]["terminals"] = [{"ref": "SYM-0009-T1"}]
+    project["connections"] = [{"ref": "W-0003", "from_symbol_ref": "SYM-0008", "from_terminal_ref": "SYM-0008-T1",
+                               "to_symbol_ref": "SYM-0008", "to_terminal_ref": "SYM-0008-T2"}]
+    wire = {"sheet": "ER21276", "op": "add_wire", "from": "SYM-0008-T2", "to": "SYM-0009-T1", "reason": "図面の線"}
+    fixed, results = apply_corrections(original, [wire])
+    added = fixed["projects"][0]["connections"][-1]
+    assert (added["ref"], added["from_symbol_ref"], added["to_symbol_ref"], added["note"]) == ("W-0004", "SYM-0008", "SYM-0009", ADDED_NOTE)
+    assert [r["status"] for r in results] == ["applied"]
+    again, results = apply_corrections(fixed, [wire])
+    assert again == fixed and [r["status"] for r in results] == ["already"]
+    with pytest.raises(CorrectionError, match="terminal not found"):
+        apply_corrections(original, [{**wire, "to": "SYM-0009-T2"}])
