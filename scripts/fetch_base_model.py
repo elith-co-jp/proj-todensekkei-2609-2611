@@ -8,11 +8,16 @@
 from __future__ import annotations
 
 import hashlib
+import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import NamedTuple
 
 BUILD_ASSETS = Path(__file__).resolve().parents[1] / ".build-assets"
+# 配布元が一時的に 504 を返す・途中で切れることがある（2026-11-09 のビルドで 3 回）。間を空けてやり直す。
+ATTEMPTS = 4
+BACKOFF_SECONDS = (15, 45, 90)
 
 
 class Asset(NamedTuple):
@@ -38,22 +43,48 @@ def _digest(path: Path) -> str:
     return digest.hexdigest()
 
 
-def fetch(asset: Asset) -> None:
+class TransientError(Exception):
+    """配布元の一時的な失敗（5xx、接続の切断、途中で切れて照合値が合わない）。"""
+
+
+def fetch(asset: Asset, *, attempts: int = ATTEMPTS, sleep=time.sleep) -> None:
+    """照合値の合うファイルが取れるまで、一時的な失敗なら間を空けてやり直す。"""
+    for attempt in range(1, attempts + 1):
+        try:
+            _fetch_once(asset)
+            return
+        except TransientError as error:
+            if attempt == attempts:
+                raise RuntimeError(f"{asset.name}: {attempts} 回取得に失敗しました（最後: {error}）") from error
+            wait = BACKOFF_SECONDS[min(attempt - 1, len(BACKOFF_SECONDS) - 1)]
+            print(f"{asset.name}: 取得に失敗（{error}）。{wait} 秒後にやり直します（{attempt}/{attempts}）", flush=True)
+            sleep(wait)
+
+
+def _fetch_once(asset: Asset) -> None:
     dest = BUILD_ASSETS / asset.name
     if dest.is_file() and _digest(dest) == asset.sha256:
         return
     temporary = dest.with_suffix(".download")
     temporary.unlink(missing_ok=True)
     try:
-        with urllib.request.urlopen(asset.url, timeout=60) as source, temporary.open("wb") as output:
-            total = 0
-            while chunk := source.read(1024 * 1024):
-                total += len(chunk)
-                if total > asset.max_bytes:
-                    raise ValueError(f"{asset.name} exceeds the expected size")
-                output.write(chunk)
+        try:
+            with urllib.request.urlopen(asset.url, timeout=60) as source, temporary.open("wb") as output:
+                total = 0
+                while chunk := source.read(1024 * 1024):
+                    total += len(chunk)
+                    if total > asset.max_bytes:
+                        raise ValueError(f"{asset.name} exceeds the expected size")
+                    output.write(chunk)
+        except urllib.error.HTTPError as error:
+            if error.code >= 500:
+                raise TransientError(f"HTTP {error.code}") from error
+            raise
+        except (urllib.error.URLError, TimeoutError, ConnectionError) as error:
+            raise TransientError(str(error)) from error
         if _digest(temporary) != asset.sha256:
-            raise ValueError(f"{asset.name} checksum does not match the pinned release")
+            # 途中で切れたファイルも照合値が合わない。やり直して合わなければ最後に止める。
+            raise TransientError(f"{asset.name} checksum does not match the pinned release")
         temporary.replace(dest)
     finally:
         temporary.unlink(missing_ok=True)
