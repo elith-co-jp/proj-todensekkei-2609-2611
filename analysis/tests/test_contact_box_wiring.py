@@ -50,10 +50,12 @@ def test_short_line_crossing_two_wires_mid_way_is_not_a_wire():
 
 
 def test_text_fragment_beside_a_thin_wire_keeps_the_wire_axis():
+    """線の横の文字のかけらは線にまとめず、線の位置を動かさない（ER21282）。かけらは短い別の候補として残り、
+    配線の長さに届かず落ちる（DD-0021）。"""
     wire = LineSegment("v", Box(336, 235, 346, 530))
     fragment = LineSegment("v", Box(344, 347, 365, 402))
     merged = merge_candidate_lines([wire, fragment], "v", axis_tolerance=16, max_gap=82)
-    assert [(m.box.x0, m.box.x1, m.box.y0, m.box.y1) for m in merged] == [(336, 346, 235, 530)]
+    assert sorted((m.box.x0, m.box.x1, m.box.y0, m.box.y1) for m in merged) == [(336, 346, 235, 530), (344, 365, 347, 402)]
 
 
 def test_two_port_contact_takes_ports_on_its_own_line_only():

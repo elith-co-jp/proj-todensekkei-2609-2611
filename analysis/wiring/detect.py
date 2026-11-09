@@ -45,6 +45,14 @@ OVERHANG_MAX_GAP_PX = 10
 # 端子の小箱が乗る配線でも 8.7 回まで。
 TEXT_ROW_GAPS_PER_100PX = 10.0
 
+# 線の枠の中心が、線のインクの帯の中心からこれより離れていたら、枠を帯に付け替える（ink_band、DD-0021）。
+INK_BAND_REBOX_PX = 2
+# 付け替えを考える枠の幅の下限。配線の枠はふつう 3〜11 px（ER21277 の接点の列は 11 px）。
+INK_BAND_MIN_BOX_PX = 12
+# 並ぶ範囲がこれより長く重なり、中心がこれより離れた平行な線はまとめない（merge_candidate_lines）。
+MERGE_SIDE_BY_SIDE_OVERLAP_PX = 4
+MERGE_SIDE_BY_SIDE_PX = 6
+
 
 def make_binary_mask(image: Image.Image) -> np.ndarray:
     gray = np.array(image.convert("L"))
@@ -285,6 +293,35 @@ def gap_has_ink_support(
     return float(np.count_nonzero(support) / support.size) >= min_gap_coverage
 
 
+def ink_band(binary: np.ndarray, line: LineSegment) -> tuple[int, int]:
+    """線の枠の中で、線に沿ったインクの帯（縦線は列、横線は行の範囲）。
+
+    枠は近くの文字や記号の画まで含んで広がることがあり（ER21275 の CN20 8 の縦線は x 341〜360、インクは 355〜357）、
+    枠の中心で線を確かめると、線が 1〜2 px 横へずれた所で途切れたとみなして交差の手前で線を切り、切らなくても
+    インクの割合や文字の並びの判定で線を落としていた（DD-0021）。インクが最も多い列（同じ数なら枠の中心に近い列）から、
+    その半分以上のインクがある列が続く範囲を帯にする。
+    """
+    box = line.box
+    height, width = binary.shape
+    if line.orientation == "v":
+        lo, hi = max(0, box.x0), min(width, box.x1 + 1)
+        counts = np.count_nonzero(binary[max(0, box.y0):min(height, box.y1), lo:hi], axis=0)
+    else:
+        lo, hi = max(0, box.y0), min(height, box.y1 + 1)
+        counts = np.count_nonzero(binary[lo:hi, max(0, box.x0):min(width, box.x1)], axis=1)
+    center = line_axis(line)
+    if counts.size == 0 or not counts.any():
+        return center, center
+    best = int(counts.max())
+    peak = min((int(i) for i in np.flatnonzero(counts == best)), key=lambda i: abs(lo + i - center))
+    first = last = peak
+    while first > 0 and counts[first - 1] * 2 >= best:
+        first -= 1
+    while last < counts.size - 1 and counts[last + 1] * 2 >= best:
+        last += 1
+    return lo + first, lo + last
+
+
 def split_line_by_ink_support(
     binary: np.ndarray,
     line: LineSegment,
@@ -295,7 +332,15 @@ def split_line_by_ink_support(
     min_visible_coverage: float = 0.35,
 ) -> list[LineSegment]:
     start, end = line_span(line)
-    support = support_vector_for_span(binary, line.orientation, line_axis(line), start, end, half_width=half_width)
+    # 枠が文字の画まで含んで広がり、その中心がインクの帯から離れているときは、枠を帯（と 1 px の余白）に付け替え、
+    # 後の判定も線の上で行う。幅の狭い枠は付け替えない（接点の白丸の間の空白をまたいで線がまとまり、接点を短絡した）。
+    box_across = (line.box.y0, line.box.y1) if line.orientation == "h" else (line.box.x0, line.box.x1)
+    axis, across = line_axis(line), box_across
+    if box_across[1] - box_across[0] > INK_BAND_MIN_BOX_PX:
+        band = ink_band(binary, line)
+        if abs(round(sum(band) / 2) - axis) > INK_BAND_REBOX_PX:
+            axis, across = round(sum(band) / 2), (band[0] - 1, band[1] + 1)
+    support = support_vector_for_span(binary, line.orientation, axis, start, end, half_width=half_width)
     if support.size == 0:
         return []
 
@@ -317,9 +362,9 @@ def split_line_by_ink_support(
             continue
 
         if line.orientation == "h":
-            box = Box(start + run_start, line.box.y0, start + run_end, line.box.y1)
+            box = Box(start + run_start, across[0], start + run_end, across[1])
         else:
-            box = Box(line.box.x0, start + run_start, line.box.x1, start + run_end)
+            box = Box(across[0], start + run_start, across[1], start + run_end)
         split.append(LineSegment(line.orientation, box))
     return split
 
@@ -392,7 +437,11 @@ def merge_candidate_lines(
                     min_gap_coverage=min_gap_coverage,
                     half_width=5 if orientation == "v" else 4,
                 )
-            if same_axis and gap <= max_gap and gap_supported:
+            # 横に並んで重なる平行な線（接点の列の線と、その横の接点の印の縦棒、ER21277）は別の線。枠をインクの帯に付け替えると
+            # 中心が近づき、まとめると列の線が接点の空白を越えて延び、接点を短絡した（DD-0021）。線の横の文字のかけらも
+            # まとめず、短い別の候補として残す（配線の長さに届かず落ちる。範囲の中のかけらをまとめると ER21261 の誤りが 6 本増えた）。
+            side_by_side = gap < -MERGE_SIDE_BY_SIDE_OVERLAP_PX and abs(line_axis(existing_line) - line_axis(line)) > MERGE_SIDE_BY_SIDE_PX
+            if same_axis and gap <= max_gap and gap_supported and not side_by_side:
                 match_index = index
                 break
 
