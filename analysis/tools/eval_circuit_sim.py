@@ -27,6 +27,7 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from eval_editor_import import apply_plan, imported_items  # noqa: E402
+from eval_split import tune_sheets  # noqa: E402
 from holdout_cv import gold_items, load_gold, match  # noqa: E402
 
 from services.ai_candidates import from_structure, plan_import  # noqa: E402
@@ -148,7 +149,7 @@ def main() -> None:
     class_keys, drawings = load_gold(args.gold)
     # 正解の zip ごとに図面 ID が 1 から振られているので、まとめて回路にする前に重ならない ID に振り直す。
     drawings = [{**d, "project": {**d["project"], "id": i}} for i, d in enumerate(drawings, start=1)]
-    tune = {d["sheet"] for d in drawings[0::2]}
+    tune = tune_sheets(d["sheet"] for d in drawings)
     structures = {d["sheet"]: json.loads((args.structures / f"{d['sheet']}.json").read_text(encoding="utf-8")) for d in drawings}
     texts = {d["project"]["id"]: structures[d["sheet"]].get("texts") or [] for d in drawings}
     gold_pages = {d["sheet"]: {**_page_meta(d["project"]), "symbols": d["project"]["symbols"],

@@ -1,0 +1,1337 @@
+{
+ "note": "正解付けする図面の候補（DD-0026）。reserved_for_evaluation は評価専用（学習に使わない）。order は追加する順（rank_gold_candidates.py の出力から画像名を除いたもの）。",
+ "source_pages": "DGX data/unseen_pages（未学習の 100 ページ。図番は data/sheet_gt.json を目で確かめたもの）",
+ "models": "同梱の yolo11s_symbols_best.pt と yolo11s_cards_best.pt（main 26d5b68 時点）",
+ "miss_rates": {
+  "connector": 0.0062,
+  "contact_a": 0.0211,
+  "contact_b": 0.3846,
+  "junction": 0.0236,
+  "other": 0.0172,
+  "power_bus": 0.1667,
+  "relay_coil": 0.0,
+  "solenoid": 0.0
+ },
+ "reserved_for_evaluation": [
+  "ER21026",
+  "ER21031",
+  "ER21036",
+  "ER21046",
+  "ER21051",
+  "ER21058",
+  "ER21067",
+  "ER21072",
+  "ER21078",
+  "ER21087",
+  "ER21093",
+  "ER21101",
+  "ER21107",
+  "ER21116",
+  "ER21125",
+  "ER21146",
+  "ER21157",
+  "ER21166",
+  "ER21181",
+  "ER21191"
+ ],
+ "trained_pages_not_reserved": [
+  "ER21022",
+  "ER21029",
+  "ER21042",
+  "ER21049",
+  "ER21062",
+  "ER21069",
+  "ER21086",
+  "ER21092",
+  "ER21112",
+  "ER21122",
+  "ER21142",
+  "ER21152",
+  "ER21162",
+  "ER21172",
+  "ER21182",
+  "ER21192"
+ ],
+ "order": [
+  {
+   "sheet": "ER21066",
+   "score": 2.759,
+   "uncertain": 1,
+   "uncertain_by_class": {
+    "contact_b": 1
+   },
+   "hard": 1.93,
+   "novelty": 0.1963,
+   "confident_by_class": {
+    "connector": 36,
+    "other": 12,
+    "junction": 10,
+    "contact_a": 5,
+    "relay_coil": 4,
+    "contact_b": 3
+   }
+  },
+  {
+   "sheet": "ER21142",
+   "score": 2.67,
+   "uncertain": 1,
+   "uncertain_by_class": {
+    "relay_coil": 1
+   },
+   "hard": 1.45,
+   "novelty": 0.1956,
+   "confident_by_class": {
+    "junction": 29,
+    "connector": 14,
+    "other": 11,
+    "relay_coil": 6,
+    "contact_a": 5,
+    "contact_b": 1
+   }
+  },
+  {
+   "sheet": "ER21121",
+   "score": 2.531,
+   "uncertain": 3,
+   "uncertain_by_class": {
+    "connector": 2,
+    "other": 1
+   },
+   "hard": 0.84,
+   "novelty": 0.2024,
+   "confident_by_class": {
+    "junction": 10,
+    "other": 9,
+    "connector": 8,
+    "contact_a": 3,
+    "relay_coil": 2,
+    "power_bus": 2
+   }
+  },
+  {
+   "sheet": "ER21056",
+   "score": 2.53,
+   "uncertain": 1,
+   "uncertain_by_class": {
+    "other": 1
+   },
+   "hard": 0.98,
+   "novelty": 0.2,
+   "confident_by_class": {
+    "other": 8,
+    "connector": 6,
+    "junction": 6,
+    "power_bus": 4
+   }
+  },
+  {
+   "sheet": "ER21156",
+   "score": 2.404,
+   "uncertain": 1,
+   "uncertain_by_class": {
+    "connector": 1
+   },
+   "hard": 1.15,
+   "novelty": 0.1539,
+   "confident_by_class": {
+    "connector": 36,
+    "junction": 10,
+    "other": 9,
+    "contact_a": 7,
+    "relay_coil": 4,
+    "contact_b": 1
+   }
+  },
+  {
+   "sheet": "ER21201",
+   "score": 2.401,
+   "uncertain": 2,
+   "uncertain_by_class": {
+    "junction": 1,
+    "other": 1
+   },
+   "hard": 0.85,
+   "novelty": 0.1726,
+   "confident_by_class": {
+    "connector": 12,
+    "junction": 10,
+    "other": 8,
+    "contact_a": 3,
+    "power_bus": 2,
+    "relay_coil": 1
+   }
+  },
+  {
+   "sheet": "ER21172",
+   "score": 2.347,
+   "uncertain": 1,
+   "uncertain_by_class": {
+    "junction": 1
+   },
+   "hard": 0.84,
+   "novelty": 0.1814,
+   "confident_by_class": {
+    "junction": 10,
+    "other": 7,
+    "connector": 6,
+    "contact_a": 3,
+    "relay_coil": 2,
+    "contact_b": 1
+   }
+  },
+  {
+   "sheet": "ER21034",
+   "score": 2.123,
+   "uncertain": 0,
+   "uncertain_by_class": {},
+   "hard": 1.12,
+   "novelty": 0.1887,
+   "confident_by_class": {
+    "connector": 16,
+    "other": 16,
+    "junction": 12,
+    "contact_a": 6,
+    "relay_coil": 2,
+    "power_bus": 2,
+    "solenoid": 1
+   }
+  },
+  {
+   "sheet": "ER21089",
+   "score": 2.164,
+   "uncertain": 1,
+   "uncertain_by_class": {
+    "contact_a": 1
+   },
+   "hard": 1.4,
+   "novelty": 0.0873,
+   "confident_by_class": {
+    "connector": 20,
+    "other": 11,
+    "junction": 10,
+    "contact_a": 4,
+    "relay_coil": 3,
+    "solenoid": 2,
+    "contact_b": 2
+   }
+  },
+  {
+   "sheet": "ER21186",
+   "score": 2.084,
+   "uncertain": 2,
+   "uncertain_by_class": {
+    "contact_a": 1,
+    "other": 1
+   },
+   "hard": 1.81,
+   "novelty": 0.0209,
+   "confident_by_class": {
+    "connector": 22,
+    "junction": 12,
+    "other": 12,
+    "contact_a": 4,
+    "relay_coil": 3,
+    "solenoid": 2,
+    "contact_b": 2,
+    "power_bus": 2
+   }
+  },
+  {
+   "sheet": "ER21038",
+   "score": 1.988,
+   "uncertain": 2,
+   "uncertain_by_class": {
+    "junction": 1,
+    "other": 1
+   },
+   "hard": 0.7,
+   "novelty": 0.0991,
+   "confident_by_class": {
+    "connector": 10,
+    "other": 7,
+    "junction": 6,
+    "contact_a": 2,
+    "power_bus": 2,
+    "relay_coil": 1
+   }
+  },
+  {
+   "sheet": "ER21028",
+   "score": 1.929,
+   "uncertain": 1,
+   "uncertain_by_class": {
+    "junction": 1
+   },
+   "hard": 0.53,
+   "novelty": 0.1469,
+   "confident_by_class": {
+    "contact_a": 8,
+    "connector": 8,
+    "junction": 8,
+    "other": 7,
+    "relay_coil": 2
+   }
+  },
+  {
+   "sheet": "ER21022",
+   "score": 1.937,
+   "uncertain": 0,
+   "uncertain_by_class": {},
+   "hard": 1.46,
+   "novelty": 0.0822,
+   "confident_by_class": {
+    "junction": 28,
+    "connector": 14,
+    "other": 13,
+    "relay_coil": 8,
+    "contact_a": 5,
+    "contact_b": 1
+   }
+  },
+  {
+   "sheet": "ER21126",
+   "score": 1.928,
+   "uncertain": 2,
+   "uncertain_by_class": {
+    "contact_a": 2
+   },
+   "hard": 1.45,
+   "novelty": 0.0126,
+   "confident_by_class": {
+    "connector": 22,
+    "other": 13,
+    "junction": 12,
+    "contact_a": 4,
+    "relay_coil": 3,
+    "solenoid": 2,
+    "power_bus": 2,
+    "contact_b": 1
+   }
+  },
+  {
+   "sheet": "ER21109",
+   "score": 1.899,
+   "uncertain": 1,
+   "uncertain_by_class": {
+    "other": 1
+   },
+   "hard": 0.44,
+   "novelty": 0.321,
+   "confident_by_class": {
+    "other": 3,
+    "connector": 2,
+    "junction": 2,
+    "power_bus": 2
+   }
+  },
+  {
+   "sheet": "ER21062",
+   "score": 1.882,
+   "uncertain": 0,
+   "uncertain_by_class": {},
+   "hard": 0.92,
+   "novelty": 0.0954,
+   "confident_by_class": {
+    "junction": 14,
+    "connector": 6,
+    "other": 6,
+    "relay_coil": 4,
+    "contact_a": 3,
+    "contact_b": 1
+   }
+  },
+  {
+   "sheet": "ER21029",
+   "score": 1.92,
+   "uncertain": 0,
+   "uncertain_by_class": {},
+   "hard": 1.4,
+   "novelty": 0.0738,
+   "confident_by_class": {
+    "connector": 20,
+    "other": 11,
+    "junction": 10,
+    "contact_a": 4,
+    "relay_coil": 3,
+    "solenoid": 2,
+    "contact_b": 2
+   }
+  },
+  {
+   "sheet": "ER21054",
+   "score": 1.89,
+   "uncertain": 0,
+   "uncertain_by_class": {},
+   "hard": 1.12,
+   "novelty": 0.0835,
+   "confident_by_class": {
+    "connector": 16,
+    "other": 16,
+    "junction": 12,
+    "contact_a": 6,
+    "relay_coil": 2,
+    "power_bus": 2,
+    "solenoid": 1
+   }
+  },
+  {
+   "sheet": "ER21102",
+   "score": 1.829,
+   "uncertain": 0,
+   "uncertain_by_class": {},
+   "hard": 0.82,
+   "novelty": 0.1407,
+   "confident_by_class": {
+    "junction": 10,
+    "connector": 6,
+    "other": 6,
+    "contact_a": 3,
+    "relay_coil": 2,
+    "contact_b": 1
+   }
+  },
+  {
+   "sheet": "ER21111",
+   "score": 1.835,
+   "uncertain": 1,
+   "uncertain_by_class": {
+    "junction": 1
+   },
+   "hard": 0.86,
+   "novelty": 0.0317,
+   "confident_by_class": {
+    "junction": 10,
+    "other": 10,
+    "connector": 9,
+    "contact_a": 3,
+    "relay_coil": 2,
+    "power_bus": 2
+   }
+  },
+  {
+   "sheet": "ER21021",
+   "score": 1.804,
+   "uncertain": 0,
+   "uncertain_by_class": {},
+   "hard": 0.71,
+   "novelty": 0.1485,
+   "confident_by_class": {
+    "junction": 16,
+    "other": 11,
+    "connector": 10,
+    "relay_coil": 6,
+    "contact_a": 4
+   }
+  },
+  {
+   "sheet": "ER21162",
+   "score": 1.791,
+   "uncertain": 0,
+   "uncertain_by_class": {},
+   "hard": 0.82,
+   "novelty": 0.0933,
+   "confident_by_class": {
+    "junction": 10,
+    "connector": 6,
+    "other": 6,
+    "contact_a": 3,
+    "relay_coil": 2,
+    "contact_b": 1
+   }
+  },
+  {
+   "sheet": "ER21027",
+   "score": 1.788,
+   "uncertain": 0,
+   "uncertain_by_class": {},
+   "hard": 0.7,
+   "novelty": 0.1601,
+   "confident_by_class": {
+    "connector": 14,
+    "junction": 14,
+    "other": 8,
+    "contact_a": 7
+   }
+  },
+  {
+   "sheet": "ER21047",
+   "score": 1.769,
+   "uncertain": 0,
+   "uncertain_by_class": {},
+   "hard": 0.7,
+   "novelty": 0.1063,
+   "confident_by_class": {
+    "connector": 14,
+    "junction": 14,
+    "other": 8,
+    "contact_a": 7
+   }
+  },
+  {
+   "sheet": "ER21081",
+   "score": 1.78,
+   "uncertain": 1,
+   "uncertain_by_class": {
+    "other": 1
+   },
+   "hard": 0.47,
+   "novelty": 0.0696,
+   "confident_by_class": {
+    "junction": 12,
+    "connector": 6,
+    "other": 6,
+    "relay_coil": 4,
+    "contact_a": 2
+   }
+  },
+  {
+   "sheet": "ER21187",
+   "score": 1.822,
+   "uncertain": 0,
+   "uncertain_by_class": {},
+   "hard": 0.9,
+   "novelty": 0.0561,
+   "confident_by_class": {
+    "connector": 12,
+    "junction": 12,
+    "contact_a": 6,
+    "other": 5,
+    "power_bus": 2
+   }
+  },
+  {
+   "sheet": "ER21032",
+   "score": 1.82,
+   "uncertain": 0,
+   "uncertain_by_class": {},
+   "hard": 1.7,
+   "novelty": 0.0289,
+   "confident_by_class": {
+    "connector": 20,
+    "junction": 10,
+    "other": 9,
+    "contact_a": 4,
+    "relay_coil": 3,
+    "solenoid": 2,
+    "contact_b": 2,
+    "power_bus": 2
+   }
+  },
+  {
+   "sheet": "ER21159",
+   "score": 1.806,
+   "uncertain": 0,
+   "uncertain_by_class": {},
+   "hard": 1.0,
+   "novelty": 0.0408,
+   "confident_by_class": {
+    "other": 9,
+    "connector": 6,
+    "junction": 6,
+    "power_bus": 4
+   }
+  },
+  {
+   "sheet": "ER21086",
+   "score": 1.774,
+   "uncertain": 0,
+   "uncertain_by_class": {},
+   "hard": 1.54,
+   "novelty": 0.0285,
+   "confident_by_class": {
+    "connector": 35,
+    "other": 12,
+    "junction": 10,
+    "contact_a": 5,
+    "relay_coil": 4,
+    "contact_b": 2
+   }
+  },
+  {
+   "sheet": "ER21052",
+   "score": 1.768,
+   "uncertain": 0,
+   "uncertain_by_class": {},
+   "hard": 1.7,
+   "novelty": 0.0268,
+   "confident_by_class": {
+    "connector": 20,
+    "junction": 10,
+    "other": 9,
+    "contact_a": 4,
+    "relay_coil": 3,
+    "contact_b": 2,
+    "solenoid": 2,
+    "power_bus": 2
+   }
+  },
+  {
+   "sheet": "ER21069",
+   "score": 1.748,
+   "uncertain": 1,
+   "uncertain_by_class": {
+    "contact_a": 1
+   },
+   "hard": 1.4,
+   "novelty": 0.006,
+   "confident_by_class": {
+    "connector": 20,
+    "other": 11,
+    "junction": 10,
+    "contact_a": 4,
+    "relay_coil": 3,
+    "solenoid": 2,
+    "contact_b": 2
+   }
+  },
+  {
+   "sheet": "ER21096",
+   "score": 1.728,
+   "uncertain": 1,
+   "uncertain_by_class": {
+    "other": 1
+   },
+   "hard": 0.98,
+   "novelty": 0.0127,
+   "confident_by_class": {
+    "other": 8,
+    "connector": 6,
+    "junction": 6,
+    "power_bus": 4
+   }
+  },
+  {
+   "sheet": "ER21076",
+   "score": 1.625,
+   "uncertain": 1,
+   "uncertain_by_class": {
+    "other": 1
+   },
+   "hard": 0.98,
+   "novelty": 0.008,
+   "confident_by_class": {
+    "other": 8,
+    "connector": 6,
+    "junction": 6,
+    "power_bus": 4
+   }
+  },
+  {
+   "sheet": "ER21049",
+   "score": 1.601,
+   "uncertain": 0,
+   "uncertain_by_class": {},
+   "hard": 1.4,
+   "novelty": 0.0236,
+   "confident_by_class": {
+    "connector": 20,
+    "other": 11,
+    "junction": 10,
+    "contact_a": 4,
+    "relay_coil": 3,
+    "solenoid": 2,
+    "contact_b": 2
+   }
+  },
+  {
+   "sheet": "ER21074",
+   "score": 1.565,
+   "uncertain": 0,
+   "uncertain_by_class": {},
+   "hard": 1.12,
+   "novelty": 0.0276,
+   "confident_by_class": {
+    "connector": 16,
+    "other": 16,
+    "junction": 12,
+    "contact_a": 6,
+    "relay_coil": 2,
+    "power_bus": 2,
+    "solenoid": 1
+   }
+  },
+  {
+   "sheet": "ER21192",
+   "score": 1.549,
+   "uncertain": 0,
+   "uncertain_by_class": {},
+   "hard": 0.82,
+   "novelty": 0.044,
+   "confident_by_class": {
+    "junction": 9,
+    "other": 7,
+    "connector": 6,
+    "contact_a": 3,
+    "contact_b": 1,
+    "relay_coil": 1
+   }
+  },
+  {
+   "sheet": "ER21071",
+   "score": 1.485,
+   "uncertain": 0,
+   "uncertain_by_class": {},
+   "hard": 0.53,
+   "novelty": 0.0731,
+   "confident_by_class": {
+    "contact_a": 8,
+    "connector": 8,
+    "junction": 8,
+    "other": 7,
+    "relay_coil": 2
+   }
+  },
+  {
+   "sheet": "ER21030",
+   "score": 1.574,
+   "uncertain": 0,
+   "uncertain_by_class": {},
+   "hard": 0.6,
+   "novelty": 0.0483,
+   "confident_by_class": {
+    "connector": 12,
+    "junction": 12,
+    "other": 7,
+    "contact_a": 6
+   }
+  },
+  {
+   "sheet": "ER21098",
+   "score": 1.554,
+   "uncertain": 0,
+   "uncertain_by_class": {},
+   "hard": 0.7,
+   "novelty": 0.0364,
+   "confident_by_class": {
+    "connector": 10,
+    "other": 7,
+    "junction": 6,
+    "contact_a": 2,
+    "power_bus": 2,
+    "relay_coil": 1
+   }
+  },
+  {
+   "sheet": "ER21050",
+   "score": 1.541,
+   "uncertain": 0,
+   "uncertain_by_class": {},
+   "hard": 0.6,
+   "novelty": 0.0405,
+   "confident_by_class": {
+    "connector": 12,
+    "junction": 12,
+    "other": 7,
+    "contact_a": 6
+   }
+  },
+  {
+   "sheet": "ER21127",
+   "score": 1.564,
+   "uncertain": 0,
+   "uncertain_by_class": {},
+   "hard": 0.9,
+   "novelty": 0.0295,
+   "confident_by_class": {
+    "connector": 12,
+    "junction": 12,
+    "contact_a": 6,
+    "other": 5,
+    "power_bus": 2
+   }
+  },
+  {
+   "sheet": "ER21196",
+   "score": 1.557,
+   "uncertain": 0,
+   "uncertain_by_class": {},
+   "hard": 1.34,
+   "novelty": 0.0181,
+   "confident_by_class": {
+    "connector": 16,
+    "junction": 12,
+    "other": 8,
+    "contact_a": 5,
+    "relay_coil": 2,
+    "power_bus": 2,
+    "contact_b": 1
+   }
+  },
+  {
+   "sheet": "ER21167",
+   "score": 1.512,
+   "uncertain": 0,
+   "uncertain_by_class": {},
+   "hard": 0.9,
+   "novelty": 0.0238,
+   "confident_by_class": {
+    "connector": 12,
+    "junction": 12,
+    "contact_a": 6,
+    "other": 5,
+    "power_bus": 2
+   }
+  },
+  {
+   "sheet": "ER21106",
+   "score": 1.437,
+   "uncertain": 0,
+   "uncertain_by_class": {},
+   "hard": 0.45,
+   "novelty": 0.2171,
+   "confident_by_class": {
+    "connector": 24,
+    "junction": 8,
+    "relay_coil": 4,
+    "other": 4,
+    "contact_a": 2
+   }
+  },
+  {
+   "sheet": "ER21105",
+   "score": 1.458,
+   "uncertain": 0,
+   "uncertain_by_class": {},
+   "hard": 0.53,
+   "novelty": 0.0579,
+   "confident_by_class": {
+    "connector": 8,
+    "contact_a": 8,
+    "junction": 8,
+    "other": 7,
+    "relay_coil": 2
+   }
+  },
+  {
+   "sheet": "ER21119",
+   "score": 1.456,
+   "uncertain": 0,
+   "uncertain_by_class": {},
+   "hard": 0.46,
+   "novelty": 0.1573,
+   "confident_by_class": {
+    "other": 4,
+    "connector": 2,
+    "junction": 2,
+    "power_bus": 2
+   }
+  },
+  {
+   "sheet": "ER21068",
+   "score": 1.51,
+   "uncertain": 0,
+   "uncertain_by_class": {},
+   "hard": 0.53,
+   "novelty": 0.0452,
+   "confident_by_class": {
+    "contact_a": 8,
+    "connector": 8,
+    "junction": 8,
+    "other": 7,
+    "relay_coil": 2
+   }
+  },
+  {
+   "sheet": "ER21112",
+   "score": 1.724,
+   "uncertain": 0,
+   "uncertain_by_class": {},
+   "hard": 0.82,
+   "novelty": 0.0228,
+   "confident_by_class": {
+    "junction": 10,
+    "connector": 6,
+    "other": 6,
+    "contact_a": 3,
+    "relay_coil": 2,
+    "contact_b": 1
+   }
+  },
+  {
+   "sheet": "ER21141",
+   "score": 1.713,
+   "uncertain": 0,
+   "uncertain_by_class": {},
+   "hard": 0.71,
+   "novelty": 0.029,
+   "confident_by_class": {
+    "junction": 15,
+    "other": 12,
+    "connector": 10,
+    "relay_coil": 4,
+    "contact_a": 4
+   }
+  },
+  {
+   "sheet": "ER21033",
+   "score": 1.641,
+   "uncertain": 0,
+   "uncertain_by_class": {},
+   "hard": 0.6,
+   "novelty": 0.0313,
+   "confident_by_class": {
+    "connector": 12,
+    "junction": 12,
+    "other": 7,
+    "contact_a": 6
+   }
+  },
+  {
+   "sheet": "ER21117",
+   "score": 1.646,
+   "uncertain": 0,
+   "uncertain_by_class": {},
+   "hard": 0.9,
+   "novelty": 0.0165,
+   "confident_by_class": {
+    "connector": 12,
+    "junction": 12,
+    "contact_a": 6,
+    "other": 5,
+    "power_bus": 2
+   }
+  },
+  {
+   "sheet": "ER21070",
+   "score": 1.633,
+   "uncertain": 0,
+   "uncertain_by_class": {},
+   "hard": 0.6,
+   "novelty": 0.0229,
+   "confident_by_class": {
+    "connector": 12,
+    "junction": 12,
+    "other": 7,
+    "contact_a": 6
+   }
+  },
+  {
+   "sheet": "ER21094",
+   "score": 1.646,
+   "uncertain": 0,
+   "uncertain_by_class": {},
+   "hard": 1.12,
+   "novelty": 0.0134,
+   "confident_by_class": {
+    "connector": 16,
+    "other": 16,
+    "junction": 12,
+    "contact_a": 6,
+    "relay_coil": 2,
+    "power_bus": 2,
+    "solenoid": 1
+   }
+  },
+  {
+   "sheet": "ER21053",
+   "score": 1.625,
+   "uncertain": 0,
+   "uncertain_by_class": {},
+   "hard": 0.6,
+   "novelty": 0.0201,
+   "confident_by_class": {
+    "connector": 12,
+    "junction": 12,
+    "other": 7,
+    "contact_a": 6
+   }
+  },
+  {
+   "sheet": "ER21176",
+   "score": 1.615,
+   "uncertain": 0,
+   "uncertain_by_class": {},
+   "hard": 1.34,
+   "novelty": 0.0126,
+   "confident_by_class": {
+    "connector": 16,
+    "junction": 12,
+    "other": 8,
+    "contact_a": 5,
+    "relay_coil": 2,
+    "power_bus": 2,
+    "contact_b": 1
+   }
+  },
+  {
+   "sheet": "ER21092",
+   "score": 1.556,
+   "uncertain": 0,
+   "uncertain_by_class": {},
+   "hard": 1.7,
+   "novelty": 0.0095,
+   "confident_by_class": {
+    "connector": 20,
+    "junction": 10,
+    "other": 9,
+    "contact_a": 4,
+    "relay_coil": 3,
+    "solenoid": 2,
+    "contact_b": 2,
+    "power_bus": 2
+   }
+  },
+  {
+   "sheet": "ER21182",
+   "score": 1.52,
+   "uncertain": 0,
+   "uncertain_by_class": {},
+   "hard": 0.82,
+   "novelty": 0.0154,
+   "confident_by_class": {
+    "junction": 10,
+    "connector": 6,
+    "other": 6,
+    "contact_a": 3,
+    "relay_coil": 2,
+    "contact_b": 1
+   }
+  },
+  {
+   "sheet": "ER21085",
+   "score": 1.419,
+   "uncertain": 0,
+   "uncertain_by_class": {},
+   "hard": 0.53,
+   "novelty": 0.0186,
+   "confident_by_class": {
+    "connector": 8,
+    "contact_a": 8,
+    "junction": 8,
+    "other": 7,
+    "relay_coil": 2
+   }
+  },
+  {
+   "sheet": "ER21152",
+   "score": 1.53,
+   "uncertain": 0,
+   "uncertain_by_class": {},
+   "hard": 0.82,
+   "novelty": 0.0141,
+   "confident_by_class": {
+    "junction": 10,
+    "connector": 6,
+    "other": 6,
+    "contact_a": 3,
+    "relay_coil": 2,
+    "contact_b": 1
+   }
+  },
+  {
+   "sheet": "ER21082",
+   "score": 1.47,
+   "uncertain": 0,
+   "uncertain_by_class": {},
+   "hard": 0.92,
+   "novelty": 0.0093,
+   "confident_by_class": {
+    "junction": 14,
+    "connector": 6,
+    "other": 6,
+    "relay_coil": 4,
+    "contact_a": 3,
+    "contact_b": 1
+   }
+  },
+  {
+   "sheet": "ER21161",
+   "score": 1.392,
+   "uncertain": 0,
+   "uncertain_by_class": {},
+   "hard": 0.37,
+   "novelty": 0.0941,
+   "confident_by_class": {
+    "junction": 8,
+    "connector": 6,
+    "other": 6,
+    "relay_coil": 2,
+    "contact_a": 2
+   }
+  },
+  {
+   "sheet": "ER21155",
+   "score": 1.435,
+   "uncertain": 0,
+   "uncertain_by_class": {},
+   "hard": 0.53,
+   "novelty": 0.0177,
+   "confident_by_class": {
+    "contact_a": 8,
+    "connector": 8,
+    "junction": 8,
+    "other": 7,
+    "relay_coil": 2
+   }
+  },
+  {
+   "sheet": "ER21090",
+   "score": 1.505,
+   "uncertain": 0,
+   "uncertain_by_class": {},
+   "hard": 0.6,
+   "novelty": 0.0131,
+   "confident_by_class": {
+    "connector": 12,
+    "junction": 12,
+    "other": 7,
+    "contact_a": 6
+   }
+  },
+  {
+   "sheet": "ER21073",
+   "score": 1.491,
+   "uncertain": 0,
+   "uncertain_by_class": {},
+   "hard": 0.6,
+   "novelty": 0.0124,
+   "confident_by_class": {
+    "connector": 12,
+    "junction": 12,
+    "other": 7,
+    "contact_a": 6
+   }
+  },
+  {
+   "sheet": "ER21041",
+   "score": 1.421,
+   "uncertain": 0,
+   "uncertain_by_class": {},
+   "hard": 0.47,
+   "novelty": 0.0193,
+   "confident_by_class": {
+    "junction": 12,
+    "connector": 6,
+    "other": 6,
+    "relay_coil": 4,
+    "contact_a": 2
+   }
+  },
+  {
+   "sheet": "ER21042",
+   "score": 1.427,
+   "uncertain": 0,
+   "uncertain_by_class": {},
+   "hard": 0.92,
+   "novelty": 0.0054,
+   "confident_by_class": {
+    "junction": 14,
+    "connector": 6,
+    "other": 6,
+    "relay_coil": 4,
+    "contact_a": 3,
+    "contact_b": 1
+   }
+  },
+  {
+   "sheet": "ER21171",
+   "score": 1.411,
+   "uncertain": 0,
+   "uncertain_by_class": {},
+   "hard": 0.44,
+   "novelty": 0.069,
+   "confident_by_class": {
+    "junction": 10,
+    "other": 7,
+    "connector": 6,
+    "relay_coil": 2,
+    "contact_a": 2
+   }
+  },
+  {
+   "sheet": "ER21129",
+   "score": 1.456,
+   "uncertain": 0,
+   "uncertain_by_class": {},
+   "hard": 0.46,
+   "novelty": 0.0183,
+   "confident_by_class": {
+    "other": 4,
+    "connector": 2,
+    "junction": 2,
+    "power_bus": 2
+   }
+  },
+  {
+   "sheet": "ER21185",
+   "score": 1.51,
+   "uncertain": 0,
+   "uncertain_by_class": {},
+   "hard": 0.53,
+   "novelty": 0.0108,
+   "confident_by_class": {
+    "contact_a": 8,
+    "connector": 8,
+    "junction": 8,
+    "other": 7,
+    "relay_coil": 2
+   }
+  },
+  {
+   "sheet": "ER21061",
+   "score": 1.487,
+   "uncertain": 0,
+   "uncertain_by_class": {},
+   "hard": 0.47,
+   "novelty": 0.0169,
+   "confident_by_class": {
+    "junction": 12,
+    "connector": 6,
+    "other": 6,
+    "relay_coil": 4,
+    "contact_a": 2
+   }
+  },
+  {
+   "sheet": "ER21048",
+   "score": 1.49,
+   "uncertain": 0,
+   "uncertain_by_class": {},
+   "hard": 0.53,
+   "novelty": 0.0084,
+   "confident_by_class": {
+    "contact_a": 8,
+    "connector": 8,
+    "junction": 8,
+    "other": 7,
+    "relay_coil": 2
+   }
+  },
+  {
+   "sheet": "ER21122",
+   "score": 1.536,
+   "uncertain": 0,
+   "uncertain_by_class": {},
+   "hard": 0.82,
+   "novelty": 0.0051,
+   "confident_by_class": {
+    "junction": 10,
+    "connector": 6,
+    "other": 6,
+    "contact_a": 3,
+    "relay_coil": 2,
+    "contact_b": 1
+   }
+  },
+  {
+   "sheet": "ER21165",
+   "score": 1.458,
+   "uncertain": 0,
+   "uncertain_by_class": {},
+   "hard": 0.53,
+   "novelty": 0.0078,
+   "confident_by_class": {
+    "contact_a": 8,
+    "connector": 8,
+    "junction": 8,
+    "other": 7,
+    "relay_coil": 2
+   }
+  },
+  {
+   "sheet": "ER21025",
+   "score": 1.435,
+   "uncertain": 0,
+   "uncertain_by_class": {},
+   "hard": 0.53,
+   "novelty": 0.0071,
+   "confident_by_class": {
+    "connector": 8,
+    "contact_a": 8,
+    "junction": 8,
+    "other": 7,
+    "relay_coil": 2
+   }
+  },
+  {
+   "sheet": "ER21115",
+   "score": 1.401,
+   "uncertain": 0,
+   "uncertain_by_class": {},
+   "hard": 0.53,
+   "novelty": 0.0048,
+   "confident_by_class": {
+    "connector": 8,
+    "contact_a": 8,
+    "junction": 8,
+    "other": 7,
+    "relay_coil": 2
+   }
+  },
+  {
+   "sheet": "ER21151",
+   "score": 1.392,
+   "uncertain": 0,
+   "uncertain_by_class": {},
+   "hard": 0.37,
+   "novelty": 0.0098,
+   "confident_by_class": {
+    "junction": 8,
+    "connector": 6,
+    "other": 6,
+    "relay_coil": 2,
+    "contact_a": 2
+   }
+  },
+  {
+   "sheet": "ER21088",
+   "score": 1.601,
+   "uncertain": 0,
+   "uncertain_by_class": {},
+   "hard": 0.53,
+   "novelty": 0.0048,
+   "confident_by_class": {
+    "connector": 8,
+    "contact_a": 8,
+    "junction": 8,
+    "other": 7,
+    "relay_coil": 2
+   }
+  },
+  {
+   "sheet": "ER21091",
+   "score": 1.601,
+   "uncertain": 0,
+   "uncertain_by_class": {},
+   "hard": 0.53,
+   "novelty": 0.0045,
+   "confident_by_class": {
+    "contact_a": 8,
+    "connector": 8,
+    "junction": 8,
+    "other": 7,
+    "relay_coil": 2
+   }
+  },
+  {
+   "sheet": "ER21065",
+   "score": 1.601,
+   "uncertain": 0,
+   "uncertain_by_class": {},
+   "hard": 0.53,
+   "novelty": 0.0042,
+   "confident_by_class": {
+    "contact_a": 8,
+    "connector": 8,
+    "junction": 8,
+    "other": 7,
+    "relay_coil": 2
+   }
+  },
+  {
+   "sheet": "ER21045",
+   "score": 0.601,
+   "uncertain": 0,
+   "uncertain_by_class": {},
+   "hard": 0.53,
+   "novelty": 0.003,
+   "confident_by_class": {
+    "connector": 8,
+    "contact_a": 8,
+    "junction": 8,
+    "other": 7,
+    "relay_coil": 2
+   }
+  }
+ ]
+}

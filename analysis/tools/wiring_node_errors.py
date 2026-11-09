@@ -50,6 +50,7 @@ from eval_wiring_cv import (  # noqa: E402
     predicted_nodes,
     structure_predictions,
 )
+from eval_split import tune_sheets  # noqa: E402
 from holdout_cv import gold_items, load_gold, score_symbols  # noqa: E402
 from analysis.wiring.connectivity import build_direct_from_to  # noqa: E402
 
@@ -375,7 +376,8 @@ def main() -> None:
 
     _keys, drawings = load_gold(args.gold)
     sheets = sorted(d["sheet"] for d in drawings)
-    chosen = {"tune": set(sheets[0::2]), "report": set(sheets[1::2]), "all": set(sheets)}[args.split]
+    tune = tune_sheets(sheets)
+    chosen = {"tune": tune, "report": set(sheets) - tune, "all": set(sheets)}[args.split]
     rows = []
     for drawing in drawings:
         if drawing["sheet"] not in chosen:

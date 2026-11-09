@@ -16,6 +16,7 @@ import hashlib
 import io
 import itertools
 import json
+import random
 import re
 import sys
 import time
@@ -102,6 +103,13 @@ def load_gold(paths: list[Path]) -> tuple[list[str], list[dict[str, Any]]]:
 
 def folds_of(drawings: list[dict[str, Any]], k: int) -> list[list[str]]:
     return [[d["sheet"] for d in drawings[i::k]] for i in range(k)]
+
+
+def subsample_train(train_sheets: set[str], n: int | None, seed: int, fold_index: int) -> set[str]:
+    """Keep n training drawings per fold (a learning curve); the same seed and fold always keep the same drawings."""
+    if n is None or n >= len(train_sheets):
+        return train_sheets
+    return set(random.Random(seed * 100 + fold_index).sample(sorted(train_sheets), n))
 
 
 def to_box(cx: float, cy: float, w: float, h: float, width: int, height: int) -> dict[str, float]:
@@ -468,6 +476,8 @@ def main() -> None:
     parser.add_argument("--recipe", type=Path, help="JSON overriding DEFAULT_RECIPE")
     parser.add_argument("--folds", type=int, default=5)
     parser.add_argument("--only-folds", type=int, nargs="*", help="run a subset of folds (debugging)")
+    parser.add_argument("--train-drawings", type=int,
+                        help="train each fold on this many of its training drawings (learning curve; test drawings unchanged)")
     parser.add_argument("--weights", type=Path, help="score one fixed model on every drawing instead of training per fold")
     parser.add_argument("--structure", action="store_true", help="also run wire analysis and score connection pairs")
     parser.add_argument("--extra-labels", type=Path,
@@ -519,6 +529,7 @@ def main() -> None:
             train_sheets = {d["sheet"] for d in drawings} - set(test_sheets)
             if train_sheets & set(test_sheets):
                 raise AssertionError("test drawing leaked into training")
+            train_sheets = subsample_train(train_sheets, args.train_drawings, int(recipe["seed"]), fold_index)
             extra = read_extra(args.extra_labels, f"fold{fold_index}")
             data_yaml = write_fold_dataset(fold_dir / "dataset", drawings, train_sheets, extra)
             fold_recipe = recipe
@@ -550,6 +561,7 @@ def main() -> None:
         "recipe": recipe,
         "recipe_sha": hashlib.sha256(json.dumps(recipe, sort_keys=True).encode()).hexdigest()[:12],
         "folds": folds,
+        "train_drawings": args.train_drawings,
         "mode": "fixed-weights" if args.weights else "cross-validation",
         "fine_tune_from": str(args.fine_tune_from) if args.fine_tune_from else None,
         "errors": errors,

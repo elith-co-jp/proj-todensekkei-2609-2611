@@ -29,6 +29,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from eval_split import tune_sheets  # noqa: E402
 from holdout_cv import gold_items, load_gold  # noqa: E402
 
 from analysis import text_extraction as tx  # noqa: E402
@@ -187,7 +188,7 @@ def main() -> None:
 
     reader = RapidOCR()
     reader.text_rec = RecordingRecognizer(reader.text_rec)
-    tune = {d["sheet"] for d in drawings[0::2]}
+    tune = tune_sheets(d["sheet"] for d in drawings)
     (args.out / "images").mkdir(parents=True, exist_ok=True)
     rows = []
     for d in drawings:
