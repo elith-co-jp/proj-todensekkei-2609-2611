@@ -14,7 +14,8 @@ annotation people entered by hand in the same editor.
 - net_pairs: the same judged connections as electrical nets. Pairs of gold terminals that share a net in
   the import against pairs that share a gold net, so a different route through the same net still counts.
 - wire_nodes: the same question per wire, linear in the number of wires. A node is a set of terminals joined
-  by wires; links between two terminals of one symbol (a contact's two ends) do not join nodes. A gold wire
+  by wires; links between two terminals of one symbol (a contact's two ends, a card's + to -) do not join nodes,
+  a wire inside a panel frame does (DD-0022). A gold wire
   is recalled when the import puts its two terminals in one node; an imported wire is right when gold puts its
   two terminals in one node. Two gold habits are reported apart. Terminals placed on a region-sized box
   (where wires cross the dashed frame of a 2RAXP panel) split one wire into two; the conv recall contracts
@@ -53,6 +54,7 @@ from eval_wiring_cv import gold_terminal_numbers  # noqa: E402
 from holdout_cv import gold_items, is_wire_bend, load_gold, match, prf, score_symbols, to_box  # noqa: E402
 
 from services.ai_candidates import from_structure, plan_import  # noqa: E402
+from services.circuit_model import joins_inside_symbol  # noqa: E402
 from services.coil_wiring import COIL_CLASSES  # noqa: E402
 from services.detection_rules import detection_kind  # noqa: E402
 
@@ -65,11 +67,37 @@ def apply_plan(symbols: list[dict], connections: list[dict], plan: Any) -> tuple
     return merged + plan.symbols, connections + plan.connections
 
 
+def inside_aliases(project: dict[str, Any]) -> dict[str, str]:
+    """Gold terminals of one symbol joined by a wire inside it (a panel frame's bus, a border crossing) are one
+    electrical point: each maps to one representative key. Contact ends and a card's + to - stay apart (DD-0022)."""
+    width, height = float(project["image_width"]), float(project["image_height"])
+    symbols = {s["ref"]: s for s in project["symbols"]}
+    parent: dict[str, str] = {}
+
+    def find(x: str) -> str:
+        while parent.setdefault(x, x) != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    for c in project["connections"]:
+        ref = c["from_symbol_ref"]
+        symbol = symbols.get(ref)
+        if ref != c["to_symbol_ref"] or symbol is None or symbol["class_key"] != "other":
+            continue
+        if joins_inside_symbol(symbol, c.get("from_terminal_ref"), c.get("to_terminal_ref"), width, height):
+            a, b = endpoint_key(ref, c["from_terminal_ref"]), endpoint_key(ref, c["to_terminal_ref"])
+            parent[find(a)] = find(b)
+    return {key: find(key) for key in parent if find(key) != key}
+
+
 def gold_edges(project: dict[str, Any]) -> set[frozenset[str]]:
     """Gold connections as unordered terminal pairs, with wire-bend markers contracted away.
 
-    An end without a terminal on a symbol that has exactly one terminal is that terminal.
+    An end without a terminal on a symbol that has exactly one terminal is that terminal. Terminals joined by a wire
+    inside their symbol are one key (inside_aliases).
     """
+    alias = inside_aliases(project)
     bends = {s["ref"] for s in project["symbols"] if is_wire_bend(s)}
     single = {s["ref"]: s["terminals"][0]["ref"] for s in project["symbols"] if len(s.get("terminals") or []) == 1}
     neighbours: dict[str, set[str]] = {}
@@ -77,7 +105,8 @@ def gold_edges(project: dict[str, Any]) -> set[frozenset[str]]:
     def node(symbol_ref: str, terminal_ref: str | None) -> str:
         if symbol_ref in bends:
             return symbol_ref
-        return endpoint_key(symbol_ref, terminal_ref or single.get(symbol_ref))
+        key = endpoint_key(symbol_ref, terminal_ref or single.get(symbol_ref))
+        return alias.get(key, key)
 
     for c in project["connections"]:
         a, b = node(c["from_symbol_ref"], c.get("from_terminal_ref")), node(c["to_symbol_ref"], c.get("to_terminal_ref"))
@@ -258,6 +287,8 @@ def score_drawing(drawing: dict[str, Any], structure: dict[str, Any], class_keys
     gold_symbols = {s["ref"]: s for s in project["symbols"]}
     position = {t["ref"]: (t["tx"] * width, t["ty"] * height) for s in symbols for t in s["terminals"]}
 
+    alias = inside_aliases(project)
+
     def gold_key(symbol_ref: str, terminal_ref: str | None) -> str | None:
         gold_ref = to_gold.get(symbol_ref)
         if gold_ref is None:
@@ -267,7 +298,8 @@ def score_drawing(drawing: dict[str, Any], structure: dict[str, Any], class_keys
             return gold_ref
         px, py = position[terminal_ref]
         nearest = min(terminals, key=lambda t: (t["tx"] * width - px) ** 2 + (t["ty"] * height - py) ** 2)
-        return endpoint_key(gold_ref, nearest["ref"])
+        key = endpoint_key(gold_ref, nearest["ref"])
+        return alias.get(key, key)
 
     edges = gold_edges(project)
     wired = {parse_member(k)[0] for e in edges for k in e}

@@ -124,3 +124,22 @@ def test_closed_contact_across_the_supply_is_warned_as_a_short():
     circuit = build_circuit([page])
     assert simulate(circuit, {})["warnings"] == []
     assert any("短絡" in w for w in simulate(circuit, {"SC": True})["warnings"])
+
+def _panel_page(second_terminal):
+    """P ─ 盤の枠の端子 1 ─（枠の中の線）─ 端子 2 ─ X コイル ─ N。"""
+    symbols = [
+        _sym("P", "power_bus", terms=1, cy=0.1), _sym("N", "power_bus", terms=1, cy=0.9),
+        {**_sym("F", "other", "2RAXP", terms=0), "terminals": [
+            {"ref": "F-T1", "name": "1", "tx": 0.300, "ty": 0.400}, {"ref": "F-T2", "name": "2", "tx": second_terminal[0], "ty": second_terminal[1]}]},
+        _sym("XC", "relay_coil", "X R100"),
+    ]
+    wires = [_wire(("P", 1), ("F", 1)), _wire(("F", 1), ("F", 2)), _wire(("F", 2), ("XC", 1)), _wire(("XC", 2), ("N", 1))]
+    return {"id": 1, "name": "t", "image_width": 1000, "image_height": 1000, "symbols": symbols, "connections": wires}
+
+
+def test_wire_inside_a_panel_frame_carries_current_but_a_card_input_does_not(engine):
+    """盤の枠の中の母線（横 80 px）は導線でコイルが励磁される。カードの + と -（縦 60 px）は素子で励磁されない（DD-0022）。"""
+    bus = simulate(build_circuit([_panel_page((0.380, 0.400))]), {})
+    assert bus["coils"]["X R100"]["energized"] is True
+    card = simulate(build_circuit([_panel_page((0.300, 0.460))]), {})
+    assert card["coils"]["X R100"]["energized"] is False

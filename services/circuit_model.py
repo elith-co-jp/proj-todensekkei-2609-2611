@@ -40,6 +40,11 @@ SUPPLY = "P"
 # 母線の名前（PER…/NER…）は母線の線のすぐ上に書かれる（150 dpi で 10 px 前後下が線）。
 BUS_BELOW_TEXT = 12
 BUS_TOLERANCE = 12
+# 同じ記号の端子どうしを結ぶ配線（DD-0022）。接点・コイルなどの機器では素子そのもの、カード（2B-2RSAM など）の列の
+# 上の黒丸と下の黒丸（+ と -、約 60 px の縦の線）もカードの入出力の素子で、導線にしない。盤の枠（2RAXP・2RMMP）の中の
+# 線（枠を横切る 30 px 未満の線、母線に沿った横の線）は導線。
+ELEMENT_LINK_MIN_PX = 30.0
+ELEMENT_LINK_ALIGN_PX = 6.0
 
 Key = tuple[int, str, str]  # (図面 ID, 記号 ref, 端子 ref)
 
@@ -108,6 +113,20 @@ def _load_resistance(attributes: dict[str, Any]) -> float:
     return R_LOAD
 
 
+def joins_inside_symbol(symbol: dict[str, Any], from_ref: str | None, to_ref: str | None, width: float, height: float) -> bool:
+    """同じ記号の 2 つの端子を結ぶ配線が導線か（DD-0022）。通り抜けの点は導線、機器（接点・コイルなど）は素子、
+    「その他」（カード・盤の枠）は縦に長い線（カードの + と -）だけ素子で、ほかは導線。"""
+    if symbol["class_key"] in PASS_CLASSES:
+        return True
+    if symbol["class_key"] != "other" or width <= 0 or height <= 0:
+        return False
+    points = {t["ref"]: (t["tx"] * width, t["ty"] * height) for t in symbol.get("terminals") or [] if t.get("tx") is not None}
+    a, b = points.get(from_ref or ""), points.get(to_ref or "")
+    if a is None or b is None:
+        return False
+    return not (abs(a[0] - b[0]) <= ELEMENT_LINK_ALIGN_PX and abs(a[1] - b[1]) >= ELEMENT_LINK_MIN_PX)
+
+
 def build_circuit(pages: list[dict[str, Any]], bus_texts: dict[int, list[dict[str, Any]]] | None = None) -> Circuit:
     """pages は serialize_project の形。bus_texts は図面 ID ごとの構造解析の文字（PER/NER の位置で母線を決める）。"""
     parent: dict[Any, Any] = {}
@@ -154,8 +173,10 @@ def build_circuit(pages: list[dict[str, Any]], bus_texts: dict[int, list[dict[st
                         break
                 ends.append((pid, sym["ref"], tref))
             if len(ends) == 2:
-                # 接点・コイルの両端を結ぶ線は、エディタで素子そのものを表す（人の登録も同じ）。導線にはしない。
-                if ends[0][1] == ends[1][1] and symbols[(pid, ends[0][1])]["class_key"] not in PASS_CLASSES:
+                # 接点・コイルの両端やカードの + と - を結ぶ線は、エディタで素子そのものを表す（人の登録も同じ）。導線にはしない。
+                # 盤の枠の中の線は導線（joins_inside_symbol）。
+                if ends[0][1] == ends[1][1] and not joins_inside_symbol(
+                        symbols[(pid, ends[0][1])], ends[0][2], ends[1][2], page.get("image_width") or 0, page.get("image_height") or 0):
                     continue
                 union(ends[0], ends[1])
                 wires.append({"project_id": pid, "from": ends[0], "to": ends[1]})
