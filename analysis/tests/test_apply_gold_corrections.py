@@ -127,3 +127,27 @@ def test_a_left_out_wire_is_added_once_between_existing_terminals():
     assert again == fixed and [r["status"] for r in results] == ["already"]
     with pytest.raises(CorrectionError, match="terminal not found"):
         apply_corrections(original, [{**wire, "to": "SYM-0009-T2"}])
+
+FIELDS = {
+    "relabel": {"ref", "was", "label"},
+    "add_symbol": {"class_key", "label", "bbox_px"},
+    "rebox": {"ref", "was_bbox_px", "bbox_px"},
+    "two_terminal_contact": {"ref", "bbox_px"},
+    "add_wire": {"from", "to"},
+}
+
+
+def test_every_committed_correction_list_names_a_known_operation_with_its_fields_and_a_reason():
+    import json
+
+    lists = sorted((Path(__file__).resolve().parents[1] / "tools" / "gold_corrections").glob("*.json"))
+    assert lists
+    for path in lists:
+        for item in json.loads(path.read_text(encoding="utf-8")):
+            assert item["op"] in FIELDS, (path.name, item)
+            assert FIELDS[item["op"]] <= item.keys(), (path.name, item)
+            assert item["sheet"] and item["reason"], (path.name, item)
+            for key in ("bbox_px", "was_bbox_px"):
+                if key in item:
+                    x0, y0, x1, y1 = item[key]
+                    assert x0 < x1 and y0 < y1, (path.name, item)
