@@ -36,6 +36,12 @@ SOLID_ALIGN = 3
 # 分岐の黒丸どうしも同じ。黒丸は太い線の上に描かれ、薄い線で結ばれることはない。ずれた黒丸の間の帯は、下部の
 # 交差の束で 11 px おきに並ぶ平行な横線を拾い、別々の配線をつないだ（ER21276・ER21279・ER21280 の 5 本）。
 JUNCTION_ALIGN = SOLID_ALIGN
+# まばらな点線（DD-0023）。スキャンでほとんど消えた上部の母線の行の線は、灰色の点が 5〜30 px おきに残るだけで、
+# 灰色の割合（MIN_GREY_SHARE）にも途切れの長さ（MAX_WHITE_RUN）にも届かない。白い紙では点は 0 個。濃い点（交わる
+# 配線）は数えない。
+DOTTED_MIN_DOTS = 3
+DOTTED_MIN_PER_100PX = 5.0
+DOTTED_MAX_WHITE_RUN = 35
 WIRE_ALONG_ACROSS = 6   # a detected wire within this of the line axis
 WIRE_ALONG_SHARE = 0.5  # covering this much of the gap
 PASS_CLASSES = classes.PASS_THROUGH
@@ -80,6 +86,23 @@ def _faint_line(core: np.ndarray, scale: float) -> bool:
         and float((core <= DARK_MAX).mean()) <= MAX_DARK_SHARE
         and _longest(core > GREY_MAX) <= MAX_WHITE_RUN * scale
     )
+
+
+def _dotted_line(core: np.ndarray, scale: float) -> bool:
+    """薄い点が DOTTED_MIN_PER_100PX 以上の密度で並び、途切れが DOTTED_MAX_WHITE_RUN 以内の点線。"""
+    if core.size == 0 or float((core <= DARK_MAX).mean()) > MAX_DARK_SHARE:
+        return False
+    if _longest(core > GREY_MAX) > DOTTED_MAX_WHITE_RUN * scale:
+        return False
+    inked = core <= GREY_MAX
+    light, start = 0, None
+    for i, on in enumerate([*inked, False]):
+        if on and start is None:
+            start = i
+        elif not on and start is not None:
+            light += int(core[start:i].min() > DARK_MAX)
+            start = None
+    return light >= DOTTED_MIN_DOTS and 100.0 * light / (core.size / scale) >= DOTTED_MIN_PER_100PX
 
 
 def _solid_line(core: np.ndarray, scale: float) -> bool:
@@ -195,7 +218,7 @@ def bridge_faint_wires(payload: dict[str, Any], image: Image.Image) -> list[dict
             both_junctions = _class(symbols[sid]) == _class(symbols[other_sid]) == classes.JUNCTION
             if both_junctions and offset > JUNCTION_ALIGN * scale:
                 continue
-            if not (_faint_line(profile, scale)
+            if not (_faint_line(profile, scale) or _dotted_line(profile, scale)
                     or (aligned and _solid_line(profile, scale) and not _left_out(payload, here, (ox, oy), vertical, scale))):
                 continue
             parent[find(a)] = find(b)

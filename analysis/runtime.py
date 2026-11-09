@@ -20,6 +20,7 @@ from analysis.text_extraction import extract_text_structure
 from analysis.wiring import classes
 from analysis.wiring.assemble import structure_from_detection
 from analysis.wiring.connectivity import build_direct_from_to
+from analysis.wiring.contact_kind import correct_contact_kinds, merge_contact_duplicates
 from analysis.wiring.detect import detect_wiring, make_binary_mask
 from analysis.wiring.dot_roles import annotate_dots
 from analysis.wiring.faint_lines import bridge_faint_wires, bridge_parallel_contacts
@@ -67,10 +68,13 @@ def analyze_detections(
     with Image.open(image_path) as opened:
         page_image = opened.convert("RGB")
     width, height = page_image.size
-    symbols = _symbols_from_detections(detections, width, height)
+    page_binary = make_binary_mask(page_image)
+    # 同じ接点に重なった a 接点と b 接点の枠は、棒の側で 1 つにする（DD-0023）。
+    symbols = merge_contact_duplicates(_symbols_from_detections(detections, width, height), page_binary)
+    # 重ならない接点も、棒の側がはっきりしていれば a・b をそれに合わせる（DD-0023）。
+    contact_kind_fixes = correct_contact_kinds(symbols, page_binary)
 
     # 雲マーク（#41）: 雲マークの線を消した画像で配線を読み、文字は元の画像で読む。記号の枠の中は消さない。
-    page_binary = make_binary_mask(page_image)
     clouds = detect_clouds(page_binary)
     image = erase_clouds(page_image, clouds, [s["bbox"] for s in symbols])
 
@@ -111,6 +115,7 @@ def analyze_detections(
         payload["quality"]["terminal_numbers"] = terminal_number_counts
     if relay_row_counts is not None:
         payload["quality"]["relay_rows_by_position"] = relay_row_counts
+    payload["quality"]["contact_kind_fixes"] = contact_kind_fixes
     _finish(payload, symbols, wired_symbols, text_result, engine, warnings, circle_review, len(faint_wires))
     return payload
 

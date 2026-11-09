@@ -634,6 +634,31 @@ def _lead_column(mask: Any, x0: int, y0: int, x1: int, y1: int, params: PortPara
     return best[len(best) // 2] if best else None
 
 
+def _dotted_column(faint: Any, x0: int, y0: int, x1: int, y1: int, params: PortParams) -> int | None:
+    """接点の枠の左半分で、枠の上と下の外にどちらも params.dotted_min_dots 個以上の点が並ぶ列（まばらな点線、DD-0023）。
+
+    上部の母線の行の接点（ER21261・ER21302 の 63LL など）は、枠の外の線が 5〜30 px おきの点にしか残らず、
+    _faint_column の割合にも、記号の中の引き出し線（_lead_column）にも届かない。
+    """
+    height = faint.shape[0]
+    top = faint[max(0, y0 - params.line_probe_px):max(0, y0 - 2)]
+    bottom = faint[min(height, y1 + 2):min(height, y1 + params.line_probe_px)]
+    if not len(top) or not len(bottom):
+        return None
+    best_score, best = params.dotted_min_dots - 1, []
+    for c in range(x0 + 2, (x0 + x1) // 2 + 1):
+        score = min(_count_runs(top[:, max(0, c - 1):c + 2].any(axis=1)), _count_runs(bottom[:, max(0, c - 1):c + 2].any(axis=1)))
+        if score > best_score:
+            best_score, best = score, [c]
+        elif score == best_score and best and c == best[-1] + 1:
+            best.append(c)
+    return best[len(best) // 2] if best else None
+
+
+def _count_runs(inked: Any) -> int:
+    return int(np.count_nonzero(np.diff(np.concatenate(([0], inked.astype(np.int8)))) == 1))
+
+
 def _run(inked: Any, start: int, step: int) -> int:
     """start から step の向きに続くインクの長さ（1 px の途切れは許す）。"""
     length, i, miss = 0, start, 0
@@ -683,6 +708,8 @@ def line_ports(
     elif faint is not None and symbol.get("class_name") in FAINT_PORT_CLASSES:
         found = _faint_column(faint, x0, y0, x1, y1, params, middle_only=symbol.get("class_name") in classes.COILS)
         lead = _lead_column(mask, x0, y0, x1, y1, params) if found is None and symbol.get("class_name") in classes.CONTACTS else None
+        if found is None and lead is None and symbol.get("class_name") in classes.CONTACTS:
+            found = _dotted_column(faint, x0, y0, x1, y1, params)
         if found is None and lead is None:
             return []
         if lead is not None:

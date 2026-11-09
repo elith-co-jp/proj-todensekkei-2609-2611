@@ -277,6 +277,34 @@ def reading_order(words: list[TextItem], *, column_major: bool) -> list[TextItem
 
 # 接点・コイルの枠には端子番号（1〜2 桁）、端子名（C・NO・NC1・COM）、接点の線を読んだ 1 文字が混じる。
 _TERMINAL_NOISE = re.compile(r"\d{1,2}|.|NO\d?|NC\d?|COM|L\d")
+# コイル・電磁弁は丸の中に器具番号と機器名を 2 行で書き、端子番号は丸の上下の外（枠の上端・下端の近く）に書く。
+# 枠の中心から高さの COIL_NAME_BAND 以内の語は、2 桁の数字（43、30）や 1 文字（F）でも名前の一部（DD-0023）。
+# 端子番号として落としていたので「43 3AM」が「3AM」、「52R F」が「52R」になり、正解のコイルと対応しなかった。
+COIL_NAME_CLASSES = {"relay_coil", "solenoid"}
+COIL_NAME_BAND = 0.25
+
+
+def _name_band(box: Any) -> tuple[float, float, float, float]:
+    x0, y0, x1, y1 = _as_box(box)
+    cx, cy, hw, hh = (x0 + x1) / 2, (y0 + y1) / 2, (x1 - x0) * COIL_NAME_BAND, (y1 - y0) * COIL_NAME_BAND
+    return cx - hw, cy - hh, cx + hw, cy + hh
+
+
+# 接点の名前は棒の右に書き、端子番号（9・5）と線を読んだ 1 文字は白丸の列（枠の左寄り）にある。枠の右半分の英字
+# 1 文字は名前の一部（「10ESD X」の X、DD-0023）。落とすと正解の入力「3F1LU X」と AI の「3FILU」が対応しなかった。
+CONTACT_NAME_CLASSES = {"contact_a", "contact_b"}
+
+
+def _contact_name_letter(token: str, word_box: Box, box: Any) -> bool:
+    x0, _y0, x1, _y1 = _as_box(box)
+    return len(token) == 1 and token.isalpha() and token.isupper() and _center(word_box)[0] > (x0 + x1) / 2
+
+
+def _in_band(word_box: Box, band: tuple[float, float, float, float]) -> bool:
+    x, y = _center(word_box)
+    return band[0] <= x <= band[2] and band[1] <= y <= band[3]
+
+
 _EDGE_PUNCT = "().,:;·・°、。-~!?'\"/|[]{}●"
 
 
@@ -335,10 +363,14 @@ def symbol_label(items: list[TextItem], box: Any, class_name: str, lexicon: Coun
         ref = _REF_PATTERN.search(texts[0].replace(" ", ""))
         if ref:
             return f"{ref.group(1) or ref.group(2)}へ"
-    tokens = [t for t in (_clean_token(t) for t in texts) if t]
     if class_name in TERMINAL_CLASSES:
-        tokens = [t for t in tokens if not _TERMINAL_NOISE.fullmatch(t)]
-    elif class_name == "other":
+        band = _name_band(box) if class_name in COIL_NAME_CLASSES else None
+        tokens = [t for t, w in ((_clean_token(t), w) for t, w in zip(texts, words, strict=True))
+                  if t and (not _TERMINAL_NOISE.fullmatch(t) or (band is not None and _in_band(w["box"], band))
+                            or (class_name in CONTACT_NAME_CLASSES and _contact_name_letter(t, w["box"], box)))]
+    else:
+        tokens = [t for t in (_clean_token(t) for t in texts) if t]
+    if class_name == "other":
         tokens = [t for t in tokens if len(t) > 1]
     if lexicon is not None:
         tokens = [correct_token(t, lexicon) for t in tokens]
