@@ -343,7 +343,41 @@ def default_configs() -> list[dict[str, Any]]:
 DESTINATION_REACH_PX = 12.0
 
 
-def destination_port(symbol: dict[str, Any], wires: list[dict[str, Any]]) -> list[dict[str, Any]]:
+# 検出した配線が札に届かないとき、札の左右の辺を外から横切る灰色の線を探す（DD-0022）。辺の外の
+# DESTINATION_FAINT_OUTSIDE_PX のうち DESTINATION_FAINT_MIN_SHARE 以上が灰色（GREY_MAX 以下）の行で、
+# 札の中へ途切れ（DESTINATION_FAINT_GAP_PX まで）を許してたどった線の終わり（矢印の先）を端子にする。
+DESTINATION_FAINT_OUTSIDE_PX = 30
+DESTINATION_FAINT_MIN_SHARE = 0.8
+DESTINATION_FAINT_GAP_PX = 6
+DESTINATION_FAINT_GREY_MAX = 245
+
+
+def _faint_destination_end(gray: Any, box: dict[str, Any]) -> tuple[float, float] | None:
+    """札の左右の辺を外から横切って中へ入る灰色の横線の、札の中での終わり。無ければ None。"""
+    height, width = gray.shape
+    x0, y0, x1, y1 = (int(round(float(box[k]))) for k in ("x0", "y0", "x1", "y1"))
+    out = DESTINATION_FAINT_OUTSIDE_PX
+    best: tuple[float, int, tuple[float, float]] | None = None
+    for y in range(max(0, y0), min(height, y1 + 1)):
+        row = gray[y] <= DESTINATION_FAINT_GREY_MAX
+        for edge, step in ((x0, 1), (x1, -1)):
+            outside = row[max(0, edge - out):edge] if step == 1 else row[edge + 1:min(width, edge + 1 + out)]
+            if outside.size < out or outside.mean() < DESTINATION_FAINT_MIN_SHARE:
+                continue
+            end, gap, x = edge, 0, edge
+            while (x0 <= x <= x1) and gap <= DESTINATION_FAINT_GAP_PX:
+                if row[x]:
+                    end, gap = x, 0
+                else:
+                    gap += 1
+                x += step
+            score = (float(outside.mean()), abs(end - edge), (float(end), float(y)))
+            if best is None or score[:2] > best[:2]:
+                best = score
+    return best[2] if best else None
+
+
+def destination_port(symbol: dict[str, Any], wires: list[dict[str, Any]], source_image: Image.Image | None = None) -> list[dict[str, Any]]:
     """行き先の札の端子。札の枠（DESTINATION_REACH_PX 広げた範囲）の中で終わる配線の端のうち、枠の中心に最も近いもの。
     テンプレートの位置で端子を置くと、母線の上の 2 点になって札に着く端が分からなかった（ER21275 など 9 枚）。"""
     box = symbol["bbox"]
@@ -355,7 +389,13 @@ def destination_port(symbol: dict[str, Any], wires: list[dict[str, Any]]) -> lis
         if box["x0"] - reach <= p[0] <= box["x1"] + reach and box["y0"] - reach <= p[1] <= box["y1"] + reach
     ]
     if not ends:
-        return []
+        end = _faint_destination_end(np.asarray(source_image.convert("L")), box) if source_image is not None else None
+        if end is None:
+            return []
+        return [{
+            "terminal_ref": f"{symbol['id']}-P01", "terminal_name": "P1", "point": [end[0], end[1]],
+            "source": "destination_faint_line", "wire_orientation": "h",
+        }]
     x, y, wire = min(ends, key=lambda e: (e[0] - cx) ** 2 + (e[1] - cy) ** 2)
     return [{
         "terminal_ref": f"{symbol['id']}-P01", "terminal_name": "P1", "point": [x, y], "source": "destination_wire_end",
@@ -410,7 +450,7 @@ def terminal_points_for_symbol(
 
     if terminal_source in {"inferred", "annotation-or-inferred"} and class_name in inferred_terminal_classes:
         if symbol.get("other_kind") == "destination":
-            return destination_port(symbol, wires)
+            return destination_port(symbol, wires, source_image)
         candidates = infer_ports_for_symbol(symbol, wires, source_image, config=inferred_terminal_config)
         if candidates:
             return [

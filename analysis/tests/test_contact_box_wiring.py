@@ -72,3 +72,14 @@ def test_two_port_contact_takes_ports_on_its_own_line_only():
     ports = infer_ports_for_symbol(symbol, wires, image, config=port_inference_config("template_confident_relaxed_span_ink02"))
     assert ports
     assert {p["wire_id"] for p in ports} == {"own"}
+
+def test_corner_link_with_a_small_mark_on_it_is_still_a_wire():
+    """接点の上から隣の列へ回り込む角の線のすぐ上に小さな印がある（ER21283 の「↑」）。印の塊と重なっても、両端が角で
+    途切れない線は配線（DD-0022）。"""
+    image = contact_box_page()
+    draw = ImageDraw.Draw(image)
+    draw.line((322, 192, 326, 186), fill="black", width=1)
+    draw.line((326, 186, 330, 192), fill="black", width=1)
+    draw.line((326, 186, 326, 199), fill="black", width=1)
+    tops = horizontal_at(wires_of(image), 200)
+    assert [w["reason"] for w in tops] == ["short_corner_link"]

@@ -87,14 +87,17 @@ def build_connection_graph(
         points = sorted(points, key=lambda point: point[0] if wire.orientation == "h" else point[1])
         for start, end in zip(points, points[1:], strict=False):
             length = abs(end[0] - start[0]) + abs(end[1] - start[1])
-            if length < 12:
+            from_id, to_id = nearest_node_id(start), nearest_node_id(end)
+            # 同じノードに着く辺だけ捨てる。長さで捨てると、11 px おきの横線の束を通る縦線が交差と交差の間で切れ、
+            # コネクタと下の分岐の黒丸がつながらなかった（ER21275〜ER21279 の 7 本、DD-0022）。
+            if from_id == to_id:
                 continue
             edges.append(
                 {
                     "id": f"edge_{len(edges) + 1:03d}",
                     "wire_id": wire.id,
-                    "from_node_id": nearest_node_id(start),
-                    "to_node_id": nearest_node_id(end),
+                    "from_node_id": from_id,
+                    "to_node_id": to_id,
                     "length": length,
                 }
             )

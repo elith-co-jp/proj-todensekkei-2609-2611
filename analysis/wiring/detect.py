@@ -52,6 +52,9 @@ INK_BAND_MIN_BOX_PX = 12
 # 並ぶ範囲がこれより長く重なり、中心がこれより離れた平行な線はまとめない（merge_candidate_lines）。
 MERGE_SIDE_BY_SIDE_OVERLAP_PX = 4
 MERGE_SIDE_BY_SIDE_PX = 6
+# 両端が縦の配線の角で、インクが途切れない短い横線（接点の上から隣の列へ回り込む線）が、文字の塊と重なってよい割合。
+# 線のすぐ上の小さな印（ER21283 の「↑」）と 0.69 重なり、角の線を落としていた（DD-0022）。長い母線と同じ値。
+SHORT_CORNER_TEXT_OVERLAP = 0.75
 
 
 def make_binary_mask(image: Image.Image) -> np.ndarray:
@@ -877,8 +880,8 @@ def build_detected_wires(
                 accept, confidence, reason = True, 0.72, "connected_horizontal_wire"
             elif line.length >= 80 and connection_count >= 1 and label_overlap <= 0.12 and text_overlap <= 0.10 and visible_coverage >= 0.45:
                 accept, confidence, reason = True, 0.55, "short_horizontal_branch"
-            elif (line.length >= 40 and label_overlap <= 0.12 and text_overlap <= 0.10 and visible_coverage >= 0.9
-                  and corner_ends(line, merged_v) == 2):
+            elif (line.length >= 40 and label_overlap <= 0.12 and text_overlap <= SHORT_CORNER_TEXT_OVERLAP
+                  and visible_coverage >= 0.9 and corner_ends(line, merged_v) == 2):
                 # The top of a box drawn around a contact, joining the contact line to the return line (ER21282).
                 accept, confidence, reason = True, 0.5, "short_corner_link"
         else:

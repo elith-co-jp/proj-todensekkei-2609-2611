@@ -136,7 +136,8 @@ def bridge_faint_wires(payload: dict[str, Any], image: Image.Image) -> list[dict
     """Add faint-line connections to payload["from_to"] and return them."""
     gray = np.asarray(image.convert("L"))
     scale = max(0.5, image.width / 1755)
-    symbols = {s["id"]: s for s in payload.get("symbols", []) if _class(s) in END_CLASSES}
+    # 行き先の札も線の端になる（札に届く母線が薄く、検出した配線が無い、DD-0022）。
+    symbols = {s["id"]: s for s in payload.get("symbols", []) if _class(s) in END_CLASSES or s.get("other_kind") == "destination"}
     ends = [
         (sid, t, float(t["point"][0]), float(t["point"][1]))
         for sid, s in symbols.items() for t in s.get("terminals") or [] if t.get("point")

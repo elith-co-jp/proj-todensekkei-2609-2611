@@ -35,6 +35,8 @@ class DotRules:
     side_text_px: int = 60
     side_text_half_height_px: int = 14
     side_text_min_ink: float = 0.02
+    # コネクタの枠の中の点のうち、いちばん大きい点のこの割合に満たない点は黒丸にしない。
+    connector_min_size_share: float = 0.7
 
 
 @dataclass
@@ -136,6 +138,11 @@ def _dot_for(symbol: dict[str, Any], dots: list[Dot], rules: DotRules) -> Dot | 
         near = [d for d in dots if abs(d.x - cx) <= rules.junction_search_px and abs(d.y - cy) <= rules.junction_search_px]
     else:
         near = [d for d in dots if box["x0"] - 2 <= d.x <= box["x1"] + 2 and box["y0"] - 2 <= d.y <= box["y1"] + 2 and d.degree >= 1]
+        # コネクタの黒丸は枠の中でいちばん大きい点。番号の文字の点やかすれ（大きさ 5）が枠の中心に近いと、そちらを
+        # 端子にして線から外れた（ER21281 の TB13 10、DD-0022）。
+        if near:
+            largest = max(d.size for d in near)
+            near = [d for d in near if d.size >= rules.connector_min_size_share * largest]
     return min(near, key=lambda d: (d.x - cx) ** 2 + (d.y - cy) ** 2) if near else None
 
 
