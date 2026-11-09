@@ -225,3 +225,24 @@ def test_unreachable_label_llm_returns_no_answer():
 
     read = make_reader("http://127.0.0.1:9", "any-model", timeout=1.0)
     assert read(Image.new("RGB", (40, 40), "white"), box(5, 5, 30, 30)) is None
+
+def test_coil_keeps_a_two_digit_device_number_and_a_one_letter_name_inside_the_circle():
+    """丸の中の器具番号「43」と機器名の「F」は名前の一部。丸の上下の外の端子番号（14・13）は落とす（ER21299・ER21294、DD-0023）。"""
+    items = [
+        item("14", 836, 760, 852, 774),
+        item("43", 852, 783, 870, 797),
+        item("3AM", 846, 797, 877, 811),
+        item("13", 836, 818, 852, 832),
+    ]
+    assert tx.symbol_label(items, box(830, 754, 893, 834), "relay_coil") == "43 3AM"
+    items = [item("14", 281, 750, 303, 768), item("52R", 288, 776, 318, 790), item("F", 297, 791, 307, 805),
+             item("13", 283, 811, 301, 826)]
+    assert tx.symbol_label(items, box(272, 745, 333, 830), "relay_coil") == "52R F"
+
+def test_contact_keeps_a_one_letter_name_right_of_its_bar():
+    """接点の名前「10ESD X」の X は枠の右半分にある。白丸の列の端子番号（9・5）と線の読み違い（I）は落とす（ER21294、DD-0023）。"""
+    items = [
+        item("9", 276, 487, 284, 499), item("I", 296, 493, 300, 510), item("10ESD", 304, 489, 344, 503),
+        item("X", 318, 503, 328, 517), item("5", 276, 505, 284, 517),
+    ]
+    assert tx.symbol_label(items, box(272, 484, 350, 522), "contact_a") == "10ESD X"

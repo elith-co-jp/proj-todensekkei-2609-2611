@@ -40,13 +40,27 @@ def ai_page(drawing: dict[str, Any], structure: dict[str, Any], class_keys: list
     width, height = int(project["image_width"]), int(project["image_height"])
     plan = plan_import(from_structure(structure, class_keys), [], [], width, height)
     symbols, connections = apply_plan([], [], plan)
+    g_sym = [g for g in gold_items(drawing) if g["kind"] == "symbol"]
+    p_sym = [p for p in imported_items(symbols, width, height) if p["kind"] == "symbol"]
+    to_gold = {p_sym[pi]["ref"]: g_sym[gi]["ref"] for gi, pi, _ in match(g_sym, p_sym, class_aware=False)}
     if gold_labels:
-        g_sym = [g for g in gold_items(drawing) if g["kind"] == "symbol"]
-        p_sym = [p for p in imported_items(symbols, width, height) if p["kind"] == "symbol"]
         label = {s["ref"]: s.get("label") for s in project["symbols"]}
-        to_gold = {p_sym[pi]["ref"]: g_sym[gi]["ref"] for gi, pi, _ in match(g_sym, p_sym, class_aware=False)}
         symbols = [{**s, "label": label.get(to_gold.get(s["ref"]), s.get("label"))} for s in symbols]
-    return {**_page_meta(project), "symbols": symbols, "connections": connections}
+    return {**_page_meta(project), "symbols": symbols, "connections": connections, "gold_ref_of": to_gold}
+
+
+def unlabeled_input_names(gold_pages: list[dict], ai_pages: list[dict]) -> dict[str, str]:
+    """正解の「器具番号なし」の入力名 → 同じ接点の AI の入力名（DD-0023）。
+
+    器具番号の無い接点は記号の ref を名前に入れた外部入力になる（services.circuit_model）。ref は正解と AI で違うので、
+    枠の対応（holdout_cv.match）で読み替える。読み替えないと同じ接点の On/Off が AI に伝わらない（ER21261 の 63LL）。
+    """
+    names: dict[str, str] = {}
+    for gold, ai in zip(gold_pages, ai_pages, strict=True):
+        sheet = gold.get("sheet_no") or gold.get("name") or str(gold["id"])
+        for ai_ref, gold_ref in (ai.get("gold_ref_of") or {}).items():
+            names[f"{sheet} {gold_ref}（器具番号なし）"] = f"{sheet} {ai_ref}（器具番号なし）"
+    return names
 
 
 def _page_meta(project: dict[str, Any]) -> dict[str, Any]:
@@ -66,6 +80,9 @@ def scenarios(inputs: list[str], seed: int) -> list[dict[str, bool]]:
 def compare(gold_pages: list[dict], ai_pages: list[dict], texts: dict[int, list], seed: int) -> dict[str, Any]:
     gold, ai = build_circuit(gold_pages, texts), build_circuit(ai_pages, texts)
     ai_inputs = {canonical_device(dev): dev for dev in ai.inputs}
+    for gold_name, ai_name in unlabeled_input_names(gold_pages, ai_pages).items():
+        if ai_name in ai.inputs:
+            ai_inputs.setdefault(canonical_device(gold_name), ai_name)
     dropped = Counter(next(s["class_key"] for p in ai_pages for s in p["symbols"] if p["id"] == d["project_id"] and s["ref"] == d["symbol_ref"])
                       for d in ai.diagnostics if d["kind"] == "terminals_missing")
     counts: Counter = Counter()

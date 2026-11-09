@@ -44,6 +44,8 @@ BUS_TOLERANCE = 12
 # 上の黒丸と下の黒丸（+ と -、約 60 px の縦の線）もカードの入出力の素子で、導線にしない。盤の枠（2RAXP・2RMMP）の中の
 # 線（枠を横切る 30 px 未満の線、母線に沿った横の線）は導線。
 ELEMENT_LINK_MIN_PX = 30.0
+# 端子の無い通り抜けの点に配線が着くときの端子の代わり（記号そのものを 1 つの節点にする）。
+PASS_NODE_TERMINAL = "@node"
 ELEMENT_LINK_ALIGN_PX = 6.0
 
 Key = tuple[int, str, str]  # (図面 ID, 記号 ref, 端子 ref)
@@ -167,6 +169,9 @@ def build_circuit(pages: list[dict[str, Any]], bus_texts: dict[int, list[dict[st
                     terms = sym.get("terminals") or []
                     if len(terms) == 1 or sym["class_key"] in PASS_CLASSES and terms:
                         tref = terms[0]["ref"]
+                    elif sym["class_key"] in PASS_CLASSES:
+                        # 端子の無い分岐点・コネクタは記号そのものが 1 つの節点（ER21297 の正解の黒丸、DD-0023）。
+                        tref = PASS_NODE_TERMINAL
                     else:
                         diagnostics.append({"kind": "wire_without_terminal", "project_id": pid,
                                             "symbol_ref": sym["ref"], "message": "端子を指定していない配線は回路に含めません"})

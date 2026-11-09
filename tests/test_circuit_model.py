@@ -143,3 +143,17 @@ def test_wire_inside_a_panel_frame_carries_current_but_a_card_input_does_not(eng
     assert bus["coils"]["X R100"]["energized"] is True
     card = simulate(build_circuit([_panel_page((0.300, 0.460))]), {})
     assert card["coils"]["X R100"]["energized"] is False
+
+def test_junction_without_terminals_still_joins_its_wires(engine):
+    """端子の無い分岐点に配線を直接付けた登録（ER21297 の正解の黒丸）でも、その点を通って電気が流れる（DD-0023）。"""
+    symbols = [
+        _sym("P", "power_bus", terms=1, cy=0.1), _sym("N", "power_bus", terms=1, cy=0.9),
+        {**_sym("J", "junction", terms=0)}, _sym("XC", "relay_coil", "X R100"),
+    ]
+    wires = [{"from_symbol_ref": "P", "from_terminal_ref": "P-T1", "to_symbol_ref": "J", "to_terminal_ref": None, "kind": "wire"},
+             {"from_symbol_ref": "J", "from_terminal_ref": None, "to_symbol_ref": "XC", "to_terminal_ref": "XC-T1", "kind": "wire"},
+             _wire(("XC", 2), ("N", 1))]
+    page = {"id": 1, "name": "t", "image_width": 1000, "image_height": 1000, "symbols": symbols, "connections": wires}
+    circuit = build_circuit([page])
+    assert not any(d["kind"] == "wire_without_terminal" for d in circuit.diagnostics)
+    assert simulate(circuit, {})["coils"]["X R100"]["energized"] is True
