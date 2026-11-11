@@ -51,6 +51,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from analyze_annotation_graph import endpoint_key, parse_member  # noqa: E402
 from eval_wiring_cv import gold_terminal_numbers  # noqa: E402
+from eval_split import tune_sheets  # noqa: E402
 from holdout_cv import gold_items, is_wire_bend, load_gold, match, prf, score_symbols, to_box  # noqa: E402
 
 from services.ai_candidates import from_structure, plan_import  # noqa: E402
@@ -463,7 +464,7 @@ def main() -> None:
     args = parser.parse_args()
 
     class_keys, drawings = load_gold(args.gold)
-    tune = {d["sheet"] for d in drawings[0::2]}
+    tune = tune_sheets(d["sheet"] for d in drawings)
     rows, errors = [], {}
     for d in drawings:
         path = args.structures / f"{d['sheet']}.json"

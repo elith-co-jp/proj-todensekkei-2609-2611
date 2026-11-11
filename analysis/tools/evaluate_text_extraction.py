@@ -29,6 +29,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from eval_split import tune_sheets  # noqa: E402
 from holdout_cv import gold_items, load_gold, norm_label, prf, score_symbols, to_box  # noqa: E402
 
 from analysis import name_ocr  # noqa: E402
@@ -37,12 +38,12 @@ from analysis import text_extraction as tx  # noqa: E402
 
 
 def split_of(sheets: list[str], split: str) -> set[str]:
-    ordered = sorted(sheets)
+    tune = tune_sheets(sheets)
     if split == "tune":
-        return set(ordered[0::2])
+        return tune
     if split == "report":
-        return set(ordered[1::2])
-    return set(ordered)
+        return set(sheets) - tune
+    return set(sheets)
 
 
 class Ocr:

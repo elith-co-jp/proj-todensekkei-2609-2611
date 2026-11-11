@@ -29,6 +29,7 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from eval_wiring_cv import contact_number_outcomes, file_predictions, oracle_predictions, structure_predictions  # noqa: E402
+from eval_split import tune_sheets  # noqa: E402
 from holdout_cv import gold_items, load_gold, match, prf, score_symbols  # noqa: E402
 
 from analysis.text_extraction import match_key, same_relay_device  # noqa: E402
@@ -83,7 +84,7 @@ def main() -> None:
     from services.structure_service import document_structure
 
     _, drawings = load_gold(args.gold)
-    tune = set(sorted(d["sheet"] for d in drawings)[0::2])
+    tune = tune_sheets(d["sheet"] for d in drawings)
     truths = json.loads(args.contact_gt.read_text(encoding="utf-8"))["contacts"]
     summary: dict[str, Any] = {}
     for condition in ("oracle", "pred"):

@@ -37,6 +37,7 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from analyze_annotation_graph import endpoint_key  # noqa: E402
+from eval_split import tune_sheets  # noqa: E402
 from holdout_cv import gold_items, gold_pairs, load_gold, predicted_pairs, prf, run_structure, score_symbols, to_box  # noqa: E402
 
 NODE_CLASSES = {"connector", "junction", "terminal", "power_bus"}
@@ -428,7 +429,7 @@ def main() -> None:
 
     _keys, drawings = load_gold(args.gold)
     # The split comes from all gold sheets so a --sheets subset keeps each sheet's tune/report side.
-    tune = set(sorted(d["sheet"] for d in drawings)[0::2])
+    tune = tune_sheets(d["sheet"] for d in drawings)
     if args.sheets:
         drawings = [d for d in drawings if d["sheet"] in set(args.sheets)]
     sheets = [d["sheet"] for d in drawings]
