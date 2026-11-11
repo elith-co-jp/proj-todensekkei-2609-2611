@@ -130,6 +130,60 @@ def test_dot_roles_follow_the_ink():
     assert roles["t_join_again"]["suppressed"] and roles["t_join_again"]["duplicate_of"] == "t_join"
     assert roles["terminal"]["role"] == "terminal"
 
+
+def test_low_confidence_junctions_require_three_wire_arms_and_do_not_duplicate_a_dot():
+    from PIL import Image, ImageDraw
+
+    from analysis.wiring.dot_roles import select_junction_detections
+
+    image = Image.new("RGB", (240, 120), "white")
+    draw = ImageDraw.Draw(image)
+    for x in (50, 120):
+        draw.line((x - 30, 60, x + 30, 60), fill="black", width=2)
+        draw.line((x, 60, x, 105), fill="black", width=2)
+        draw.ellipse((x - 4, 56, x + 4, 64), fill="black")
+    draw.line((180, 20, 180, 100), fill="black", width=2)
+    draw.ellipse((176, 56, 184, 64), fill="black")
+
+    def detection(identifier, x, confidence, y=60):
+        return {
+            "id": identifier,
+            "class_key": "junction",
+            "cx": x / image.width,
+            "cy": y / image.height,
+            "w": 10 / image.width,
+            "h": 10 / image.height,
+            "confidence": confidence,
+        }
+
+    candidates = [
+        detection("normal", 44, 0.9),
+        detection("moderate-duplicate", 56, 0.39),
+        detection("duplicate", 51, 0.08),
+        detection("supported", 120, 0.08),
+        detection("two-arms", 180, 0.08),
+        detection("moderate", 220, 0.36),
+        detection("below-probe-floor", 120, 0.04),
+    ]
+
+    selected = select_junction_detections(image, candidates, requested_confidence=0.5)
+
+    assert [item["id"] for item in selected] == ["normal", "supported", "moderate"]
+
+    selected = select_junction_detections(
+        image, [detection("unsupported-user-low", 180, 0.2)], requested_confidence=0.1
+    )
+
+    assert [item["id"] for item in selected] == ["unsupported-user-low"]
+
+    selected = select_junction_detections(
+        image,
+        [detection("corner-high", 42, 0.9, 52.5), detection("corner-duplicate", 58, 0.39, 67.5)],
+        requested_confidence=0.5,
+    )
+
+    assert [item["id"] for item in selected] == ["corner-high"]
+
 def test_terminal_numbers_pair_device_names_with_pins_by_row():
     from analysis.wiring.terminal_numbers import connector_numbers
 

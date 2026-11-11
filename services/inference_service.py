@@ -98,10 +98,13 @@ def merge_card_detections(main: list[dict], cards: list[dict]) -> list[dict]:
 
 def _detect(detector, page, conf: float, connector_conf: float | None, class_by_index: dict[int, SymbolClass]) -> list[dict]:
     """1 ページを検出し、アプリの記号の種類に対応付けた検出の一覧。"""
+    from analysis.wiring.dot_roles import JUNCTION_PROBE_CONFIDENCE, select_junction_detections
+
     class_by_key = {c.key: c for c in class_by_index.values()}
     detector_names = getattr(detector, "names", None) or {}
     detections: list[dict] = []
-    for result in detector.predict(page, conf=conf, verbose=False):
+    predict_conf = min(conf, JUNCTION_PROBE_CONFIDENCE) if "junction" in detector_names.values() else conf
+    for result in detector.predict(page, conf=predict_conf, verbose=False):
         boxes = result.boxes
         if boxes is None or boxes.xywhn is None:
             continue
@@ -122,17 +125,27 @@ def _detect(detector, page, conf: float, connector_conf: float | None, class_by_
                     cls = class_by_index.get(int(cls_index))
             if cls is None:
                 continue
+            if cls.key != "junction" and score is not None and score < conf:
+                continue
             if cls.key == "connector" and connector_conf is not None and score is not None and score < connector_conf:
                 continue
             cx, cy, w, h = sanitize_box(cx, cy, w, h)
             if w <= 0 or h <= 0:
                 continue
-            detections.append({
+            detection = {
                 "class_id": cls.id, "class_key": cls.key, "class_label": cls.label,
                 "cx": cx, "cy": cy, "w": w, "h": h,
                 "confidence": float(score) if score is not None else None,
-            })
-    return detections
+            }
+            detections.append(detection)
+    junctions = [item for item in detections if item["class_key"] == "junction"]
+    selected_junction_ids = {
+        id(item) for item in select_junction_detections(page, junctions, requested_confidence=conf)
+    }
+    return [
+        item for item in detections
+        if item["class_key"] != "junction" or id(item) in selected_junction_ids
+    ]
 
 
 def run_inference(

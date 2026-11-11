@@ -425,7 +425,8 @@ def aggregate(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "gold_wires": rec["gold"], "judged_imported": pre["judged"], "not_judged_imported": pre["not_judged"],
         "wrong_imported": pre["judged"] - pre["right"],
         "gold_wires_on_region_terminals": rec["gold_region_terminal"],
-        "conv_recall": rate(rec["conv_hit"], rec["conv_gold"]), "conv_gold_wires": rec["conv_gold"],
+        "conv_recall": rate(rec["conv_hit"], rec["conv_gold"]),
+        "conv_hit": rec["conv_hit"], "conv_gold_wires": rec["conv_gold"],
         "conv_through_unwired": rec["conv_through_unwired"],
     }
 
