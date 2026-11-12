@@ -199,7 +199,18 @@ def bridge_faint_wires(payload: dict[str, Any], image: Image.Image) -> list[dict
             ]
             if not ahead:
                 continue
-            other_sid, other, ox, oy = min(ahead, key=lambda e: (e[2], e[3])[along])
+            other_sid, other, ox, oy = min(ahead, key=lambda e: ((e[2], e[3])[along], e[0], e[1]["ref"]))
+            # A junction can expose several inferred ports around one dot.  For a dot-to-dot bus, keep the
+            # nearest target dot but use its port best aligned to the source dot.  Other symbol classes retain
+            # their old nearest-terminal rule because choosing another port can change device-side semantics.
+            leading_offset = abs((ox, oy)[axis] - here[axis])
+            if term.get("source") == "explicit_node_center" \
+                    and _class(symbols[sid]) == _class(symbols[other_sid]) == classes.JUNCTION \
+                    and leading_offset > JUNCTION_ALIGN * scale:
+                other_sid, other, ox, oy = min(
+                    (e for e in ahead if e[0] == other_sid),
+                    key=lambda e: (abs((e[2], e[3])[axis] - here[axis]), (e[2], e[3])[along], e[1]["ref"]),
+                )
             # The nearest terminal ahead belongs to the same symbol: the line runs through the symbol.
             both_junctions = _class(symbols[sid]) == _class(symbols[other_sid]) == classes.JUNCTION
             gap = (ox, oy)[along] - here[along]

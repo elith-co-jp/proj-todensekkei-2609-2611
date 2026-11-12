@@ -5,8 +5,9 @@ into an empty editor with the product planner (services.ai_candidates), then com
 annotation people entered by hand in the same editor.
 
 - connections: an imported connection maps each end to its matched gold symbol (class-agnostic,
-  holdout_cv.match). An otherwise-unmatched destination tag is also mapped when its unique normalized sheet-reference
-  label is identical and both box centres lie inside the other box; symbol detection itself remains IoU-scored.
+  holdout_cv.match). Otherwise-unmatched unique destination/connector labels and an unambiguous same-class contact
+  whose centres mutually fall inside the boxes recover known annotation-box differences; symbol detection itself
+  remains IoU-scored.
   The endpoint then maps to that symbol's nearest gold terminal. It is a hit when a gold connection joins
   the same two gold terminals, in either direction; each gold connection is hit at most once, so a
   duplicate imported connection counts against precision. Gold wire-bend markers (other/分岐点) are
@@ -41,6 +42,7 @@ from __future__ import annotations
 import argparse
 import itertools
 import json
+import math
 import re
 import sys
 from collections import Counter
@@ -165,26 +167,29 @@ def match_connection_symbols(gold: list[dict[str, Any]], pred: list[dict[str, An
     Box IoU remains the primary rule. A destination tag can vary in height when OCR/detection includes surrounding
     print even though the imported tag has the same sheet reference and wire terminal. For otherwise-unmatched
     ``other`` tags, accept only a unique exact destination label whose two box centres lie inside each other's box.
+    Apply the same fallback to a uniquely named connector whose predicted box is slightly shorter than the annotation.
     This does not change symbol detection scoring and cannot match an empty or generic label.
     """
     pairs = match(gold, pred, class_aware=False)
     used_gold = {gi for gi, _, _ in pairs}
     used_pred = {pi for _, pi, _ in pairs}
-    gold_by_label: dict[str, list[int]] = {}
-    pred_by_label: dict[str, list[int]] = {}
+    gold_by_label: dict[tuple[str, str], list[int]] = {}
+    pred_by_label: dict[tuple[str, str], list[int]] = {}
 
-    def destination_label(item: dict[str, Any]) -> str | None:
+    def stable_label(item: dict[str, Any]) -> tuple[str, str] | None:
         label = norm_label(item.get("label", ""))
-        class_name = canonical_symbol_class_key(str(item.get("class_name", "")), {"other"})
-        if class_name != "other" or _DESTINATION_LABEL.fullmatch(label) is None:
-            return None
-        return label
+        class_name = canonical_symbol_class_key(str(item.get("class_name", "")), {"connector", "other"})
+        if class_name == "other" and _DESTINATION_LABEL.fullmatch(label) is not None:
+            return class_name, label
+        if class_name == "connector" and len(label) >= 3 and any(character.isdigit() for character in label):
+            return class_name, label
+        return None
 
     for index, item in enumerate(gold):
-        if index not in used_gold and (label := destination_label(item)) is not None:
+        if index not in used_gold and (label := stable_label(item)) is not None:
             gold_by_label.setdefault(label, []).append(index)
     for index, item in enumerate(pred):
-        if index not in used_pred and (label := destination_label(item)) is not None:
+        if index not in used_pred and (label := stable_label(item)) is not None:
             pred_by_label.setdefault(label, []).append(index)
 
     def centre(box: dict[str, float]) -> tuple[float, float]:
@@ -200,6 +205,24 @@ def match_connection_symbols(gold: list[dict[str, Any]], pred: list[dict[str, An
         gi, pi = gold_indexes[0], pred_indexes[0]
         if contains(gold[gi]["bbox"], centre(pred[pi]["bbox"])) and contains(pred[pi]["bbox"], centre(gold[gi]["bbox"])):
             pairs.append((gi, pi, 0.0))
+
+    # A detector box can tightly contain the annotated contact yet miss the 0.5 IoU threshold solely because
+    # one box is wider (ER21246).  Recover only an unambiguous same-class pair with mutually contained centres;
+    # overlapping stacks with two possible contacts remain unmatched rather than guessed.
+    used_gold = {gi for gi, _, _ in pairs}
+    used_pred = {pi for _, pi, _ in pairs}
+    spatial = [
+        (gi, pi)
+        for gi, g in enumerate(gold) if gi not in used_gold
+        for pi, p in enumerate(pred) if pi not in used_pred
+        if g["class_name"] == p["class_name"] and g["class_name"] in {"contact_a", "contact_b"}
+        and math.dist(centre(g["bbox"]), centre(p["bbox"])) <= 8.0
+        and contains(g["bbox"], centre(p["bbox"]))
+        and contains(p["bbox"], centre(g["bbox"]))
+    ]
+    gold_candidates = Counter(gi for gi, _ in spatial)
+    pred_candidates = Counter(pi for _, pi in spatial)
+    pairs.extend((gi, pi, 0.0) for gi, pi in spatial if gold_candidates[gi] == pred_candidates[pi] == 1)
     return pairs
 
 
@@ -238,10 +261,48 @@ def _contract(edges: set[frozenset[str]], through: set[str]) -> set[frozenset[st
     return {frozenset((a, b)) for a, ns in neighbours.items() for b in ns if a != b}
 
 
+def wire_miss_detail(
+    edge: frozenset[str], gold_pos: dict[str, tuple[float, float]], gold_symbols: dict[str, dict[str, Any]],
+    matched_gold_refs: set[str], ai_of_gold: dict[str, set[str]],
+    imported_of_gold: dict[str, list[dict[str, Any]]] | None = None,
+) -> dict[str, Any]:
+    """Explain the first failed stage for one unrecalled gold wire without changing scoring."""
+    keys = sorted(edge)
+    endpoints = []
+    for key in keys:
+        symbol_ref, _terminal_ref = parse_member(key)
+        symbol = gold_symbols[symbol_ref]
+        endpoints.append({
+            "gold_key": key,
+            "class_key": symbol["class_key"],
+            "label": symbol.get("label") or "",
+            "symbol_matched": symbol_ref in matched_gold_refs,
+            "terminal_mapped": key in ai_of_gold,
+            "ai_nodes": sorted(ai_of_gold.get(key, set())),
+            "mapped_imported": (imported_of_gold or {}).get(key, []),
+        })
+    if not all(endpoint["symbol_matched"] for endpoint in endpoints):
+        reason = "symbol_unmatched"
+    elif not all(endpoint["terminal_mapped"] for endpoint in endpoints):
+        reason = "terminal_unmapped"
+    else:
+        reason = "different_ai_nodes"
+    a, b = (gold_pos.get(key) for key in keys)
+    geometry = None
+    if a is not None and b is not None:
+        dx, dy = abs(a[0] - b[0]), abs(a[1] - b[1])
+        geometry = {
+            "dx": round(dx, 1), "dy": round(dy, 1), "distance": round(math.hypot(dx, dy), 1),
+            "orientation": "vertical" if dx <= 8 else "horizontal" if dy <= 8 else "diagonal",
+            "alignment_error": round(min(dx, dy), 1),
+        }
+    return {"reason": reason, "endpoints": endpoints, "geometry": geometry}
+
+
 def wire_nodes(
     project: dict[str, Any], edges: set[frozenset[str]], symbols: list[dict], connections: list[dict],
-    key_of: Callable[[str, str | None], str | None], width: int, height: int,
-) -> dict[str, Counter]:
+    key_of: Callable[[str, str | None], str | None], width: int, height: int, matched_gold_refs: set[str],
+) -> dict[str, Any]:
     """Per-wire electrical agreement (module docstring: wire_nodes). key_of maps an imported terminal to a gold key."""
     gold_pos = {endpoint_key(s["ref"], t["ref"]): (t["tx"] * width, t["ty"] * height)
                 for s in project["symbols"] for t in (s.get("terminals") or [])}
@@ -264,13 +325,22 @@ def wire_nodes(
     ai_node = gold_nets({frozenset((endpoint_key(c["from_symbol_ref"], c["from_terminal_ref"]),
                                     endpoint_key(c["to_symbol_ref"], c["to_terminal_ref"]))) for c in ai_wires})
     ai_of_gold: dict[str, set[str]] = {}
+    imported_of_gold: dict[str, list[dict[str, Any]]] = {}
     for s in symbols:
         for t in s["terminals"]:
             key = key_of(s["ref"], t["ref"])
             if key is not None:
                 root = ai_node.get(endpoint_key(s["ref"], t["ref"]))
                 ai_of_gold.setdefault(key, set()).add(root or endpoint_key(s["ref"], t["ref"]))
-    out: dict[str, Any] = {"recall": Counter(), "precision": Counter(), "missed": [], "wrong": []}
+                imported_of_gold.setdefault(key, []).append({
+                    "symbol_ref": s["ref"], "class_key": s["class_key"], "label": s.get("label") or "",
+                    "terminal_ref": t["ref"], "terminal_name": t.get("name") or "",
+                    "point": [round(t["tx"] * width, 1), round(t["ty"] * height, 1)],
+                })
+    out: dict[str, Any] = {
+        "recall": Counter(), "precision": Counter(), "missed": [], "wrong": [], "miss_reasons": Counter(),
+    }
+    gold_symbols = {symbol["ref"]: symbol for symbol in project["symbols"]}
     imported_pos = {endpoint_key(s["ref"], t["ref"]): (t["tx"] * width, t["ty"] * height)
                     for s in symbols for t in s["terminals"]}
 
@@ -306,7 +376,11 @@ def wire_nodes(
         hit = recalled(edge)
         out["recall"].update({"conv_gold": 1, "conv_hit": int(hit)})
         if not hit:
-            out["missed"].append({"gold": [a, b], "points": [gold_pos.get(a), gold_pos.get(b)]})
+            detail = wire_miss_detail(
+                edge, gold_pos, gold_symbols, matched_gold_refs, ai_of_gold, imported_of_gold,
+            )
+            out["miss_reasons"][detail["reason"]] += 1
+            out["missed"].append({"gold": [a, b], "points": [gold_pos.get(a), gold_pos.get(b)], **detail})
     for c in ai_wires:
         a, b = key_of(c["from_symbol_ref"], c["from_terminal_ref"]), key_of(c["to_symbol_ref"], c["to_terminal_ref"])
         if a is None or b is None or not {parse_member(a)[0], parse_member(b)[0]} <= wired:
@@ -397,7 +471,7 @@ def score_drawing(drawing: dict[str, Any], structure: dict[str, Any], class_keys
         else:
             fn["route"] += 1
     gold_net_pairs, import_net_pairs = net_pairs(edges), net_pairs(joined)
-    nodes = wire_nodes(project, edges, symbols, connections, gold_key, width, height)
+    nodes = wire_nodes(project, edges, symbols, connections, gold_key, width, height, set(from_gold))
     names: Counter = Counter()
     by_ref = {s["ref"]: s for s in symbols}
     for g in g_sym:
@@ -425,6 +499,7 @@ def score_drawing(drawing: dict[str, Any], structure: dict[str, Any], class_keys
         "coils": dict(nodes["coils"]),
         "coil_details": nodes["coil_details"],
         "wire_errors": {"missed": nodes["missed"], "wrong": nodes["wrong"]},
+        "wire_miss_reasons": dict(nodes["miss_reasons"]),
         "not_judged": not_judged,
         "fp_reasons": dict(fp),
         "fn_reasons": dict(fn),
@@ -452,12 +527,14 @@ def aggregate(rows: list[dict[str, Any]]) -> dict[str, Any]:
     rec: Counter = Counter()
     pre: Counter = Counter()
     coils: Counter = Counter()
+    wire_miss_reasons: Counter = Counter()
     for r in rows:
         tot.update(r["connections"])
         nets.update(r["net_pairs"])
         rec.update(r["wire_nodes"]["recall"])
         pre.update(r["wire_nodes"]["precision"])
         coils.update(r.get("coils", {}))
+        wire_miss_reasons.update(r.get("wire_miss_reasons", {}))
         det.update(r["detection"])
         names.update(r["names"])
         imported.update(r["imported"])
@@ -487,6 +564,7 @@ def aggregate(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "gold_connections": tot["tp"] + tot["fn"],
         "net_pairs": prf(nets["tp"], nets["fp"], nets["fn"]),
         "wire_nodes": wire_nodes_summary,
+        "wire_miss_reasons": dict(wire_miss_reasons.most_common()),
         "coils": {"gold": coils["gold"], "complete": rate(coils["complete"], coils["gold"]),
                   "shorted": coils["shorted"], "usable": rate(coils["usable"], coils["gold"])},
         "not_judged": sum(r["not_judged"] for r in rows),

@@ -85,6 +85,24 @@ def test_destination_takes_its_port_where_a_faint_bus_ends_inside_it():
     assert {(c["from"]["symbol_id"], c["to"]["symbol_id"]) for c in added} == {("d", "j")}
 
 
+def test_destination_accepts_a_contiguous_18px_faint_entry_but_not_17px():
+    """ER21261: only 18 of the 30 outside pixels survive, but the stroke touches and continues inside the tag."""
+    from PIL import Image, ImageDraw
+
+    from analysis.wiring.ports import destination_port
+
+    tag = {"id": "d", "class_name": "other", "other_kind": "destination",
+           "bbox": {"x0": 119, "y0": 216, "x1": 228, "y1": 261}}
+
+    def page(outside_pixels):
+        image = Image.new("RGB", (1755, 1241), "white")
+        ImageDraw.Draw(image).line((200, 225, 228 + outside_pixels, 225), fill=(230, 230, 230), width=1)
+        return image
+
+    assert destination_port(tag, [], page(18))[0]["point"] == [200.0, 225.0]
+    assert destination_port(tag, [], page(17)) == []
+
+
 def _item(ref, label, box, class_name="other"):
     return {"ref": ref, "class_name": class_name, "label": label, "kind": "symbol", "bbox": box}
 

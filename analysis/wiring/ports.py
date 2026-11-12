@@ -347,7 +347,9 @@ DESTINATION_REACH_PX = 12.0
 # DESTINATION_FAINT_OUTSIDE_PX のうち DESTINATION_FAINT_MIN_SHARE 以上が灰色（GREY_MAX 以下）の行で、
 # 札の中へ途切れ（DESTINATION_FAINT_GAP_PX まで）を許してたどった線の終わり（矢印の先）を端子にする。
 DESTINATION_FAINT_OUTSIDE_PX = 30
-DESTINATION_FAINT_MIN_SHARE = 0.8
+# ER21261 retains only 18 contiguous pixels of a 30 px approach.  Requiring the stroke to touch the
+# tag edge and continue inside it keeps this 0.6 threshold stricter than a detached text fragment.
+DESTINATION_FAINT_MIN_SHARE = 0.6
 DESTINATION_FAINT_GAP_PX = 6
 DESTINATION_FAINT_GREY_MAX = 245
 
