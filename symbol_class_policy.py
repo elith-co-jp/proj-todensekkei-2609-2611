@@ -27,7 +27,8 @@ def canonical_symbol_class_key(class_key: str, known_keys: Iterable[str]) -> str
     if alias is not None:
         return alias
 
-    known = {_normalized_key(key): key for key in known_keys}
+    known_exact = {key: key for key in known_keys}
+    known_normalized = {_normalized_key(key): key for key in known_exact}
     orientation_bases = []
     if normalized.startswith("horizontal_"):
         orientation_bases.append(normalized.removeprefix("horizontal_"))
@@ -37,7 +38,7 @@ def canonical_symbol_class_key(class_key: str, known_keys: Iterable[str]) -> str
         alias = CLASS_KEY_ALIASES.get(base)
         if alias is not None:
             return alias
-        if base in known:
-            return known[base]
+        if base in known_normalized:
+            return known_normalized[base]
 
-    return known.get(normalized, requested)
+    return known_exact.get(requested, requested)

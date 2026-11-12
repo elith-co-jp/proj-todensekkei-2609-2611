@@ -6,6 +6,7 @@ from types import SimpleNamespace
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 
 from holdout_cv import rescore, score_symbols  # noqa: E402
+from symbol_class_policy import canonical_symbol_class_key
 
 
 def _item(class_name: str) -> dict:
@@ -31,6 +32,21 @@ def test_evaluation_scores_horizontal_symbol_as_existing_class():
     assert result["aware"] == {"tp": 1, "fp": 0, "fn": 0}
     assert result["type_correct"] == 1
     assert set(result["per_class"]) == {"contact_a"}
+
+
+def test_general_unknown_class_requires_an_exact_existing_key():
+    known = {"timer_relay"}
+
+    assert canonical_symbol_class_key("timer_relay", known) == "timer_relay"
+    assert canonical_symbol_class_key(" Timer Relay ", known) == "Timer Relay"
+
+
+def test_evaluation_does_not_merge_general_unknown_class_spellings():
+    result = score_symbols([_item("timer_relay")], [_item("Timer Relay")])
+
+    assert result["aware"] == {"tp": 0, "fp": 1, "fn": 1}
+    assert result["type_correct"] == 0
+    assert set(result["per_class"]) == {"timer_relay", "Timer Relay"}
 
 
 def test_rescore_reports_large_other_equipment_as_a_region(tmp_path, capsys):
