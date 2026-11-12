@@ -188,8 +188,9 @@ def classify_circle(evidence: CircleEvidence) -> CircleClassification:
             )
         )
     suggestions = {cue.suggests for cue in cues}
+    sources = {cue.source for cue in cues}
     settled = len(suggestions) == 1 and (
-        len(cues) >= 2 or (cues and cues[0].source in STRONG_CUES)
+        len(sources) >= 2 or bool(sources & STRONG_CUES)
     )
     suggested = next(iter(suggestions)) if len(suggestions) == 1 else evidence.detected_class
     status = ReviewStatus.CONFIRMED if settled else ReviewStatus.REVIEW_REQUIRED

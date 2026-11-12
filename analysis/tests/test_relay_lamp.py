@@ -62,6 +62,19 @@ def test_classifier_confirms_consistent_lamp_evidence():
     assert result.final_class is CircleClass.LAMP
 
 
+def test_repeated_words_from_one_evidence_source_do_not_confirm_the_class():
+    evidence = CircleEvidence(
+        detected_class=CircleClass.RELAY_COIL,
+        has_x_mark=False,
+        interior_text="RL1 GL1",
+    )
+
+    result = classify_circle(evidence)
+
+    assert result.status is ReviewStatus.REVIEW_REQUIRED
+    assert result.final_class is CircleClass.RELAY_COIL
+
+
 def test_interior_ocr_item_is_not_counted_as_second_nearby_cue():
     page = np.zeros((300, 300), np.uint8)
     cv2.circle(page, (150, 150), 22, 255, 2)
