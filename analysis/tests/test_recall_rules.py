@@ -11,7 +11,7 @@ from analysis.wiring.shapes import Box, DetectedWire
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 
-from eval_editor_import import gold_edges, inside_aliases  # noqa: E402
+from eval_editor_import import gold_edges, inside_aliases, match_connection_symbols  # noqa: E402
 
 
 def _wire(wid, orientation, box):
@@ -83,3 +83,29 @@ def test_destination_takes_its_port_where_a_faint_bus_ends_inside_it():
     payload = {"symbols": [tag, dot], "from_to": {"connections": [], "connection_count": 0}}
     added = bridge_faint_wires(payload, image)
     assert {(c["from"]["symbol_id"], c["to"]["symbol_id"]) for c in added} == {("d", "j")}
+
+
+def _item(ref, label, box, class_name="other"):
+    return {"ref": ref, "class_name": class_name, "label": label, "kind": "symbol", "bbox": box}
+
+
+def test_connection_matching_accepts_same_unique_destination_when_box_expands():
+    """ER21280: OCR の周辺文字まで札枠に入り IoU が 0.5 未満でも、同じ行先札の中心位置は変わらない。"""
+    gold = [_item("gold", "ER21291へ", {"x0": 1302, "y0": 200, "x1": 1386, "y1": 240})]
+    pred = [_item("pred", "ER21291へ", {"x0": 1294, "y0": 184, "x1": 1404, "y1": 265})]
+    assert match_connection_symbols(gold, pred) == [(0, 0, 0.0)]
+
+
+def test_connection_matching_does_not_relax_non_destination_or_ambiguous_labels():
+    expanded = {"x0": 90, "y0": 80, "x1": 210, "y1": 220}
+    small = {"x0": 120, "y0": 120, "x1": 180, "y1": 180}
+    assert match_connection_symbols([_item("g", "制御盤", small)], [_item("p", "制御盤", expanded)]) == []
+    assert match_connection_symbols([_item("g", "ER21291へ", small)], [_item("p", "ER21292へ", expanded)]) == []
+    assert match_connection_symbols(
+        [_item("g", "ER21291へ", small, class_name="breaker")],
+        [_item("p", "ER21291へ", expanded)],
+    ) == [(0, 0, 0.0)]
+    assert match_connection_symbols(
+        [_item("g1", "ER21291へ", small), _item("g2", "ER21291へ", small)],
+        [_item("p", "ER21291へ", expanded)],
+    ) == []

@@ -186,6 +186,72 @@ def test_inference_uses_provisional_and_orientation_classes(client, monkeypatch)
     assert {row["class_key"] for row in predictions} == {"other", "contact_a"}
 
 
+def test_detector_uses_a_junction_probe_floor_without_lowering_other_classes(tmp_path):
+    from PIL import Image
+
+    from services.inference_service import _detect
+
+    class Array:
+        def __init__(self, values):
+            self.values = values
+
+        def tolist(self):
+            return self.values
+
+    boxes = SimpleNamespace(
+        xywhn=Array([[0.25, 0.5, 0.05, 0.05], [0.75, 0.5, 0.05, 0.05]]),
+        conf=Array([0.36, 0.2]),
+        cls=Array([0, 1]),
+    )
+    calls = []
+
+    class Detector:
+        names = {0: "junction", 1: "contact_a"}
+
+        def predict(self, page, **kwargs):
+            calls.append(kwargs)
+            return [SimpleNamespace(boxes=boxes)]
+
+    classes = {
+        0: SimpleNamespace(id=10, key="junction", label="分岐"),
+        1: SimpleNamespace(id=11, key="contact_a", label="接点"),
+    }
+
+    detections = _detect(Detector(), Image.new("RGB", (200, 100), "white"), 0.5, None, classes)
+
+    assert calls == [{"conf": 0.05, "verbose": False}]
+    assert [(item["class_key"], item["confidence"]) for item in detections] == [("junction", 0.36)]
+
+    image_path = tmp_path / "page.png"
+    Image.new("RGB", (200, 100), "white").save(image_path)
+    calls.clear()
+
+    detections = _detect(Detector(), str(image_path), 0.5, None, classes)
+
+    assert calls == [{"conf": 0.05, "verbose": False}]
+    assert [(item["class_key"], item["confidence"]) for item in detections] == [("junction", 0.36)]
+
+    calls.clear()
+
+    class HorizontalJunctionDetector(Detector):
+        names = {0: "horizontal_junction", 1: "contact_a"}
+
+    detections = _detect(HorizontalJunctionDetector(), Image.new("RGB", (200, 100), "white"), 0.5, None, classes)
+
+    assert calls == [{"conf": 0.05, "verbose": False}]
+    assert [(item["class_key"], item["confidence"]) for item in detections] == [("junction", 0.36)]
+
+    calls.clear()
+
+    class ContactDetector(Detector):
+        names = {0: "contact_a", 1: "contact_a"}
+
+    detections = _detect(ContactDetector(), Image.new("RGB", (200, 100), "white"), 0.5, None, classes)
+
+    assert calls == [{"conf": 0.5, "verbose": False}]
+    assert detections == []
+
+
 @pytest.mark.parametrize("mode", ["inference", "import"])
 def test_replacing_symbols_invalidates_old_structure(client, monkeypatch, mode):
     project_id = create_project(client)

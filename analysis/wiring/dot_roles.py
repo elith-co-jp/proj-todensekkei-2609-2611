@@ -19,6 +19,9 @@ from analysis.wiring.detect import make_binary_mask
 
 DOT_CLASSES = ("junction", "connector")
 DIRECTIONS = {"up": (0, -1), "down": (0, 1), "left": (-1, 0), "right": (1, 0)}
+JUNCTION_PROBE_CONFIDENCE = 0.05
+JUNCTION_DIRECT_CONFIDENCE = 0.35
+JUNCTION_DEFAULT_REQUEST_CONFIDENCE = 0.5
 # False leaves symbols untouched and the structure payload without dot roles.
 ENABLED = True
 
@@ -144,6 +147,90 @@ def _dot_for(symbol: dict[str, Any], dots: list[Dot], rules: DotRules) -> Dot | 
             largest = max(d.size for d in near)
             near = [d for d in near if d.size >= rules.connector_min_size_share * largest]
     return min(near, key=lambda d: (d.x - cx) ** 2 + (d.y - cy) ** 2) if near else None
+
+
+def select_junction_detections(
+    image: Image.Image | str,
+    candidates: list[dict[str, Any]],
+    requested_confidence: float,
+    rules: DotRules | None = None,
+) -> list[dict[str, Any]]:
+    if not isinstance(image, Image.Image):
+        with Image.open(image) as opened:
+            image = opened.convert("RGB")
+    rules = rules or DotRules()
+    recover_with_ink = requested_confidence <= JUNCTION_DEFAULT_REQUEST_CONFIDENCE
+    direct_floor = min(requested_confidence, JUNCTION_DIRECT_CONFIDENCE) if recover_with_ink else requested_confidence
+    selected: set[int] = set()
+    direct_centers: list[tuple[float, float]] = []
+    direct: list[tuple[int, dict[str, Any]]] = []
+    probes: list[tuple[int, dict[str, Any]]] = []
+
+    ranked = sorted(
+        enumerate(candidates),
+        key=lambda item: item[1].get("confidence") if item[1].get("confidence") is not None else float("inf"),
+        reverse=True,
+    )
+    for index, candidate in ranked:
+        score = candidate.get("confidence")
+        if score is None or score >= direct_floor:
+            direct.append((index, candidate))
+        elif recover_with_ink and score >= JUNCTION_PROBE_CONFIDENCE:
+            probes.append((index, candidate))
+
+    direct_positions = [
+        (candidate["cx"] * image.width, candidate["cy"] * image.height)
+        for _index, candidate in direct
+    ]
+    possible_duplicate = any(
+        abs(x1 - x2) <= 2 * rules.junction_search_px
+        and abs(y1 - y2) <= 2 * rules.junction_search_px
+        for position, (x1, y1) in enumerate(direct_positions)
+        for x2, y2 in direct_positions[position + 1:]
+    )
+    dots = find_dots(make_binary_mask(image), rules) if probes or possible_duplicate else []
+
+    claimed: list[Dot] = []
+    for (index, _candidate), (x, y) in zip(direct, direct_positions, strict=True):
+        near = [
+            dot for dot in dots
+            if abs(dot.x - x) <= rules.junction_search_px and abs(dot.y - y) <= rules.junction_search_px
+        ]
+        dot = min(near, key=lambda item: (item.x - x) ** 2 + (item.y - y) ** 2) if near else None
+        if any(
+            (other_x - x) ** 2 + (other_y - y) ** 2 <= rules.same_dot_px**2
+            for other_x, other_y in direct_centers
+        ):
+            continue
+        if dot and any(
+            abs(dot.x - other.x) <= rules.same_dot_px and abs(dot.y - other.y) <= rules.same_dot_px
+            for other in claimed
+        ):
+            continue
+        selected.add(index)
+        direct_centers.append((x, y))
+        if dot:
+            claimed.append(dot)
+
+    for index, candidate in probes:
+        x, y = candidate["cx"] * image.width, candidate["cy"] * image.height
+        if any((other_x - x) ** 2 + (other_y - y) ** 2 <= rules.same_dot_px**2 for other_x, other_y in direct_centers):
+            continue
+        near = [
+            dot for dot in dots
+            if dot.degree >= 3
+            and abs(dot.x - x) <= rules.junction_search_px
+            and abs(dot.y - y) <= rules.junction_search_px
+        ]
+        if not near:
+            continue
+        dot = min(near, key=lambda item: (item.x - x) ** 2 + (item.y - y) ** 2)
+        if any(abs(dot.x - other.x) <= rules.same_dot_px and abs(dot.y - other.y) <= rules.same_dot_px for other in claimed):
+            continue
+        selected.add(index)
+        claimed.append(dot)
+
+    return [candidate for index, candidate in enumerate(candidates) if index in selected]
 
 
 def assign_dot_roles(binary: np.ndarray, symbols: list[dict[str, Any]], rules: DotRules | None = None) -> dict[str, Any]:

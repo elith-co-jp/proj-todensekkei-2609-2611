@@ -5,7 +5,9 @@ into an empty editor with the product planner (services.ai_candidates), then com
 annotation people entered by hand in the same editor.
 
 - connections: an imported connection maps each end to its matched gold symbol (class-agnostic,
-  holdout_cv.match) and that symbol's nearest gold terminal. It is a hit when a gold connection joins
+  holdout_cv.match). An otherwise-unmatched destination tag is also mapped when its unique normalized sheet-reference
+  label is identical and both box centres lie inside the other box; symbol detection itself remains IoU-scored.
+  The endpoint then maps to that symbol's nearest gold terminal. It is a hit when a gold connection joins
   the same two gold terminals, in either direction; each gold connection is hit at most once, so a
   duplicate imported connection counts against precision. Gold wire-bend markers (other/分岐点) are
   contracted: annotators boxed them only to route wires. Imported connections touching a gold symbol
@@ -39,6 +41,7 @@ from __future__ import annotations
 import argparse
 import itertools
 import json
+import re
 import sys
 from collections import Counter
 from collections.abc import Callable, Iterable
@@ -52,12 +55,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from analyze_annotation_graph import endpoint_key, parse_member  # noqa: E402
 from eval_wiring_cv import gold_terminal_numbers  # noqa: E402
 from eval_split import tune_sheets  # noqa: E402
-from holdout_cv import gold_items, is_wire_bend, load_gold, match, prf, score_symbols, to_box  # noqa: E402
+from holdout_cv import gold_items, is_wire_bend, load_gold, match, norm_label, prf, score_symbols, to_box  # noqa: E402
 
 from services.ai_candidates import from_structure, plan_import  # noqa: E402
 from services.circuit_model import joins_inside_symbol  # noqa: E402
 from services.coil_wiring import COIL_CLASSES  # noqa: E402
 from services.detection_rules import detection_kind  # noqa: E402
+from symbol_class_policy import canonical_symbol_class_key  # noqa: E402
 
 def apply_plan(symbols: list[dict], connections: list[dict], plan: Any) -> tuple[list[dict], list[dict]]:
     """The editor's merge (frontend mergeAiImport): new terminals on existing symbols, then new symbols and connections."""
@@ -150,6 +154,53 @@ def imported_items(symbols: list[dict], width: int, height: int) -> list[dict]:
          "bbox": to_box(s["cx"], s["cy"], s["w"], s["h"], width, height)}
         for s in symbols
     ]
+
+
+_DESTINATION_LABEL = re.compile(r"[A-Z]{1,3}\d{5}(?:-\d{1,2})?へ")
+
+
+def match_connection_symbols(gold: list[dict[str, Any]], pred: list[dict[str, Any]]) -> list[tuple[int, int, float]]:
+    """Match symbols used as connection endpoints.
+
+    Box IoU remains the primary rule. A destination tag can vary in height when OCR/detection includes surrounding
+    print even though the imported tag has the same sheet reference and wire terminal. For otherwise-unmatched
+    ``other`` tags, accept only a unique exact destination label whose two box centres lie inside each other's box.
+    This does not change symbol detection scoring and cannot match an empty or generic label.
+    """
+    pairs = match(gold, pred, class_aware=False)
+    used_gold = {gi for gi, _, _ in pairs}
+    used_pred = {pi for _, pi, _ in pairs}
+    gold_by_label: dict[str, list[int]] = {}
+    pred_by_label: dict[str, list[int]] = {}
+
+    def destination_label(item: dict[str, Any]) -> str | None:
+        label = norm_label(item.get("label", ""))
+        class_name = canonical_symbol_class_key(str(item.get("class_name", "")), {"other"})
+        if class_name != "other" or _DESTINATION_LABEL.fullmatch(label) is None:
+            return None
+        return label
+
+    for index, item in enumerate(gold):
+        if index not in used_gold and (label := destination_label(item)) is not None:
+            gold_by_label.setdefault(label, []).append(index)
+    for index, item in enumerate(pred):
+        if index not in used_pred and (label := destination_label(item)) is not None:
+            pred_by_label.setdefault(label, []).append(index)
+
+    def centre(box: dict[str, float]) -> tuple[float, float]:
+        return (box["x0"] + box["x1"]) / 2, (box["y0"] + box["y1"]) / 2
+
+    def contains(box: dict[str, float], point: tuple[float, float]) -> bool:
+        return box["x0"] <= point[0] <= box["x1"] and box["y0"] <= point[1] <= box["y1"]
+
+    for label in sorted(gold_by_label.keys() & pred_by_label.keys()):
+        gold_indexes, pred_indexes = gold_by_label[label], pred_by_label[label]
+        if len(gold_indexes) != 1 or len(pred_indexes) != 1:
+            continue
+        gi, pi = gold_indexes[0], pred_indexes[0]
+        if contains(gold[gi]["bbox"], centre(pred[pi]["bbox"])) and contains(pred[pi]["bbox"], centre(gold[gi]["bbox"])):
+            pairs.append((gi, pi, 0.0))
+    return pairs
 
 
 def name_pairs(name: str) -> tuple[list[str], list[tuple[str, str]]]:
@@ -284,7 +335,7 @@ def score_drawing(drawing: dict[str, Any], structure: dict[str, Any], class_keys
     detection = score_symbols(gold, pred)
     g_sym = [g for g in gold if g["kind"] == "symbol"]
     p_sym = [p for p in pred if p["kind"] == "symbol"]
-    to_gold = {p_sym[pi]["ref"]: g_sym[gi]["ref"] for gi, pi, _ in match(g_sym, p_sym, class_aware=False)}
+    to_gold = {p_sym[pi]["ref"]: g_sym[gi]["ref"] for gi, pi, _ in match_connection_symbols(g_sym, p_sym)}
     gold_symbols = {s["ref"]: s for s in project["symbols"]}
     position = {t["ref"]: (t["tx"] * width, t["ty"] * height) for s in symbols for t in s["terminals"]}
 
@@ -425,7 +476,8 @@ def aggregate(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "gold_wires": rec["gold"], "judged_imported": pre["judged"], "not_judged_imported": pre["not_judged"],
         "wrong_imported": pre["judged"] - pre["right"],
         "gold_wires_on_region_terminals": rec["gold_region_terminal"],
-        "conv_recall": rate(rec["conv_hit"], rec["conv_gold"]), "conv_gold_wires": rec["conv_gold"],
+        "conv_recall": rate(rec["conv_hit"], rec["conv_gold"]),
+        "conv_hit": rec["conv_hit"], "conv_gold_wires": rec["conv_gold"],
         "conv_through_unwired": rec["conv_through_unwired"],
     }
 
