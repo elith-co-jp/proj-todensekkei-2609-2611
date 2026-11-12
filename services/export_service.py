@@ -48,6 +48,7 @@ from services.annotation_service import (
     store_image_bytes,
 )
 from services.geometry import sanitize_box
+from symbol_class_policy import canonical_symbol_class_key
 
 BUNDLE_FILENAME = "bundle.json"
 CLASSES_FILENAME = "classes.txt"
@@ -334,14 +335,17 @@ def safe_members(zf: zipfile.ZipFile) -> list[zipfile.ZipInfo]:
 
 
 def _restore_classes(db: Session, classes: list[dict]) -> None:
+    known = class_map_by_key(db)
     for c in classes:
         key = str(c.get("key") or "").strip()
         if not key:
             continue
+        key = canonical_symbol_class_key(key, known)
         found = db.query(SymbolClass).filter(SymbolClass.key == key).one_or_none()
         if found:
             continue
-        ensure_class(db, key, c.get("label"), c.get("color") or "#84b0d8")
+        created = ensure_class(db, key, c.get("label"), c.get("color") or "#84b0d8")
+        known[created.key] = created
     db.flush()
 
 
@@ -382,7 +386,7 @@ def _restore_project_from_bundle(db: Session, proj: dict, images: dict[str, byte
     sym_by_ref: dict[str, AnnotationSymbol] = {}
     term_by_ref = {}
     for s in proj.get("symbols", []):
-        key = s.get("class_key") or "other"
+        key = canonical_symbol_class_key(s.get("class_key") or "other", cls_by_key)
         cls = cls_by_key.get(key) or ensure_class(db, key)
         cls_by_key[cls.key] = cls
         cx, cy, w, h = sanitize_box(s.get("cx", 0), s.get("cy", 0), s.get("w", 0), s.get("h", 0))

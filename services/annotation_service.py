@@ -26,6 +26,7 @@ from models import (
 )
 from services.blob_store import store_blob
 from services.geometry import sanitize_box
+from symbol_class_policy import canonical_symbol_class_key
 
 MAX_IMAGE_BYTES = 64 * 1024 * 1024
 THUMBNAIL_MAX_SIDE = 640
@@ -172,9 +173,10 @@ def replace_annotations(db: Session, project: AnnotationProject, payload) -> dic
                 return candidate
 
     for item in payload.symbols:
-        cls = cls_by_key.get(item.class_key)
+        class_key = canonical_symbol_class_key(item.class_key, cls_by_key)
+        cls = cls_by_key.get(class_key)
         if cls is None:
-            cls = ensure_class(db, item.class_key)
+            cls = ensure_class(db, class_key)
             cls_by_key[cls.key] = cls
         ref = (item.ref or "").strip() or next_ref()
         if ref in used_refs:

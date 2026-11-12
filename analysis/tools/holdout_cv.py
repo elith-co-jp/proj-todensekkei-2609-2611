@@ -36,6 +36,7 @@ from analyze_annotation_graph import build_project_graph, parse_member  # noqa: 
 
 from services.detection_rules import detection_kind  # noqa: E402
 from services.rotation_copies import rotate_box, rotate_image, rotated_copy  # noqa: E402
+from symbol_class_policy import canonical_symbol_class_key  # noqa: E402
 
 DEFAULT_RECIPE: dict[str, Any] = {
     "model": "yolo11n.pt",
@@ -183,6 +184,17 @@ def norm_label(text: str) -> str:
 
 
 def score_symbols(gold: list[dict[str, Any]], pred: list[dict[str, Any]]) -> dict[str, Any]:
+    known_keys = set(CLASS_KEYS)
+    known_keys.update(str(item["class_name"]) for item in gold)
+    known_keys.update(str(item["class_name"]) for item in pred)
+    gold = [
+        {**item, "class_name": canonical_symbol_class_key(str(item["class_name"]), known_keys)}
+        for item in gold
+    ]
+    pred = [
+        {**item, "class_name": canonical_symbol_class_key(str(item["class_name"]), known_keys)}
+        for item in pred
+    ]
     g_sym = [g for g in gold if g["kind"] == "symbol"]
     p_sym = [p for p in pred if p["kind"] == "symbol"]
     aware = match(g_sym, p_sym, class_aware=True)
@@ -464,7 +476,8 @@ def rescore(args: argparse.Namespace, drawings: list[dict[str, Any]]) -> None:
         rows.append(row)
     summary = summarize(rows)
     print(json.dumps({"drawings": summary["drawings"], "strict_iou": STRICT_IOU, "symbol_f1": summary["symbol_f1"],
-                      "type_accuracy": summary["type_accuracy"], "per_class": summary["per_class"],
+                      "type_accuracy": summary["type_accuracy"], "region_f1": summary["region_f1"],
+                      "per_class": summary["per_class"],
                       "confusion": summary["confusion"]}, ensure_ascii=False))
 
 
