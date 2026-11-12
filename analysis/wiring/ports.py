@@ -493,7 +493,7 @@ def terminal_points_for_symbol(
 
 # 端子が 2 個に満たないとき、画像の線から 2 端子を決める記号（DD-0009 §8）。短い引き出し線や信頼度の低い縦線は
 # 配線として検出されず、端子が付かないため回路から外れていた。
-LINE_PORT_CLASSES = classes.CONTACTS | classes.COILS
+LINE_PORT_CLASSES = classes.TWO_TERMINAL_DEVICES
 # 細い点線のような薄い灰色の線（ER21256 のコイルの上下、ER21302 の接点の上下）は二値化で消える。
 # 接点・コイルでは灰色の濃さで線を探す（DD-0009 §9、DD-0016）。
 FAINT_PORT_CLASSES = classes.COILS | classes.CONTACTS

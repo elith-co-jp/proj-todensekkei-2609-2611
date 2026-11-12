@@ -64,6 +64,26 @@ def test_already_connected_terminals_are_not_bridged_again(bridge):
     assert bridge(payload, _page(225)) == []
 
 
+def test_visible_direct_line_is_recorded_even_when_an_alternate_path_connects_the_net(bridge):
+    payload = _payload()
+    payload["from_to"]["connections"].extend([
+        {
+            "type": "wire",
+            "from": {"symbol_id": "c", "terminal_ref": "c-P2"},
+            "to": {"symbol_id": "alternate", "terminal_ref": "alternate-P1"},
+        },
+        {
+            "type": "wire",
+            "from": {"symbol_id": "alternate", "terminal_ref": "alternate-P1"},
+            "to": {"symbol_id": "n", "terminal_ref": "n-P1"},
+        },
+    ])
+
+    added = bridge(payload, _page(225))
+
+    assert [(c["from"]["terminal_ref"], c["to"]["terminal_ref"]) for c in added] == [("c-P2", "n-P1")]
+
+
 def test_line_toward_the_contacts_other_terminal_runs_through_it(bridge):
     # The top terminal looks down through its own contact; only the bottom terminal leaves downward.
     payload = _payload()

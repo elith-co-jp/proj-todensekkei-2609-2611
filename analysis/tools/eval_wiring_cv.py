@@ -277,7 +277,21 @@ def structure_predictions(structure: dict[str, Any], pred: list[dict[str, Any]])
     """Detections as the structure payload reports them: suppressed duplicates dropped, structure ids attached."""
     symbols = [p for p in pred if p["kind"] == "symbol"]
     out = [p for p in pred if p["kind"] != "symbol"]
-    for p, s in zip(symbols, structure.get("symbols", []), strict=True):
+    unused = set(range(len(symbols)))
+    for s in structure.get("symbols", []):
+        # run_structure rounds each surviving input box to integer pixels but preserves its confidence.
+        # This exact identity survives candidate suppression and class correction without an ambiguous
+        # greedy IoU assignment between overlapping boxes.
+        candidates = [
+            index for index in unused
+            if all(abs(round(float(symbols[index]["bbox"][key])) - float(s["bbox"][key])) <= 1 for key in ("x0", "y0", "x1", "y1"))
+            and abs(float(symbols[index].get("confidence") or 0) - float(s.get("confidence") or 0)) <= 1e-6
+        ]
+        if len(candidates) != 1:
+            raise ValueError(f"expected one source detection for structure symbol {s['id']}, got {len(candidates)}")
+        index = candidates[0]
+        p = symbols[index]
+        unused.remove(index)
         if (s.get("dot_role") or {}).get("suppressed"):
             continue
         out.append({**p, "label": s.get("label") or "", "structure_id": s["id"], "dot_role": (s.get("dot_role") or {}).get("role")})

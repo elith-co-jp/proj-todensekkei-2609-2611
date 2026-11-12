@@ -40,6 +40,17 @@ def test_coil_without_detected_wires_gets_two_ports_on_its_line():
     assert [p["wire_id_hint"] for p in ports] == ["top", "bottom"]
 
 
+def test_lamp_without_detected_leads_gets_two_ports_on_its_line():
+    """表示灯もコイルと同じ2端子負荷なので、枠まで届く線を上下の端子として回復する。"""
+    mask, wires, lamp = _page()
+    lamp["class_name"] = "lamp"
+
+    ports = line_ports(lamp, mask, wires, [lamp])
+
+    assert [p["point"] for p in ports] == [[100.0, 80.0], [100.0, 120.0]]
+    assert [p["wire_id_hint"] for p in ports] == ["top", "bottom"]
+
+
 def test_no_ports_when_no_line_leaves_the_box():
     mask, wires, coil = _page()
     mask[40:81, 99:102] = False
