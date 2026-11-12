@@ -153,6 +153,45 @@ def test_unknown_class_key_is_auto_registered(client):
     assert detail["symbols"][0]["class_key"] == "timer_relay"
 
 
+@pytest.mark.parametrize("class_key", ["unit", "card", "device", "equipment", "breaker"])
+def test_unagreed_equipment_types_are_saved_as_other(client, class_key):
+    pid = create_project(client)
+    res = client.put(
+        f"/api/projects/{pid}/annotations",
+        json={
+            "symbols": [
+                {"class_key": class_key, "cx": 0.5, "cy": 0.5, "w": 0.1, "h": 0.1}
+            ],
+            "connections": [],
+        },
+    )
+    assert res.status_code == 200, res.text
+    assert client.get(f"/api/projects/{pid}").json()["symbols"][0]["class_key"] == "other"
+    assert class_key not in {row["key"] for row in client.get("/api/classes").json()}
+
+
+def test_horizontal_symbol_uses_its_existing_class(client):
+    pid = create_project(client)
+    res = client.put(
+        f"/api/projects/{pid}/annotations",
+        json={
+            "symbols": [
+                {
+                    "class_key": "horizontal_contact_a",
+                    "cx": 0.5,
+                    "cy": 0.5,
+                    "w": 0.1,
+                    "h": 0.1,
+                }
+            ],
+            "connections": [],
+        },
+    )
+    assert res.status_code == 200, res.text
+    assert client.get(f"/api/projects/{pid}").json()["symbols"][0]["class_key"] == "contact_a"
+    assert "horizontal_contact_a" not in {row["key"] for row in client.get("/api/classes").json()}
+
+
 def test_out_of_range_box_is_clamped(client):
     pid = create_project(client)
     client.put(

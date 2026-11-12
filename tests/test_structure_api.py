@@ -14,7 +14,15 @@ from tests.conftest import SAMPLE_ANNOTATION, create_project
 from tests.test_ml_cycle import _predictions_zip, _upload_model
 
 
-def _fake_detector(monkeypatch, *, empty=False, xywhn=None, confidences=None):
+def _fake_detector(
+    monkeypatch,
+    *,
+    empty=False,
+    xywhn=None,
+    confidences=None,
+    class_indexes=None,
+    names=None,
+):
     import services.inference_service as inference
 
     class Array:
@@ -26,9 +34,14 @@ def _fake_detector(monkeypatch, *, empty=False, xywhn=None, confidences=None):
 
     rows = [] if empty else (xywhn or [[0.2, 0.5, 0.1, 0.1]])
     boxes = SimpleNamespace(
-        xywhn=Array(rows), conf=Array(confidences or [0.9] * len(rows)), cls=Array([0] * len(rows)),
+        xywhn=Array(rows),
+        conf=Array(confidences or [0.9] * len(rows)),
+        cls=Array(class_indexes or [0] * len(rows)),
     )
-    detector = SimpleNamespace(names={0: "connector"}, predict=lambda *a, **k: [SimpleNamespace(boxes=boxes)])
+    detector = SimpleNamespace(
+        names=names or {0: "connector"},
+        predict=lambda *a, **k: [SimpleNamespace(boxes=boxes)],
+    )
     monkeypatch.setattr(inference, "ultralytics_available", lambda: True)
     monkeypatch.setitem(sys.modules, "ultralytics", SimpleNamespace(YOLO=lambda path: detector))
 
@@ -154,6 +167,23 @@ def test_connector_floor_filters_only_low_confidence_connector(client, monkeypat
     assert result.json()["detection_count"] == 1
     predictions = client.get(f"/api/ml/projects/{project_id}/predictions").json()
     assert predictions["count"] == 1
+
+
+def test_inference_uses_provisional_and_orientation_classes(client, monkeypatch):
+    project_id = create_project(client)
+    _upload_model(client)
+    _fake_detector(
+        monkeypatch,
+        xywhn=[[0.2, 0.5, 0.1, 0.1], [0.8, 0.5, 0.1, 0.1]],
+        class_indexes=[0, 1],
+        names={0: "breaker", 1: "horizontal_contact_a"},
+    )
+
+    result = client.post("/api/ml/inference/run", json={"project_ids": [project_id]})
+
+    assert result.status_code == 200, result.text
+    predictions = client.get(f"/api/ml/projects/{project_id}/predictions").json()["detections"]
+    assert {row["class_key"] for row in predictions} == {"other", "contact_a"}
 
 
 @pytest.mark.parametrize("mode", ["inference", "import"])

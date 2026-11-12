@@ -52,9 +52,11 @@ def _insert_training_run(
         db.close()
 
 
-def _predictions_zip(project_id: int, lines: list[str]) -> bytes:
+def _predictions_zip(project_id: int, lines: list[str], classes: list[str] | None = None) -> bytes:
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as zf:
+        if classes is not None:
+            zf.writestr("classes.txt", "\n".join(classes) + "\n")
         zf.writestr(f"labels/p{project_id}_page1.txt", "\n".join(lines))
     return buf.getvalue()
 
@@ -177,6 +179,22 @@ def test_import_predictions_zip_and_json(client):
     res = client.delete(f"/api/projects/{pid}")
     assert res.status_code == 200
     assert client.get("/api/ml/predictions").json() == []
+
+
+def test_import_predictions_uses_provisional_and_orientation_classes(client):
+    pid = create_project(client)
+    archive = _predictions_zip(
+        pid,
+        ["0 0.25 0.5 0.1 0.1 0.92", "1 0.75 0.5 0.1 0.1 0.91"],
+        ["breaker", "horizontal_contact_a"],
+    )
+    res = client.post(
+        "/api/ml/inference/import",
+        files={"archive": ("preds.zip", archive, "application/zip")},
+    )
+    assert res.status_code == 200, res.text
+    predictions = client.get(f"/api/ml/projects/{pid}/predictions").json()["detections"]
+    assert [row["class_key"] for row in predictions] == ["other", "contact_a"]
 
 
 def test_import_predictions_zip_unmatched_and_missing(client):
