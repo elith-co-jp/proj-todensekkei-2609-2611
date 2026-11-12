@@ -6,7 +6,7 @@ from __future__ import annotations
 from PIL import Image, ImageDraw
 
 from analysis.wiring.faint_lines import bridge_faint_wires
-from analysis.wiring.ports import grazes_box_edge
+from analysis.wiring.ports import EXPLICIT_NODE_CENTER_SOURCE, grazes_box_edge
 
 BOX = {"x0": 449, "y0": 339, "x1": 518, "y1": 383}
 
@@ -63,5 +63,30 @@ def test_long_solid_bus_between_aligned_junctions_is_recorded():
     added = bridge_faint_wires(payload, image)
 
     assert [(item["from"]["symbol_id"], item["to"]["symbol_id"]) for item in added] == [("a", "b")]
+
+
+def test_faint_bus_uses_the_best_aligned_port_on_a_multi_port_junction():
+    """ER21302: the nearest port of the target dot is 3.2 px off, but another port on that dot is aligned."""
+    image = Image.new("RGB", (1755, 1241), "white")
+    ImageDraw.Draw(image).line((357, 223, 440, 223), fill=(225, 225, 225), width=1)
+    left = _junction("left", (356.9, 224.2))
+    left["terminals"][0]["source"] = EXPLICIT_NODE_CENTER_SOURCE
+    right = {
+        "id": "right",
+        "class_name": "junction",
+        "bbox": {"x0": 430, "y0": 215, "x1": 446, "y1": 232},
+        "terminals": [
+            {"ref": "right-P1", "name": None, "point": [435.8, 221.0]},
+            {"ref": "right-P2", "name": None, "point": [440.0, 221.8]},
+            {"ref": "right-P3", "name": None, "point": [440.0, 227.2]},
+        ],
+    }
+    payload = {"symbols": [left, right], "from_to": {"connections": [], "connection_count": 0}}
+
+    added = bridge_faint_wires(payload, image)
+
+    assert [(item["from"]["terminal_ref"], item["to"]["terminal_ref"]) for item in added] == [
+        ("left-N1", "right-P2"),
+    ]
 
 

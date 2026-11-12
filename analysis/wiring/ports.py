@@ -15,6 +15,8 @@ from analysis.wiring.params import DEFAULT, PortParams
 
 # 中心に 1 つの端子を置く記号。
 EXPLICIT_NODE_CLASSES = classes.PASS_THROUGH
+# 画像上で確認した黒丸の中心をそのまま端子にしたことを表す source 語彙。
+EXPLICIT_NODE_CENTER_SOURCE = "explicit_node_center"
 
 
 # Classes whose terminals sit where a wire stops inside the box (the + and - dots of a card),
@@ -347,9 +349,24 @@ DESTINATION_REACH_PX = 12.0
 # DESTINATION_FAINT_OUTSIDE_PX のうち DESTINATION_FAINT_MIN_SHARE 以上が灰色（GREY_MAX 以下）の行で、
 # 札の中へ途切れ（DESTINATION_FAINT_GAP_PX まで）を許してたどった線の終わり（矢印の先）を端子にする。
 DESTINATION_FAINT_OUTSIDE_PX = 30
-DESTINATION_FAINT_MIN_SHARE = 0.8
+# ER21261 retains 18 pixels of a 30 px approach, with short scan dropouts.
+DESTINATION_FAINT_MIN_SHARE = 0.6
 DESTINATION_FAINT_GAP_PX = 6
 DESTINATION_FAINT_GREY_MAX = 245
+DESTINATION_FAINT_EDGE_SLACK_PX = 2
+
+
+def _touches_destination_edge(outside: Any, step: int) -> bool:
+    """The approach starts at the tag edge and has no text-sized dropout before its last ink pixel."""
+    toward_outside = outside[::-1] if step == 1 else outside
+    ink = np.flatnonzero(toward_outside)
+    if ink.size == 0 or int(ink[0]) > DESTINATION_FAINT_EDGE_SLACK_PX:
+        return False
+    longest_gap = gap = 0
+    for value in toward_outside[int(ink[0]):int(ink[-1]) + 1]:
+        gap = 0 if value else gap + 1
+        longest_gap = max(longest_gap, gap)
+    return longest_gap <= DESTINATION_FAINT_GAP_PX
 
 
 def _faint_destination_end(gray: Any, box: dict[str, Any]) -> tuple[float, float] | None:
@@ -362,7 +379,8 @@ def _faint_destination_end(gray: Any, box: dict[str, Any]) -> tuple[float, float
         row = gray[y] <= DESTINATION_FAINT_GREY_MAX
         for edge, step in ((x0, 1), (x1, -1)):
             outside = row[max(0, edge - out):edge] if step == 1 else row[edge + 1:min(width, edge + 1 + out)]
-            if outside.size < out or outside.mean() < DESTINATION_FAINT_MIN_SHARE:
+            if outside.size < out or outside.mean() < DESTINATION_FAINT_MIN_SHARE \
+                    or not _touches_destination_edge(outside, step):
                 continue
             end, gap, x = edge, 0, edge
             while (x0 <= x <= x1) and gap <= DESTINATION_FAINT_GAP_PX:
@@ -371,6 +389,10 @@ def _faint_destination_end(gray: Any, box: dict[str, Any]) -> tuple[float, float
                 else:
                     gap += 1
                 x += step
+            # The stroke must cross the detected tag edge.  Ink that merely ends on the
+            # edge is commonly a neighbouring rule or text fragment, not a connection.
+            if end == edge:
+                continue
             score = (float(outside.mean()), abs(end - edge), (float(end), float(y)))
             if best is None or score[:2] > best[:2]:
                 best = score
@@ -477,7 +499,7 @@ def terminal_points_for_symbol(
                 "terminal_ref": f"{symbol['id']}-N01",
                 "terminal_name": "N1",
                 "point": [float(center[0]), float(center[1])],
-                "source": "explicit_node_center",
+                "source": EXPLICIT_NODE_CENTER_SOURCE,
             }
         ]
 

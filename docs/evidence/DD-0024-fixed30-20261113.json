@@ -1,0 +1,55 @@
+{
+  "schema": "todensekkei.fixed30-evidence.v1",
+  "date": "2026-11-13",
+  "design_doc": "DD-0024",
+  "source_branch": "feature/zero-missed-connections",
+  "source_commit": "d35ddd4a5baaba163705df64e3539d98b558271a",
+  "source_checkout": "/home/admin/toden-ai/zero-miss-20261113",
+  "runtime": "dgx-spark CPU wiring/OCR path",
+  "command": {
+    "generate": "cd /home/admin/toden-ai/zero-miss-20261113 && PYTHONPATH=. /home/admin/toden-ai/venv/bin/python analysis/tools/eval_wiring_cv.py --gold /home/admin/toden-ai/data/gold_a_coil_conv_20261109.zip /home/admin/toden-ai/data/gold_b_coil_conv_20261109.zip --pred-run /home/admin/toden-ai/runs/pr79_default_thresholds_20261112/predictions --work /home/admin/toden-ai/runs/zero_miss_20261113_r2/wiring_all --conditions pred --jobs 4 --ocr-threads 4 --ocr-cache /home/admin/toden-ai/runs/pr79_default_thresholds_20261112/ocr_cache",
+    "score": "cd /home/admin/toden-ai/zero-miss-20261113 && PYTHONPATH=. /home/admin/toden-ai/venv/bin/python analysis/tools/eval_editor_import.py --gold /home/admin/toden-ai/data/gold_a_coil_conv_20261109.zip /home/admin/toden-ai/data/gold_b_coil_conv_20261109.zip --structures /home/admin/toden-ai/runs/zero_miss_20261113_r2/wiring_all/pred --out /home/admin/toden-ai/runs/zero_miss_20261113_r2/eval_editor_import.json"
+  },
+  "inputs": {
+    "gold_a": {
+      "name": "gold_a_coil_conv_20261109.zip",
+      "sha256": "e89ba5157d245612153f505a70f5d92408cfdfe36b7abd5b76b1f9e31d0406dd"
+    },
+    "gold_b": {
+      "name": "gold_b_coil_conv_20261109.zip",
+      "sha256": "67e65b6b854adb1d8689363308232acfc1e0f5e260f59b43d87943f224201e07"
+    },
+    "predictions": {
+      "path": "/home/admin/toden-ai/runs/pr79_default_thresholds_20261112/predictions",
+      "sha256": "482d9b226ebd5a689cd9ada2767323ae1fdbfb4009d55295f4d15355d6d8143b",
+      "hash_procedure": "find PATH -type f -name '*.json' -print0 | sort -z | xargs -0 sha256sum | sha256sum"
+    }
+  },
+  "generation": {
+    "drawings": 30,
+    "errors": 0
+  },
+  "wire_nodes": {
+    "conv_hit": 1669,
+    "conv_gold_wires": 1698,
+    "conv_recall": 0.982921,
+    "judged_imported": 1718,
+    "wrong_imported": 5,
+    "precision": 0.9971
+  },
+  "miss_reasons": {
+    "different_ai_nodes": 19,
+    "symbol_unmatched": 9,
+    "terminal_unmapped": 1
+  },
+  "coils": {
+    "gold": 106,
+    "complete": 0.9906,
+    "shorted": 0,
+    "usable": 0.9906
+  },
+  "result": {
+    "path": "/home/admin/toden-ai/runs/zero_miss_20261113_r2/eval_editor_import.json",
+    "sha256": "05e37d9a4682a3fdad7ecb7bccbb5219f9ebc16f41f2359cc2defb0f04fe566f"
+  }
+}
