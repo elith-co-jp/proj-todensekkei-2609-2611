@@ -5,7 +5,13 @@ from __future__ import annotations
 import cv2
 import numpy as np
 
-from analysis.relay_lamp import review_circles
+from analysis.relay_lamp import (
+    CircleClass,
+    CircleEvidence,
+    ReviewStatus,
+    classify_circle,
+    review_circles,
+)
 
 
 def _box(cx: int, cy: int) -> dict[str, float]:
@@ -15,6 +21,45 @@ def _box(cx: int, cy: int) -> dict[str, float]:
 def _symbol(sid: str, cx: int, cy: int, label: str, class_name: str = "relay_coil") -> dict:
     return {"id": sid, "type": class_name, "class_name": class_name, "class_label": "リレーコイル",
             "bbox": _box(cx, cy), "label": label}
+
+
+def test_classifier_keeps_each_evidence_source_and_conflicts_require_review():
+    evidence = CircleEvidence(
+        detected_class=CircleClass.RELAY_COIL,
+        has_x_mark=True,
+        interior_text="RL1",
+        nearby_texts=("赤色",),
+        relay_table_devices=("RL1",),
+        same_sheet_contact_ids=("contact-1",),
+    )
+
+    result = classify_circle(evidence)
+
+    assert result.status is ReviewStatus.REVIEW_REQUIRED
+    assert result.final_class is CircleClass.RELAY_COIL
+    assert result.evidence is evidence
+    assert {cue.source for cue in result.cues} == {
+        "x_mark",
+        "circle_interior_text",
+        "nearby_text",
+        "relay_table",
+        "same_sheet_contacts",
+    }
+
+
+def test_classifier_confirms_consistent_lamp_evidence():
+    evidence = CircleEvidence(
+        detected_class=CircleClass.RELAY_COIL,
+        has_x_mark=False,
+        interior_text="RL1",
+        nearby_texts=("赤色",),
+    )
+
+    result = classify_circle(evidence)
+
+    assert result.status is ReviewStatus.CONFIRMED
+    assert result.suggested_class is CircleClass.LAMP
+    assert result.final_class is CircleClass.LAMP
 
 
 def test_x_marked_circle_becomes_lamp_and_relay_table_device_stays_relay():
