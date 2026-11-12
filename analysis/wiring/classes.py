@@ -8,6 +8,8 @@ from __future__ import annotations
 # 端子をすべて同じ点として扱う記号（配線の通り道）。
 PASS_THROUGH = frozenset({"connector", "junction", "terminal", "power_bus"})
 JUNCTION = "junction"
+# 画像上で確認した黒丸の中心をそのまま端子にしたことを表す source 語彙。
+EXPLICIT_NODE_CENTER_SOURCE = "explicit_node_center"
 # 2 端子で開閉する接点。
 CONTACTS = frozenset({"contact_a", "contact_b"})
 # コイル: 配線がその中で途切れて描かれる。途切れの橋渡しはその中央を通さない。

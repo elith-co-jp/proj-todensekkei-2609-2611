@@ -85,8 +85,8 @@ def test_destination_takes_its_port_where_a_faint_bus_ends_inside_it():
     assert {(c["from"]["symbol_id"], c["to"]["symbol_id"]) for c in added} == {("d", "j")}
 
 
-def test_destination_accepts_a_contiguous_18px_faint_entry_but_not_17px():
-    """ER21261: only 18 of the 30 outside pixels survive, but the stroke touches and continues inside the tag."""
+def test_destination_accepts_an_18px_faint_entry_but_not_17px_or_detached_text():
+    """ER21261: 18/30 pixels survive with short gaps; a shorter or edge-detached stroke is not a wire."""
     from PIL import Image, ImageDraw
 
     from analysis.wiring.ports import destination_port
@@ -102,6 +102,10 @@ def test_destination_accepts_a_contiguous_18px_faint_entry_but_not_17px():
     assert destination_port(tag, [], page(18))[0]["point"] == [200.0, 225.0]
     assert destination_port(tag, [], page(17)) == []
 
+    detached = Image.new("RGB", (1755, 1241), "white")
+    ImageDraw.Draw(detached).line((236, 225, 253, 225), fill=(230, 230, 230), width=1)
+    assert destination_port(tag, [], detached) == []
+
 
 def _item(ref, label, box, class_name="other"):
     return {"ref": ref, "class_name": class_name, "label": label, "kind": "symbol", "bbox": box}
@@ -114,11 +118,36 @@ def test_connection_matching_accepts_same_unique_destination_when_box_expands():
     assert match_connection_symbols(gold, pred) == [(0, 0, 0.0)]
 
 
+def test_connection_matching_uses_unique_connector_label_for_shorter_box():
+    gold = [_item("G1", "CN57 24", {"x0": 658.0, "y0": 673.0, "x1": 749.0, "y1": 741.0}, "connector")]
+    predicted = [_item("P1", "CN57 24", {"x0": 659.0, "y0": 683.0, "x1": 734.0, "y1": 723.0}, "connector")]
+    assert match_connection_symbols(gold, predicted) == [(0, 0, 0.0)]
+
+
+def test_connection_matching_recovers_one_unambiguous_same_class_contact():
+    gold = [_item("G1", "", {"x0": 1139.5, "y0": 499.4, "x1": 1165.1, "y1": 533.9}, "contact_a")]
+    predicted = [_item("P1", "", {"x0": 1119.0, "y0": 499.0, "x1": 1175.0, "y1": 536.0}, "contact_a")]
+    assert match_connection_symbols(gold, predicted) == [(0, 0, 0.0)]
+
+
+def test_connection_matching_does_not_guess_between_overlapping_contacts():
+    gold = [_item("G1", "", {"x0": 100.0, "y0": 100.0, "x1": 140.0, "y1": 140.0}, "contact_a")]
+    predicted = [
+        _item("P1", "", {"x0": 80.0, "y0": 80.0, "x1": 160.0, "y1": 160.0}, "contact_a"),
+        _item("P2", "", {"x0": 81.0, "y0": 81.0, "x1": 159.0, "y1": 159.0}, "contact_a"),
+    ]
+    assert match_connection_symbols(gold, predicted) == []
+
+
 def test_connection_matching_does_not_relax_non_destination_or_ambiguous_labels():
     expanded = {"x0": 90, "y0": 80, "x1": 210, "y1": 220}
     small = {"x0": 120, "y0": 120, "x1": 180, "y1": 180}
     assert match_connection_symbols([_item("g", "制御盤", small)], [_item("p", "制御盤", expanded)]) == []
     assert match_connection_symbols([_item("g", "ER21291へ", small)], [_item("p", "ER21292へ", expanded)]) == []
+    assert match_connection_symbols(
+        [_item("g", "TB1", small, class_name="connector")],
+        [_item("p", "TB1", expanded, class_name="connector")],
+    ) == []
     assert match_connection_symbols(
         [_item("g", "ER21291へ", small, class_name="breaker")],
         [_item("p", "ER21291へ", expanded)],

@@ -159,6 +159,7 @@ def imported_items(symbols: list[dict], width: int, height: int) -> list[dict]:
 
 
 _DESTINATION_LABEL = re.compile(r"[A-Z]{1,3}\d{5}(?:-\d{1,2})?へ")
+_CONNECTOR_LABEL = re.compile(r"(?=.*(?:CN|TB))(?=(?:.*\d){2})[A-Z0-9-]{5,}")
 
 
 def match_connection_symbols(gold: list[dict[str, Any]], pred: list[dict[str, Any]]) -> list[tuple[int, int, float]]:
@@ -181,7 +182,7 @@ def match_connection_symbols(gold: list[dict[str, Any]], pred: list[dict[str, An
         class_name = canonical_symbol_class_key(str(item.get("class_name", "")), {"connector", "other"})
         if class_name == "other" and _DESTINATION_LABEL.fullmatch(label) is not None:
             return class_name, label
-        if class_name == "connector" and len(label) >= 3 and any(character.isdigit() for character in label):
+        if class_name == "connector" and _CONNECTOR_LABEL.fullmatch(label) is not None:
             return class_name, label
         return None
 
