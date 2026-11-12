@@ -62,6 +62,22 @@ def test_classifier_confirms_consistent_lamp_evidence():
     assert result.final_class is CircleClass.LAMP
 
 
+def test_interior_ocr_item_is_not_counted_as_second_nearby_cue():
+    page = np.zeros((300, 300), np.uint8)
+    cv2.circle(page, (150, 150), 22, 255, 2)
+    symbols = [_symbol("circle", 150, 150, "RL1")]
+    text_result = {"texts": [{"text": "RL1", "box": [140, 145, 160, 155]}]}
+
+    review_circles(page, symbols, text_result)
+
+    review = symbols[0]["symbol_review"]
+    assert review["status"] == "要確認"
+    assert review["cues"] == [
+        {"cue": "circle_interior_text", "suggests": "lamp", "text": "RL1"}
+    ]
+    assert review["evidence"]["nearby_texts"] == []
+
+
 def test_x_marked_circle_becomes_lamp_and_relay_table_device_stays_relay():
     page = np.zeros((300, 700), np.uint8)
     for cx in (100, 300, 500):
@@ -86,9 +102,18 @@ def test_x_marked_circle_becomes_lamp_and_relay_table_device_stays_relay():
     assert lamp["class_name"] == "lamp" and lamp["class_label"] == "表示灯" and lamp["detected_class"] == "relay_coil"
     assert lamp["symbol_review"]["status"] == "確定"
     assert coil["class_name"] == "relay_coil" and coil["symbol_review"]["status"] == "確定"
-    assert {c["cue"] for c in coil["symbol_review"]["cues"]} == {"relay_table", "same_device_contacts"}
+    assert {c["cue"] for c in coil["symbol_review"]["cues"]} == {"relay_table", "same_sheet_contacts"}
     assert word_only["class_name"] == "relay_coil", "a lamp word alone does not change the class"
-    assert word_only["symbol_review"] == {"class_suggestion": "lamp", "status": "要確認",
-                                          "cues": [{"cue": "lamp_word", "suggests": "lamp", "text": "RL"}]}
+    assert word_only["symbol_review"]["class_suggestion"] == "lamp"
+    assert word_only["symbol_review"]["status"] == "要確認"
+    assert word_only["symbol_review"]["cues"] == [
+        {"cue": "nearby_text", "suggests": "lamp", "text": "RL"}
+    ]
+    assert word_only["symbol_review"]["evidence"] == {
+        "circle_interior": {"text": "", "x_mark": False},
+        "nearby_texts": ["RL"],
+        "relay_table_devices": [],
+        "same_sheet_contact_ids": [],
+    }
     assert counts == {"reviewed": 3, "確定": 2, "要確認": 1, "changed": 1}
 
