@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import math
 import re
+from dataclasses import dataclass
+from enum import StrEnum
 from typing import Any
 
 import cv2
@@ -17,7 +19,83 @@ import numpy as np
 from analysis.text_extraction import normalize, same_relay_device
 from analysis.wiring import classes
 
-CIRCLE_CLASSES = ("relay_coil", "lamp")
+class CircleClass(StrEnum):
+    RELAY_COIL = "relay_coil"
+    LAMP = "lamp"
+
+
+class ReviewStatus(StrEnum):
+    CONFIRMED = "確定"
+    REVIEW_REQUIRED = "要確認"
+
+
+SERIALIZED_CUE_NAMES = {
+    "circle_interior_text": "lamp_word",
+    "nearby_text": "lamp_word",
+    "same_sheet_contacts": "same_device_contacts",
+}
+
+
+@dataclass(frozen=True)
+class CircleEvidence:
+    detected_class: CircleClass
+    has_x_mark: bool
+    interior_text: str
+    nearby_texts: tuple[str, ...] = ()
+    relay_table_devices: tuple[str, ...] = ()
+    same_sheet_contact_ids: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "circle_interior": {"text": self.interior_text, "x_mark": self.has_x_mark},
+            "nearby_texts": list(self.nearby_texts),
+            "relay_table_devices": list(self.relay_table_devices),
+            "same_sheet_contact_ids": list(self.same_sheet_contact_ids),
+        }
+
+
+@dataclass(frozen=True)
+class EvidenceCue:
+    source: str
+    suggests: CircleClass
+    text: str | None = None
+    symbol_ids: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        cue: dict[str, Any] = {
+            "cue": SERIALIZED_CUE_NAMES.get(self.source, self.source),
+            "suggests": self.suggests.value,
+        }
+        if self.text is not None:
+            cue["text"] = self.text
+        if self.symbol_ids:
+            cue["symbol_ids"] = list(self.symbol_ids)
+        return cue
+
+
+@dataclass(frozen=True)
+class CircleClassification:
+    evidence: CircleEvidence
+    suggested_class: CircleClass
+    status: ReviewStatus
+    cues: tuple[EvidenceCue, ...]
+
+    @property
+    def final_class(self) -> CircleClass:
+        if self.status is ReviewStatus.CONFIRMED:
+            return self.suggested_class
+        return self.evidence.detected_class
+
+    def to_review_dict(self) -> dict[str, Any]:
+        return {
+            "class_suggestion": self.suggested_class.value,
+            "cues": [cue.to_dict() for cue in self.cues],
+            "evidence": self.evidence.to_dict(),
+            "status": self.status.value,
+        }
+
+
+CIRCLE_CLASSES = tuple(circle_class.value for circle_class in CircleClass)
 CONTACT_CLASSES = classes.CONTACTS
 CLASS_LABELS = {"relay_coil": "リレーコイル", "lamp": "表示灯"}
 NEAR_PX = 40
@@ -77,15 +155,56 @@ def x_mark(binary: np.ndarray, box: dict[str, float]) -> bool:
     return diagonal >= X_MIN_COVER and _wedge_ink(binary, cx, cy, r) <= X_MAX_WEDGE
 
 
-def _lamp_words(symbol: dict[str, Any], texts: list[dict[str, Any]]) -> list[str]:
+def _lamp_words(text: str) -> list[str]:
+    return [token for token in normalize(text).split() if _LAMP_WORD.fullmatch(token)]
+
+
+def _nearby_texts(symbol: dict[str, Any], texts: list[dict[str, Any]]) -> tuple[str, ...]:
     x0, y0, x1, y1 = (symbol["bbox"][k] for k in ("x0", "y0", "x1", "y1"))
-    near = [symbol.get("label") or ""]
+    near = []
     for item in texts:
         bx0, by0, bx1, by1 = item["box"]
         cx, cy = (bx0 + bx1) / 2, (by0 + by1) / 2
-        if x0 - NEAR_PX <= cx <= x1 + NEAR_PX and y0 - NEAR_PX <= cy <= y1 + NEAR_PX:
+        is_near = x0 - NEAR_PX <= cx <= x1 + NEAR_PX and y0 - NEAR_PX <= cy <= y1 + NEAR_PX
+        is_inside = x0 <= cx <= x1 and y0 <= cy <= y1
+        if is_near and not is_inside:
             near.append(item.get("text") or "")
-    return [token for text in near for token in normalize(text).split() if _LAMP_WORD.fullmatch(token)]
+    return tuple(dict.fromkeys(text for text in near if text))
+
+
+def classify_circle(evidence: CircleEvidence) -> CircleClassification:
+    cues: list[EvidenceCue] = []
+    if evidence.has_x_mark:
+        cues.append(EvidenceCue("x_mark", CircleClass.LAMP))
+    cues.extend(
+        EvidenceCue("circle_interior_text", CircleClass.LAMP, text=word)
+        for word in dict.fromkeys(_lamp_words(evidence.interior_text))
+    )
+    cues.extend(
+        EvidenceCue("nearby_text", CircleClass.LAMP, text=word)
+        for text in evidence.nearby_texts
+        for word in dict.fromkeys(_lamp_words(text))
+    )
+    cues.extend(
+        EvidenceCue("relay_table", CircleClass.RELAY_COIL, text=device)
+        for device in evidence.relay_table_devices
+    )
+    if evidence.same_sheet_contact_ids:
+        cues.append(
+            EvidenceCue(
+                "same_sheet_contacts",
+                CircleClass.RELAY_COIL,
+                symbol_ids=evidence.same_sheet_contact_ids,
+            )
+        )
+    suggestions = {cue.suggests for cue in cues}
+    sources = {cue.source for cue in cues}
+    settled = len(suggestions) == 1 and (
+        len(sources) >= 2 or bool(sources & STRONG_CUES)
+    )
+    suggested = next(iter(suggestions)) if len(suggestions) == 1 else evidence.detected_class
+    status = ReviewStatus.CONFIRMED if settled else ReviewStatus.REVIEW_REQUIRED
+    return CircleClassification(evidence, suggested, status, tuple(cues))
 
 
 def review_circles(binary: np.ndarray, symbols: list[dict[str, Any]], text_result: dict[str, Any]) -> dict[str, Any]:
@@ -99,26 +218,29 @@ def review_circles(binary: np.ndarray, symbols: list[dict[str, Any]], text_resul
         if detected not in CIRCLE_CLASSES:
             continue
         label = symbol.get("label") or ""
-        cues = []
-        if x_mark(binary, symbol["bbox"]):
-            cues.append({"cue": "x_mark", "suggests": "lamp"})
-        cues += [{"cue": "lamp_word", "suggests": "lamp", "text": word} for word in dict.fromkeys(_lamp_words(symbol, texts))]
-        device = next((row["device"] for row in rows if label and same_relay_device(label, row["device"])), None)
-        if device:
-            cues.append({"cue": "relay_table", "suggests": "relay_coil", "text": device})
-        same = [s["id"] for s in contacts if label and same_relay_device(s["label"], label)]
-        if same:
-            cues.append({"cue": "same_device_contacts", "suggests": "relay_coil", "symbol_ids": same})
-        suggested = {cue["suggests"] for cue in cues}
-        settled = len(suggested) == 1 and (len(cues) >= 2 or cues[0]["cue"] in STRONG_CUES)
-        suggestion = suggested.pop() if len(suggested) == 1 else detected
-        symbol["symbol_review"] = {"class_suggestion": suggestion, "cues": cues, "status": "確定" if settled else "要確認"}
+        nearby_texts = _nearby_texts(symbol, texts)
+        relay_table_devices = tuple(dict.fromkeys(
+            row["device"] for row in rows if label and same_relay_device(label, row["device"])
+        ))
+        same_sheet_contact_ids = tuple(
+            s["id"] for s in contacts if label and same_relay_device(s["label"], label)
+        )
+        evidence = CircleEvidence(
+            detected_class=CircleClass(detected),
+            has_x_mark=x_mark(binary, symbol["bbox"]),
+            interior_text=label,
+            nearby_texts=nearby_texts,
+            relay_table_devices=relay_table_devices,
+            same_sheet_contact_ids=same_sheet_contact_ids,
+        )
+        classification = classify_circle(evidence)
+        symbol["symbol_review"] = classification.to_review_dict()
         counts["reviewed"] += 1
-        counts[symbol["symbol_review"]["status"]] += 1
-        if settled and suggestion != detected:
+        counts[classification.status.value] += 1
+        if classification.final_class.value != detected:
             symbol["detected_class"] = detected
-            symbol["type"] = symbol["class_name"] = suggestion
-            symbol["class_label"] = CLASS_LABELS[suggestion]
+            symbol["type"] = symbol["class_name"] = classification.final_class.value
+            symbol["class_label"] = CLASS_LABELS[classification.final_class.value]
             counts["changed"] += 1
     return counts
 

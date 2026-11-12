@@ -5,7 +5,13 @@ from __future__ import annotations
 import cv2
 import numpy as np
 
-from analysis.relay_lamp import review_circles
+from analysis.relay_lamp import (
+    CircleClass,
+    CircleEvidence,
+    ReviewStatus,
+    classify_circle,
+    review_circles,
+)
 
 
 def _box(cx: int, cy: int) -> dict[str, float]:
@@ -15,6 +21,109 @@ def _box(cx: int, cy: int) -> dict[str, float]:
 def _symbol(sid: str, cx: int, cy: int, label: str, class_name: str = "relay_coil") -> dict:
     return {"id": sid, "type": class_name, "class_name": class_name, "class_label": "リレーコイル",
             "bbox": _box(cx, cy), "label": label}
+
+
+def test_classifier_keeps_each_evidence_source_and_conflicts_require_review():
+    evidence = CircleEvidence(
+        detected_class=CircleClass.RELAY_COIL,
+        has_x_mark=True,
+        interior_text="RL1",
+        nearby_texts=("赤色",),
+        relay_table_devices=("RL1",),
+        same_sheet_contact_ids=("contact-1",),
+    )
+
+    result = classify_circle(evidence)
+
+    assert result.status is ReviewStatus.REVIEW_REQUIRED
+    assert result.final_class is CircleClass.RELAY_COIL
+    assert result.evidence is evidence
+    assert {cue.source for cue in result.cues} == {
+        "x_mark",
+        "circle_interior_text",
+        "nearby_text",
+        "relay_table",
+        "same_sheet_contacts",
+    }
+
+
+def test_review_payload_preserves_legacy_cue_names():
+    evidence = CircleEvidence(
+        detected_class=CircleClass.RELAY_COIL,
+        has_x_mark=True,
+        interior_text="RL1",
+        nearby_texts=("赤色",),
+        relay_table_devices=("RL1",),
+        same_sheet_contact_ids=("contact-1",),
+    )
+
+    result = classify_circle(evidence)
+    payload = result.to_review_dict()
+
+    assert [cue.source for cue in result.cues] == [
+        "x_mark",
+        "circle_interior_text",
+        "nearby_text",
+        "relay_table",
+        "same_sheet_contacts",
+    ]
+    assert [cue["cue"] for cue in payload["cues"]] == [
+        "x_mark",
+        "lamp_word",
+        "lamp_word",
+        "relay_table",
+        "same_device_contacts",
+    ]
+    assert payload["evidence"] == {
+        "circle_interior": {"text": "RL1", "x_mark": True},
+        "nearby_texts": ["赤色"],
+        "relay_table_devices": ["RL1"],
+        "same_sheet_contact_ids": ["contact-1"],
+    }
+
+
+def test_classifier_confirms_consistent_lamp_evidence():
+    evidence = CircleEvidence(
+        detected_class=CircleClass.RELAY_COIL,
+        has_x_mark=False,
+        interior_text="RL1",
+        nearby_texts=("赤色",),
+    )
+
+    result = classify_circle(evidence)
+
+    assert result.status is ReviewStatus.CONFIRMED
+    assert result.suggested_class is CircleClass.LAMP
+    assert result.final_class is CircleClass.LAMP
+
+
+def test_repeated_words_from_one_evidence_source_do_not_confirm_the_class():
+    evidence = CircleEvidence(
+        detected_class=CircleClass.RELAY_COIL,
+        has_x_mark=False,
+        interior_text="RL1 GL1",
+    )
+
+    result = classify_circle(evidence)
+
+    assert result.status is ReviewStatus.REVIEW_REQUIRED
+    assert result.final_class is CircleClass.RELAY_COIL
+
+
+def test_interior_ocr_item_is_not_counted_as_second_nearby_cue():
+    page = np.zeros((300, 300), np.uint8)
+    cv2.circle(page, (150, 150), 22, 255, 2)
+    symbols = [_symbol("circle", 150, 150, "RL1")]
+    text_result = {"texts": [{"text": "RL1", "box": [140, 145, 160, 155]}]}
+
+    review_circles(page, symbols, text_result)
+
+    review = symbols[0]["symbol_review"]
+    assert review["status"] == "要確認"
+    assert review["cues"] == [
+        {"cue": "lamp_word", "suggests": "lamp", "text": "RL1"}
+    ]
+    assert review["evidence"]["nearby_texts"] == []
 
 
 def test_x_marked_circle_becomes_lamp_and_relay_table_device_stays_relay():
@@ -43,7 +152,16 @@ def test_x_marked_circle_becomes_lamp_and_relay_table_device_stays_relay():
     assert coil["class_name"] == "relay_coil" and coil["symbol_review"]["status"] == "確定"
     assert {c["cue"] for c in coil["symbol_review"]["cues"]} == {"relay_table", "same_device_contacts"}
     assert word_only["class_name"] == "relay_coil", "a lamp word alone does not change the class"
-    assert word_only["symbol_review"] == {"class_suggestion": "lamp", "status": "要確認",
-                                          "cues": [{"cue": "lamp_word", "suggests": "lamp", "text": "RL"}]}
+    assert word_only["symbol_review"]["class_suggestion"] == "lamp"
+    assert word_only["symbol_review"]["status"] == "要確認"
+    assert word_only["symbol_review"]["cues"] == [
+        {"cue": "lamp_word", "suggests": "lamp", "text": "RL"}
+    ]
+    assert word_only["symbol_review"]["evidence"] == {
+        "circle_interior": {"text": "", "x_mark": False},
+        "nearby_texts": ["RL"],
+        "relay_table_devices": [],
+        "same_sheet_contact_ids": [],
+    }
     assert counts == {"reviewed": 3, "確定": 2, "要確認": 1, "changed": 1}
 
