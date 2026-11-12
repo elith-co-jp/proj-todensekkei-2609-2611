@@ -21,6 +21,7 @@ DOT_CLASSES = ("junction", "connector")
 DIRECTIONS = {"up": (0, -1), "down": (0, 1), "left": (-1, 0), "right": (1, 0)}
 JUNCTION_PROBE_CONFIDENCE = 0.05
 JUNCTION_DIRECT_CONFIDENCE = 0.35
+JUNCTION_DEFAULT_REQUEST_CONFIDENCE = 0.5
 # False leaves symbols untouched and the structure payload without dot roles.
 ENABLED = True
 
@@ -158,7 +159,8 @@ def select_junction_detections(
         with Image.open(image) as opened:
             image = opened.convert("RGB")
     rules = rules or DotRules()
-    direct_floor = min(requested_confidence, JUNCTION_DIRECT_CONFIDENCE)
+    recover_with_ink = requested_confidence <= JUNCTION_DEFAULT_REQUEST_CONFIDENCE
+    direct_floor = min(requested_confidence, JUNCTION_DIRECT_CONFIDENCE) if recover_with_ink else requested_confidence
     selected: set[int] = set()
     direct_centers: list[tuple[float, float]] = []
     direct: list[tuple[int, dict[str, Any]]] = []
@@ -173,7 +175,7 @@ def select_junction_detections(
         score = candidate.get("confidence")
         if score is None or score >= direct_floor:
             direct.append((index, candidate))
-        elif score >= JUNCTION_PROBE_CONFIDENCE:
+        elif recover_with_ink and score >= JUNCTION_PROBE_CONFIDENCE:
             probes.append((index, candidate))
 
     direct_positions = [

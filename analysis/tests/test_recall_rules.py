@@ -102,6 +102,10 @@ def test_connection_matching_does_not_relax_non_destination_or_ambiguous_labels(
     assert match_connection_symbols([_item("g", "制御盤", small)], [_item("p", "制御盤", expanded)]) == []
     assert match_connection_symbols([_item("g", "ER21291へ", small)], [_item("p", "ER21292へ", expanded)]) == []
     assert match_connection_symbols(
+        [_item("g", "ER21291へ", small, class_name="breaker")],
+        [_item("p", "ER21291へ", expanded)],
+    ) == [(0, 0, 0.0)]
+    assert match_connection_symbols(
         [_item("g1", "ER21291へ", small), _item("g2", "ER21291へ", small)],
         [_item("p", "ER21291へ", expanded)],
     ) == []

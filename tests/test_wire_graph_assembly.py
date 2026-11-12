@@ -170,6 +170,10 @@ def test_low_confidence_junctions_require_three_wire_arms_and_do_not_duplicate_a
 
     assert [item["id"] for item in selected] == ["normal", "supported", "moderate"]
 
+    selected = select_junction_detections(image, candidates, requested_confidence=0.9)
+
+    assert [item["id"] for item in selected] == ["normal"]
+
     selected = select_junction_detections(
         image, [detection("unsupported-user-low", 180, 0.2)], requested_confidence=0.1
     )

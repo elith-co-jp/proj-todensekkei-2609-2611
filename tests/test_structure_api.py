@@ -233,6 +233,16 @@ def test_detector_uses_a_junction_probe_floor_without_lowering_other_classes(tmp
 
     calls.clear()
 
+    class HorizontalJunctionDetector(Detector):
+        names = {0: "horizontal_junction", 1: "contact_a"}
+
+    detections = _detect(HorizontalJunctionDetector(), Image.new("RGB", (200, 100), "white"), 0.5, None, classes)
+
+    assert calls == [{"conf": 0.05, "verbose": False}]
+    assert [(item["class_key"], item["confidence"]) for item in detections] == [("junction", 0.36)]
+
+    calls.clear()
+
     class ContactDetector(Detector):
         names = {0: "contact_a", 1: "contact_a"}
 

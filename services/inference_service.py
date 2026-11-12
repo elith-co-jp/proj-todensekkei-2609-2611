@@ -103,7 +103,11 @@ def _detect(detector, page, conf: float, connector_conf: float | None, class_by_
     class_by_key = {c.key: c for c in class_by_index.values()}
     detector_names = getattr(detector, "names", None) or {}
     detections: list[dict] = []
-    predict_conf = min(conf, JUNCTION_PROBE_CONFIDENCE) if "junction" in detector_names.values() else conf
+    has_junction = any(
+        canonical_symbol_class_key(str(name), class_by_key) == "junction"
+        for name in detector_names.values()
+    )
+    predict_conf = min(conf, JUNCTION_PROBE_CONFIDENCE) if has_junction else conf
     for result in detector.predict(page, conf=predict_conf, verbose=False):
         boxes = result.boxes
         if boxes is None or boxes.xywhn is None:

@@ -61,6 +61,7 @@ from services.ai_candidates import from_structure, plan_import  # noqa: E402
 from services.circuit_model import joins_inside_symbol  # noqa: E402
 from services.coil_wiring import COIL_CLASSES  # noqa: E402
 from services.detection_rules import detection_kind  # noqa: E402
+from symbol_class_policy import canonical_symbol_class_key  # noqa: E402
 
 def apply_plan(symbols: list[dict], connections: list[dict], plan: Any) -> tuple[list[dict], list[dict]]:
     """The editor's merge (frontend mergeAiImport): new terminals on existing symbols, then new symbols and connections."""
@@ -174,7 +175,8 @@ def match_connection_symbols(gold: list[dict[str, Any]], pred: list[dict[str, An
 
     def destination_label(item: dict[str, Any]) -> str | None:
         label = norm_label(item.get("label", ""))
-        if item.get("class_name") != "other" or _DESTINATION_LABEL.fullmatch(label) is None:
+        class_name = canonical_symbol_class_key(str(item.get("class_name", "")), {"other"})
+        if class_name != "other" or _DESTINATION_LABEL.fullmatch(label) is None:
             return None
         return label
 
