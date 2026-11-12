@@ -47,6 +47,41 @@ def test_classifier_keeps_each_evidence_source_and_conflicts_require_review():
     }
 
 
+def test_review_payload_preserves_legacy_cue_names():
+    evidence = CircleEvidence(
+        detected_class=CircleClass.RELAY_COIL,
+        has_x_mark=True,
+        interior_text="RL1",
+        nearby_texts=("赤色",),
+        relay_table_devices=("RL1",),
+        same_sheet_contact_ids=("contact-1",),
+    )
+
+    result = classify_circle(evidence)
+    payload = result.to_review_dict()
+
+    assert [cue.source for cue in result.cues] == [
+        "x_mark",
+        "circle_interior_text",
+        "nearby_text",
+        "relay_table",
+        "same_sheet_contacts",
+    ]
+    assert [cue["cue"] for cue in payload["cues"]] == [
+        "x_mark",
+        "lamp_word",
+        "lamp_word",
+        "relay_table",
+        "same_device_contacts",
+    ]
+    assert payload["evidence"] == {
+        "circle_interior": {"text": "RL1", "x_mark": True},
+        "nearby_texts": ["赤色"],
+        "relay_table_devices": ["RL1"],
+        "same_sheet_contact_ids": ["contact-1"],
+    }
+
+
 def test_classifier_confirms_consistent_lamp_evidence():
     evidence = CircleEvidence(
         detected_class=CircleClass.RELAY_COIL,
@@ -86,7 +121,7 @@ def test_interior_ocr_item_is_not_counted_as_second_nearby_cue():
     review = symbols[0]["symbol_review"]
     assert review["status"] == "要確認"
     assert review["cues"] == [
-        {"cue": "circle_interior_text", "suggests": "lamp", "text": "RL1"}
+        {"cue": "lamp_word", "suggests": "lamp", "text": "RL1"}
     ]
     assert review["evidence"]["nearby_texts"] == []
 
@@ -115,12 +150,12 @@ def test_x_marked_circle_becomes_lamp_and_relay_table_device_stays_relay():
     assert lamp["class_name"] == "lamp" and lamp["class_label"] == "表示灯" and lamp["detected_class"] == "relay_coil"
     assert lamp["symbol_review"]["status"] == "確定"
     assert coil["class_name"] == "relay_coil" and coil["symbol_review"]["status"] == "確定"
-    assert {c["cue"] for c in coil["symbol_review"]["cues"]} == {"relay_table", "same_sheet_contacts"}
+    assert {c["cue"] for c in coil["symbol_review"]["cues"]} == {"relay_table", "same_device_contacts"}
     assert word_only["class_name"] == "relay_coil", "a lamp word alone does not change the class"
     assert word_only["symbol_review"]["class_suggestion"] == "lamp"
     assert word_only["symbol_review"]["status"] == "要確認"
     assert word_only["symbol_review"]["cues"] == [
-        {"cue": "nearby_text", "suggests": "lamp", "text": "RL"}
+        {"cue": "lamp_word", "suggests": "lamp", "text": "RL"}
     ]
     assert word_only["symbol_review"]["evidence"] == {
         "circle_interior": {"text": "", "x_mark": False},

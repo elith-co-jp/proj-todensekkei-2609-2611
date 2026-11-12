@@ -29,6 +29,13 @@ class ReviewStatus(StrEnum):
     REVIEW_REQUIRED = "要確認"
 
 
+SERIALIZED_CUE_NAMES = {
+    "circle_interior_text": "lamp_word",
+    "nearby_text": "lamp_word",
+    "same_sheet_contacts": "same_device_contacts",
+}
+
+
 @dataclass(frozen=True)
 class CircleEvidence:
     detected_class: CircleClass
@@ -55,7 +62,10 @@ class EvidenceCue:
     symbol_ids: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
-        cue: dict[str, Any] = {"cue": self.source, "suggests": self.suggests.value}
+        cue: dict[str, Any] = {
+            "cue": SERIALIZED_CUE_NAMES.get(self.source, self.source),
+            "suggests": self.suggests.value,
+        }
         if self.text is not None:
             cue["text"] = self.text
         if self.symbol_ids:
