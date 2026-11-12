@@ -21,6 +21,7 @@ DARK_MAX = 128          # a dark line between unconnected terminals was left out
 ALIGN = 8               # terminals on one wire share x (vertical) or y (horizontal) within this
 MIN_GAP = 15
 MAX_GAP = 450
+LONG_JUNCTION_MAX_GAP = 1500  # long bus spans between explicit dots are common on full-width drawings
 END_SKIP = 8            # the terminal circles and connector dots themselves
 HALF_WIDTH = 3
 MIN_GREY_SHARE = 0.3
@@ -175,9 +176,11 @@ def bridge_faint_wires(payload: dict[str, Any], image: Image.Image) -> list[dict
         return key
 
     from_to = payload.get("from_to") or {}
+    direct_pairs: set[frozenset[tuple[str, str]]] = set()
     for conn in from_to.get("connections", []):
         a = (conn["from"]["symbol_id"], conn["from"]["terminal_ref"])
         b = (conn["to"]["symbol_id"], conn["to"]["terminal_ref"])
+        direct_pairs.add(frozenset((a, b)))
         if conn.get("type") == "wire" or (a[0] == b[0] and _class(symbols.get(a[0], {})) in PASS_CLASSES):
             parent[find(a)] = find(b)
 
@@ -198,10 +201,16 @@ def bridge_faint_wires(payload: dict[str, Any], image: Image.Image) -> list[dict
                 continue
             other_sid, other, ox, oy = min(ahead, key=lambda e: (e[2], e[3])[along])
             # The nearest terminal ahead belongs to the same symbol: the line runs through the symbol.
-            if other_sid == sid or (ox, oy)[along] - here[along] > max_gap:
+            both_junctions = _class(symbols[sid]) == _class(symbols[other_sid]) == classes.JUNCTION
+            gap = (ox, oy)[along] - here[along]
+            allowed_gap = LONG_JUNCTION_MAX_GAP * scale if both_junctions else max_gap
+            if other_sid == sid or gap > allowed_gap:
                 continue
             a, b = (sid, term["ref"]), (other_sid, other["ref"])
-            if find(a) == find(b):
+            # Connectivity and drawing adjacency are different facts.  A parallel branch can already put
+            # both terminals on one electrical net while a visible direct bus segment still needs recording.
+            pair = frozenset((a, b))
+            if pair in direct_pairs:
                 continue
             lo, hi = here[along], (ox, oy)[along]
             crossed = any(
@@ -215,13 +224,25 @@ def bridge_faint_wires(payload: dict[str, Any], image: Image.Image) -> list[dict
             profile = _profile(gray, here, (ox, oy), vertical, scale)
             offset = abs((ox, oy)[axis] - here[axis])
             aligned = offset <= SOLID_ALIGN * scale
-            both_junctions = _class(symbols[sid]) == _class(symbols[other_sid]) == classes.JUNCTION
             if both_junctions and offset > JUNCTION_ALIGN * scale:
                 continue
+            # Beyond the ordinary terminal search radius, only a continuous, tightly aligned bus between
+            # explicit junction dots is strong enough evidence.  Sparse scan noise must not bridge that far.
+            long_junction_bus = (
+                both_junctions
+                and gap > max_gap
+                and aligned
+                and _solid_line(profile, scale)
+                and not _left_out(payload, here, (ox, oy), vertical, scale)
+            )
+            if gap > max_gap and not long_junction_bus:
+                continue
             if not (_faint_line(profile, scale) or _dotted_line(profile, scale)
+                    or long_junction_bus
                     or (aligned and _solid_line(profile, scale) and not _left_out(payload, here, (ox, oy), vertical, scale))):
                 continue
             parent[find(a)] = find(b)
+            direct_pairs.add(pair)
             ends_of = [(sid, symbols[sid], term), (other_sid, symbols[other_sid], other)]
             added.append({
                 "id": f"from_to_faint_{len(added) + 1:04d}", "type": "wire", "directed": False,

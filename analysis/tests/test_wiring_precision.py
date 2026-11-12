@@ -51,3 +51,17 @@ def test_faint_line_does_not_join_offset_junctions():
     assert len(_faint_row((520, 708), (601, 708))) == 1
 
 
+def test_long_solid_bus_between_aligned_junctions_is_recorded():
+    left, right = (200, 708), (1500, 708)
+    image = Image.new("RGB", (1755, 1241), "white")
+    ImageDraw.Draw(image).line((*left, *right), fill="black", width=2)
+    payload = {
+        "symbols": [_junction("a", left), _junction("b", right)],
+        "from_to": {"connections": [], "connection_count": 0},
+    }
+
+    added = bridge_faint_wires(payload, image)
+
+    assert [(item["from"]["symbol_id"], item["to"]["symbol_id"]) for item in added] == [("a", "b")]
+
+
