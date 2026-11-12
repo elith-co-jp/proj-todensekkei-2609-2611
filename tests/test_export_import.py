@@ -152,6 +152,38 @@ def test_roundtrip_keeps_class_index_for_new_class(client):
     assert detail["symbols"][0]["class_key"] == "timer_relay"
 
 
+def test_bundle_import_uses_provisional_and_orientation_classes(client):
+    pid = create_project(client)
+    client.put(f"/api/projects/{pid}/annotations", json=SAMPLE_ANNOTATION)
+    exported = client.post("/api/export", json={"ids": [pid]}).content
+    client.delete(f"/api/projects/{pid}")
+
+    changed = io.BytesIO()
+    with zipfile.ZipFile(io.BytesIO(exported)) as source, zipfile.ZipFile(changed, "w") as target:
+        bundle = json.loads(source.read("bundle.json"))
+        bundle["classes"].extend(
+            [
+                {"key": "breaker", "label": "breaker", "yolo_index": 12},
+                {"key": "horizontal_contact_a", "label": "horizontal contact", "yolo_index": 13},
+            ]
+        )
+        bundle["projects"][0]["symbols"][0]["class_key"] = "breaker"
+        bundle["projects"][0]["symbols"][1]["class_key"] = "horizontal_contact_a"
+        for name in source.namelist():
+            target.writestr(name, json.dumps(bundle, ensure_ascii=False) if name == "bundle.json" else source.read(name))
+
+    imported = client.post(
+        "/api/import",
+        files={"archive": ("export.zip", changed.getvalue(), "application/zip")},
+    )
+    assert imported.status_code == 200, imported.text
+    detail = client.get(f"/api/projects/{imported.json()['project_ids'][0]}").json()
+    assert [symbol["class_key"] for symbol in detail["symbols"][:2]] == ["other", "contact_a"]
+    keys = {row["key"] for row in client.get("/api/classes").json()}
+    assert "breaker" not in keys
+    assert "horizontal_contact_a" not in keys
+
+
 def test_import_rejects_zip_without_bundle(client):
     """bundle.json を含まない ZIP（このツール以外の出力）は取り込まない。"""
     buf = io.BytesIO()

@@ -24,6 +24,7 @@ from services.detection_rules import detection_kind
 from services.export_service import safe_members
 from services.geometry import sanitize_box
 from services.model_service import card_model_path, model_path
+from symbol_class_policy import canonical_symbol_class_key
 
 # predictions ZIP でファイル名からプロジェクトを引く規則。
 # エクスポート画像名は p<project_id>_<stem>.png なので、同じ stem の labels を対応付ける。
@@ -114,7 +115,11 @@ def _detect(detector, page, conf: float, connector_conf: float | None, class_by_
                 # モデルのクラス名 -> SymbolClass.key で対応付ける。
                 # 名前が一致しない検出を番号で拾うと誤分類になるため捨てる
                 det_name = detector_names.get(int(cls_index))
-                cls = class_by_key.get(det_name) if det_name is not None else class_by_index.get(int(cls_index))
+                if det_name is not None:
+                    class_key = canonical_symbol_class_key(str(det_name), class_by_key)
+                    cls = class_by_key.get(class_key)
+                else:
+                    cls = class_by_index.get(int(cls_index))
             if cls is None:
                 continue
             if cls.key == "connector" and connector_conf is not None and score is not None and score < connector_conf:
@@ -221,7 +226,7 @@ def _parse_label_lines(
     if key_by_index:
         key_to_class = {c.key: c for c in class_by_index.values()}
         for i, key in key_by_index.items():
-            cls = key_to_class.get(key)
+            cls = key_to_class.get(canonical_symbol_class_key(key, key_to_class))
             if cls is not None:
                 index_to_class[i] = cls
     else:
