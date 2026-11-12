@@ -5,9 +5,8 @@ from __future__ import annotations
 
 from PIL import Image, ImageDraw
 
-from analysis.wiring import classes
 from analysis.wiring.faint_lines import bridge_faint_wires
-from analysis.wiring.ports import grazes_box_edge
+from analysis.wiring.ports import EXPLICIT_NODE_CENTER_SOURCE, grazes_box_edge
 
 BOX = {"x0": 449, "y0": 339, "x1": 518, "y1": 383}
 
@@ -71,7 +70,7 @@ def test_faint_bus_uses_the_best_aligned_port_on_a_multi_port_junction():
     image = Image.new("RGB", (1755, 1241), "white")
     ImageDraw.Draw(image).line((357, 223, 440, 223), fill=(225, 225, 225), width=1)
     left = _junction("left", (356.9, 224.2))
-    left["terminals"][0]["source"] = classes.EXPLICIT_NODE_CENTER_SOURCE
+    left["terminals"][0]["source"] = EXPLICIT_NODE_CENTER_SOURCE
     right = {
         "id": "right",
         "class_name": "junction",

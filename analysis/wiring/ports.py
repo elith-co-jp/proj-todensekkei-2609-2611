@@ -15,6 +15,8 @@ from analysis.wiring.params import DEFAULT, PortParams
 
 # 中心に 1 つの端子を置く記号。
 EXPLICIT_NODE_CLASSES = classes.PASS_THROUGH
+# 画像上で確認した黒丸の中心をそのまま端子にしたことを表す source 語彙。
+EXPLICIT_NODE_CENTER_SOURCE = "explicit_node_center"
 
 
 # Classes whose terminals sit where a wire stops inside the box (the + and - dots of a card),
@@ -387,6 +389,10 @@ def _faint_destination_end(gray: Any, box: dict[str, Any]) -> tuple[float, float
                 else:
                     gap += 1
                 x += step
+            # The stroke must cross the detected tag edge.  Ink that merely ends on the
+            # edge is commonly a neighbouring rule or text fragment, not a connection.
+            if end == edge:
+                continue
             score = (float(outside.mean()), abs(end - edge), (float(end), float(y)))
             if best is None or score[:2] > best[:2]:
                 best = score
@@ -493,7 +499,7 @@ def terminal_points_for_symbol(
                 "terminal_ref": f"{symbol['id']}-N01",
                 "terminal_name": "N1",
                 "point": [float(center[0]), float(center[1])],
-                "source": classes.EXPLICIT_NODE_CENTER_SOURCE,
+                "source": EXPLICIT_NODE_CENTER_SOURCE,
             }
         ]
 

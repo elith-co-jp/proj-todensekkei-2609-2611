@@ -106,6 +106,10 @@ def test_destination_accepts_an_18px_faint_entry_but_not_17px_or_detached_text()
     ImageDraw.Draw(detached).line((236, 225, 253, 225), fill=(230, 230, 230), width=1)
     assert destination_port(tag, [], detached) == []
 
+    stops_at_edge = Image.new("RGB", (1755, 1241), "white")
+    ImageDraw.Draw(stops_at_edge).line((228, 225, 246, 225), fill=(230, 230, 230), width=1)
+    assert destination_port(tag, [], stops_at_edge) == []
+
 
 def _item(ref, label, box, class_name="other"):
     return {"ref": ref, "class_name": class_name, "label": label, "kind": "symbol", "bbox": box}
@@ -147,6 +151,10 @@ def test_connection_matching_does_not_relax_non_destination_or_ambiguous_labels(
     assert match_connection_symbols(
         [_item("g", "TB1", small, class_name="connector")],
         [_item("p", "TB1", expanded, class_name="connector")],
+    ) == []
+    assert match_connection_symbols(
+        [_item("g", "CONTACTB12", small, class_name="connector")],
+        [_item("p", "CONTACTB12", expanded, class_name="connector")],
     ) == []
     assert match_connection_symbols(
         [_item("g", "ER21291へ", small, class_name="breaker")],

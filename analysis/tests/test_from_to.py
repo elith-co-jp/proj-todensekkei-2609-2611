@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 
 from analysis.wiring.connectivity import build_direct_from_to
+from analysis.wiring.ports import EXPLICIT_NODE_CENTER_SOURCE
 
 
 def connector(symbol_id: str, x: float) -> dict:
@@ -19,7 +20,7 @@ def connector(symbol_id: str, x: float) -> dict:
                 "ref": terminal_ref,
                 "name": "N1",
                 "point": [x, 50],
-                "source": "explicit_node_center",
+                "source": EXPLICIT_NODE_CENTER_SOURCE,
             }
         ],
         "terminal_links": [

@@ -45,6 +45,7 @@ import json
 import math
 import re
 import sys
+import unicodedata
 from collections import Counter
 from collections.abc import Callable, Iterable
 from pathlib import Path
@@ -159,7 +160,8 @@ def imported_items(symbols: list[dict], width: int, height: int) -> list[dict]:
 
 
 _DESTINATION_LABEL = re.compile(r"[A-Z]{1,3}\d{5}(?:-\d{1,2})?へ")
-_CONNECTOR_LABEL = re.compile(r"(?=.*(?:CN|TB))(?=(?:.*\d){2})[A-Z0-9-]{5,}")
+_CONNECTOR_LABEL = re.compile(r"(?=(?:.*\d){2})[A-Z0-9-]{5,}")
+_CONNECTOR_TOKEN = re.compile(r"(?:^|[^A-Z0-9])(?:CN|TB)\d+(?:$|[^A-Z0-9])")
 
 
 def match_connection_symbols(gold: list[dict[str, Any]], pred: list[dict[str, Any]]) -> list[tuple[int, int, float]]:
@@ -178,11 +180,14 @@ def match_connection_symbols(gold: list[dict[str, Any]], pred: list[dict[str, An
     pred_by_label: dict[tuple[str, str], list[int]] = {}
 
     def stable_label(item: dict[str, Any]) -> tuple[str, str] | None:
-        label = norm_label(item.get("label", ""))
+        raw_label = str(item.get("label", ""))
+        label = norm_label(raw_label)
         class_name = canonical_symbol_class_key(str(item.get("class_name", "")), {"connector", "other"})
         if class_name == "other" and _DESTINATION_LABEL.fullmatch(label) is not None:
             return class_name, label
-        if class_name == "connector" and _CONNECTOR_LABEL.fullmatch(label) is not None:
+        connector_text = unicodedata.normalize("NFKC", raw_label).upper()
+        if class_name == "connector" and _CONNECTOR_TOKEN.search(connector_text) is not None \
+                and _CONNECTOR_LABEL.fullmatch(label) is not None:
             return class_name, label
         return None
 
