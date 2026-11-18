@@ -2,12 +2,21 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from sqlalchemy.orm import Session
 
 from models import AnnotationProject
-from services import circuit_code, circuit_interop, circuit_model, circuit_timing, circuit_whatif, consistency
+from services import (
+    circuit_code,
+    circuit_edit,
+    circuit_interop,
+    circuit_model,
+    circuit_timing,
+    circuit_whatif,
+    consistency,
+)
 from services.annotation_service import WITH_ANNOTATIONS, serialize_project
 from services.circuit_model import SUPPLY_V, Circuit, build_circuit, export_netlist, simulate
 from services.structure_service import get_structure
@@ -210,3 +219,127 @@ def apply_consistency_fixes(db: Session, project_ids: list[int], issue_ids: list
     result["applied"] = applied
     result["not_applied"] = sorted(wanted - {i["id"] for i in current["issues"] if i.get("fix")})
     return result
+
+
+# --------------------------------------------------------------------------------------- 変更（DD-0034）
+
+
+def _edit_inputs(db: Session, project_ids: list[int]) -> tuple[list[dict[str, Any]], dict[int, Any], dict[int, Any]]:
+    pages, texts = _pages(db, project_ids)
+    structures = {p["id"]: get_structure(db, p["id"]) for p in pages}
+    return pages, texts, structures
+
+
+def edit_context(db: Session, project_ids: list[int]) -> dict[str, Any]:
+    """LLM に渡す図面の文脈（記号・端子・配線・回路コード・器具の一覧・図面のハッシュ）。"""
+    pages, texts, _ = _edit_inputs(db, project_ids)
+    return circuit_edit.context(pages, texts)
+
+
+def edit_preview(db: Session, project_ids: list[int], ops: list[dict[str, Any]]) -> dict[str, Any]:
+    """変更を試す（図面は変えない）。"""
+    pages, texts, structures = _edit_inputs(db, project_ids)
+    result = circuit_edit.preview(pages, ops, structures=structures, bus_texts=texts)
+    result.pop("after_pages", None)
+    return result
+
+
+def _save_pages(db: Session, pages: list[dict[str, Any]], note: str | None = None) -> None:
+    from schemas import AnnotationUpdatePayload
+    from services.annotation_service import replace_annotations
+
+    for page in pages:
+        project = db.get(AnnotationProject, page["id"])
+        symbols = []
+        for s in page["symbols"]:
+            item = {k: s.get(k) for k in ("ref", "class_key", "label", "cx", "cy", "w", "h", "note", "origin", "confidence",
+                                          "attributes")}
+            item["attributes"] = item["attributes"] or {}
+            item["origin"] = item["origin"] if item["origin"] in ("manual", "inference") else "manual"
+            item["terminals"] = [{k: t.get(k) for k in ("ref", "name", "tx", "ty")} | {"origin": "manual" if t.get("origin")
+                                  not in ("manual", "inference") else t["origin"]} for t in s.get("terminals") or []]
+            symbols.append(item)
+        connections = [{k: c.get(k) for k in ("ref", "from_symbol_ref", "from_terminal_ref", "to_symbol_ref", "to_terminal_ref",
+                                              "wire_no", "net_id", "kind", "external_ref", "note", "origin")}
+                       | {"attributes": c.get("attributes") or {}} for c in page["connections"]]
+        for c in connections:
+            c["origin"] = c["origin"] if c["origin"] in ("manual", "inference") else "manual"
+            c["kind"] = c["kind"] or "wire"
+        replace_annotations(db, project, AnnotationUpdatePayload.model_validate({"symbols": symbols, "connections": connections}))
+    db.expire_all()
+
+
+def _changed_pages(before: list[dict[str, Any]], after: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    old = {p["id"]: circuit_edit.pages_hash([p]) for p in before}
+    return [p for p in after if circuit_edit.pages_hash([p]) != old.get(p["id"])]
+
+
+def _change_set_out(row: Any) -> dict[str, Any]:
+    return {"id": row.id, "title": row.title, "reason": row.reason, "author": row.author, "status": row.status,
+            "project_ids": json.loads(row.project_ids_json), "ops": json.loads(row.ops_json),
+            "notes": json.loads(row.notes_json or "[]"), "summary": json.loads(row.summary_json or "{}"),
+            "created_at": row.created_at.isoformat() if row.created_at else None,
+            "undone_at": row.undone_at.isoformat() if row.undone_at else None}
+
+
+def edit_apply(db: Session, project_ids: list[int], ops: list[dict[str, Any]], *, title: str, reason: str | None,
+               author: str, base_hash: str | None) -> dict[str, Any]:
+    """変更を適用し、変更セットとして残す。base_hash（試した時の図面のハッシュ）が今の図面と違えば適用しない。"""
+    from models import CircuitChangeSet
+
+    pages, texts, structures = _edit_inputs(db, project_ids)
+    current = circuit_edit.pages_hash(pages)
+    if base_hash and base_hash != current:
+        raise EditConflict("試した後に図面が変わっています。もう一度試してから適用してください")
+    result = circuit_edit.preview(pages, ops, structures=structures, bus_texts=texts)
+    if not result["ok"]:
+        raise circuit_edit.EditError(result["errors"])
+    after_pages = result.pop("after_pages")
+    changed = _changed_pages(pages, after_pages)
+    before_changed = [p for p in pages if p["id"] in {c["id"] for c in changed}]
+    _save_pages(db, changed)
+    summary = {"behaviour": result["behaviour"][:20], "impact": result["impact"], "circuit": result["circuit"],
+               "validation": {k: v for k, v in result["validation"].items() if k != "diagnostics_added"},
+               "netlist_diff": result["netlist_diff"]}
+    row = CircuitChangeSet(title=title[:500], reason=reason, author=(author or "user")[:100],
+                           project_ids_json=json.dumps(sorted(project_ids)), ops_json=json.dumps(ops, ensure_ascii=False),
+                           notes_json=json.dumps(result["notes"], ensure_ascii=False),
+                           summary_json=json.dumps(summary, ensure_ascii=False, default=str),
+                           before_json=json.dumps(before_changed, ensure_ascii=False, default=str),
+                           after_hash=circuit_edit.pages_hash(_pages(db, project_ids)[0]))
+    db.add(row)
+    db.commit()
+    return {"change_set": _change_set_out(row), "preview": result}
+
+
+class EditConflict(ValueError):
+    """変更の前提（図面の状態）が違う。"""
+
+
+def edit_history(db: Session, project_ids: list[int] | None = None, limit: int = 50) -> list[dict[str, Any]]:
+    from models import CircuitChangeSet
+
+    rows = db.query(CircuitChangeSet).order_by(CircuitChangeSet.id.desc()).limit(500).all()
+    wanted = set(project_ids or [])
+    out = [_change_set_out(r) for r in rows if not wanted or wanted & set(json.loads(r.project_ids_json))]
+    return out[:limit]
+
+
+def edit_undo(db: Session, change_set_id: int, *, force: bool = False) -> dict[str, Any]:
+    """変更セットを取り消す（変更前の図面に戻す）。その後に図面が変わっていれば、force でない限り取り消さない。"""
+    from models import CircuitChangeSet, utc_now_naive
+
+    row = db.get(CircuitChangeSet, change_set_id)
+    if row is None:
+        raise ValueError(f"変更 {change_set_id} がありません")
+    if row.status != "applied":
+        raise EditConflict(f"変更 {change_set_id} はもう取り消されています")
+    project_ids = json.loads(row.project_ids_json)
+    current = circuit_edit.pages_hash(_pages(db, project_ids)[0])
+    if current != row.after_hash and not force:
+        raise EditConflict("この変更の後に図面が変わっています。後の変更を先に取り消すか、force で戻してください")
+    _save_pages(db, json.loads(row.before_json))
+    row.status = "undone"
+    row.undone_at = utc_now_naive()
+    db.commit()
+    return _change_set_out(row)

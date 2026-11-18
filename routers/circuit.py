@@ -10,7 +10,9 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from database import get_db
+from services import circuit_edit
 from services.circuit_service import (
+    EditConflict,
     apply_consistency_fixes,
     circuit_code_text,
     circuit_impact,
@@ -22,6 +24,11 @@ from services.circuit_service import (
     circuit_timeline,
     circuit_what_if,
     consistency_check,
+    edit_apply,
+    edit_context,
+    edit_history,
+    edit_preview,
+    edit_undo,
     run_simulation,
 )
 from services.coil_wiring import split_through_wires
@@ -238,3 +245,77 @@ def consistency_apply(payload: ConsistencyApplyRequest, db: Session = Depends(ge
         return apply_consistency_fixes(db, payload.project_ids, payload.issue_ids)
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
+
+
+# ------------------------------------------------------------------------------------- 変更（DD-0034）
+
+
+class EditRequest(BaseModel):
+    """図面のコード表現への変更。ops の形は GET /api/circuit/edit/tools の preview_circuit_edit を参照。"""
+
+    project_ids: list[int] = Field(min_length=1)
+    ops: list[dict[str, Any]] = Field(default=[], max_length=circuit_edit.MAX_OPS)
+    title: str = Field(default="図面の変更", max_length=500)
+    reason: str | None = None
+    author: str = Field(default="user", max_length=100)
+    base_hash: str | None = None
+
+
+class UndoRequest(BaseModel):
+    force: bool = False
+
+
+@router.get("/edit/tools")
+def edit_tools():
+    """LLM のツール定義（Anthropic Messages API の tools の形）と、操作ごとの JSON スキーマ（DD-0034）。"""
+    return {"tools": circuit_edit.tool_definitions(), "ops": circuit_edit.OPS}
+
+
+@router.post("/edit/context")
+def edit_context_api(payload: CircuitRequest, db: Session = Depends(get_db)):
+    """変更する図面の記号・端子・配線・回路コード（LLM に渡す文脈。DD-0034）。"""
+    try:
+        return edit_context(db, payload.project_ids)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@router.post("/edit/preview")
+def edit_preview_api(payload: EditRequest, db: Session = Depends(get_db)):
+    """変更を試す: 差分・検証・動作の変化・波及範囲。図面は変えない（DD-0034）。"""
+    try:
+        return edit_preview(db, payload.project_ids, payload.ops)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@router.post("/edit/apply")
+def edit_apply_api(payload: EditRequest, db: Session = Depends(get_db)):
+    """変更を適用し、取り消せる変更セットとして残す。base_hash が今の図面と違えば 409（DD-0034）。"""
+    try:
+        return edit_apply(db, payload.project_ids, payload.ops, title=payload.title, reason=payload.reason,
+                          author=payload.author, base_hash=payload.base_hash)
+    except EditConflict as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except circuit_edit.EditError as exc:
+        raise HTTPException(422, {"message": str(exc), "errors": exc.errors}) from exc
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@router.get("/edit/history")
+def edit_history_api(project_ids: str | None = None, db: Session = Depends(get_db)):
+    """変更セットの履歴（新しい順）。project_ids はカンマ区切り。"""
+    ids = [int(x) for x in (project_ids or "").split(",") if x.strip().isdigit()]
+    return {"change_sets": edit_history(db, ids)}
+
+
+@router.post("/edit/{change_set_id}/undo")
+def edit_undo_api(change_set_id: int, payload: UndoRequest | None = None, db: Session = Depends(get_db)):
+    """変更セットを取り消す（変更前の図面に戻す）。その後に図面が変わっていれば 409（force で戻せる）。"""
+    try:
+        return edit_undo(db, change_set_id, force=bool(payload and payload.force))
+    except EditConflict as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc

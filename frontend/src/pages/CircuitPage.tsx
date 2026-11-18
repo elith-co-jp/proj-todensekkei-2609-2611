@@ -5,6 +5,7 @@ import { AlertTriangle, Download, Loader2, RotateCcw, Zap } from 'lucide-react'
 import { api } from '../api/client'
 import type { CircuitResult, CircuitSummary, ProjectRow } from '../types'
 import ConsistencyPanel from './circuit/ConsistencyPanel'
+import EditPanel from './circuit/EditPanel'
 import TimelinePanel from './circuit/TimelinePanel'
 import WhatIfPanel from './circuit/WhatIfPanel'
 
@@ -295,6 +296,7 @@ export default function CircuitPage() {
       )}
 
       {summary && <ConsistencyPanel projectIds={selected} onApplied={() => void build()} />}
+      {summary && <EditPanel projectIds={selected} onApplied={() => void build()} />}
     </div>
   )
 }

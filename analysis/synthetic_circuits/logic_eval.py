@@ -56,6 +56,9 @@ def _sim_state(circuit: circuit_model.Circuit, inputs: dict[str, bool], energize
 
 
 def _agree(spec: logic.Spec, sim: dict[str, Any], truth: dict[str, Any]) -> bool:
+    if not truth.get("stable", True):
+        # 正解でも状態が落ち着かない（発振する）なら、シミュレーションも発振を警告すれば一致とする（状態は決まらない）。
+        return any("落ち着きません" in w for w in sim["warnings"])
     coils = {canonical_device(d): v for d, v in truth["coils"].items()}
     return (all(sim["coils"].get(d) == v for d, v in coils.items()) and set(sim["coils"]) == set(coils)
             and all(sim["lamps"].get(k) == v for k, v in truth["lamps"].items()))
@@ -446,3 +449,62 @@ def markdown(report: dict[str, Any]) -> str:
     lines += ["", "- 「直して正解に戻る」は、出た直し方をすべて適用した後、動作が正解と一致し、矛盾が 0 になった割合。",
               "- 「誤った直し方」は、誤りを入れた記号以外への直し方か、元の値に戻らない直し方の数。", ""]
     return "\n".join(lines)
+
+
+# ------------------------------------------------------------------------------------- 変更（DD-0034）
+
+
+def edit_roundtrip(seed: int, *, edits: int = 3) -> dict[str, int]:
+    """正本を変える（段にインターロックを足す・接点の a/b を変える・接点の器具を変える）のと同じ変更を、変更の操作
+    （circuit_edit）で図面に当て、変更後の図面のシミュレーションが、変えた正本の正解（oracle）と一致するかを数える。"""
+    from services import circuit_edit
+
+    rng = random.Random(seed)
+    agree = total = 0
+    for k in range(edits):
+        spec = logic.make_spec(seed)
+        data = logic.build(spec)
+        new = copy.deepcopy(spec)
+        kind = ["interlock", "flip", "relabel"][k % 3]
+        if kind == "interlock":
+            # コイルの段（負荷が同じ図面）に、番号の若いリレーの b 接点を直列に足す（循環しない）。
+            choices = [(i, r) for i, r in enumerate(spec.rungs)
+                       if r.load[0] == "coil" and spec.relays.index(r.load[1]) > 0]
+            if not choices:
+                continue
+            i, rung = rng.choice(choices)
+            other = spec.relays[rng.randrange(spec.relays.index(rung.load[1]))]
+            new.rungs[i].terms.append([(other, "b")])
+            pid, coil = data["loads"][i]
+            page = next(p for p in data["pages"] if p["id"] == pid)
+            wire = next(c for c in page["connections"] if c["to_symbol_ref"] == coil and c["to_terminal_ref"].endswith("T1"))
+            src = next(s for s in page["symbols"] if s["ref"] == wire["from_symbol_ref"])
+            from_term = next(t["name"] for t in src["terminals"] if t["ref"] == wire["from_terminal_ref"])
+            sheet = spec.sheets[spec.coil_sheet[other]]
+            label = other if sheet == page["sheet_no"] else f"{other} ({sheet})"
+            ops = [{"op": "insert_in_series", "project_id": pid, "from": {"symbol_ref": src["ref"], "terminal": from_term},
+                    "to": {"symbol_ref": coil, "terminal": "1"}, "component": {"class_key": "contact_b", "label": label}}]
+        else:
+            (pid, ref), (ri, ti, ci) = rng.choice(sorted(data["contacts"].items()))
+            device, ab = spec.rungs[ri].terms[ti][ci]
+            if kind == "flip":
+                new.rungs[ri].terms[ti][ci] = (device, "b" if ab == "a" else "a")
+                ops = [{"op": "set_class", "project_id": pid, "symbol_ref": ref, "class_key": f"contact_{'b' if ab == 'a' else 'a'}"}]
+            else:
+                load = spec.rungs[ri].load[1]
+                limit = spec.relays.index(load) if load in spec.relays else len(spec.relays)
+                candidates = [r for r in spec.relays[:limit] if r != device] or [f"PB{90 + k}"]
+                other = rng.choice(candidates)
+                new.rungs[ri].terms[ti][ci] = (other, ab)
+                if other not in spec.relays:
+                    new.inputs.append(other)
+                page = next(p for p in data["pages"] if p["id"] == pid)
+                sheet = spec.sheets[spec.coil_sheet[other]] if other in spec.coil_sheet else page["sheet_no"]
+                label = other if sheet == page["sheet_no"] else f"{other} ({sheet})"
+                ops = [{"op": "set_label", "project_id": pid, "symbol_ref": ref, "label": label}]
+        after, _ = circuit_edit.apply_ops(data["pages"], ops)
+        circuit = circuit_model.build_circuit(copy.deepcopy(after), data["bus_texts"])
+        result = behaviour(new, circuit, seed=seed * 10 + k)
+        agree += result["agree"]
+        total += result["total"]
+    return {"agree": agree, "total": total}

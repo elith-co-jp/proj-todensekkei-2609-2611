@@ -3,6 +3,10 @@ import type {
   AttributeDefinitions,
   AttributeImportReport,
   CircuitChange,
+  CircuitChangeSet,
+  CircuitEditOp,
+  CircuitEditPreview,
+  CircuitEditTools,
   CircuitImpact,
   CircuitResult,
   CircuitTimeline,
@@ -31,7 +35,7 @@ import type {
 
 import { DEFAULT_DETECTION_CONF } from './defaults'
 
-const BASE = import.meta.env.VITE_API_BASE ?? ''
+export const BASE = import.meta.env.VITE_API_BASE ?? ''
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE}${path}`, init)
@@ -39,7 +43,9 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
     let detail = `通信に失敗しました (${res.status})`
     try {
       const body = await res.json()
-      if (body?.detail) detail = String(body.detail)
+      if (typeof body?.detail === 'string') detail = body.detail
+      else if (body?.detail?.message) detail = String(body.detail.message)
+      else if (body?.detail) detail = JSON.stringify(body.detail)
     } catch {
       /* JSON でない場合はそのまま */
     }
@@ -301,6 +307,32 @@ export const api = {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ project_ids: projectIds, device }),
+    }),
+
+  circuitEditTools: () => req<CircuitEditTools>('/api/circuit/edit/tools'),
+
+  circuitEditPreview: (projectIds: number[], ops: CircuitEditOp[]) =>
+    req<CircuitEditPreview>('/api/circuit/edit/preview', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ project_ids: projectIds, ops }),
+    }),
+
+  circuitEditApply: (projectIds: number[], ops: CircuitEditOp[], title: string, reason: string | null, baseHash: string | null) =>
+    req<{ change_set: CircuitChangeSet; preview: CircuitEditPreview }>('/api/circuit/edit/apply', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ project_ids: projectIds, ops, title, reason, author: 'user', base_hash: baseHash }),
+    }),
+
+  circuitEditHistory: (projectIds: number[]) =>
+    req<{ change_sets: CircuitChangeSet[] }>(`/api/circuit/edit/history?project_ids=${projectIds.join(',')}`),
+
+  circuitEditUndo: (id: number, force = false) =>
+    req<{ change_set: CircuitChangeSet }>(`/api/circuit/edit/${id}/undo`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ force }),
     }),
 
   downloadCircuitCode: (projectIds: number[]) =>

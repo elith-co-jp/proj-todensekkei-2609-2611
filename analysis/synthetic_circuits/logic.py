@@ -126,13 +126,16 @@ def oracle(spec: Spec, inputs: dict[str, bool], energized: dict[str, bool] | Non
     def live(r: Rung) -> bool:
         return all(any(on(d) == (kind == "a") for d, kind in term) for term in r.terms)
 
+    stable = False
     for _ in range(50):
         new = {relay: any(live(r) for r in spec.rungs if r.load == ("coil", relay)) for relay in spec.relays}
         if new == state:
+            stable = True
             break
         state = new
     lamps = {r.load[1]: live(r) for r in spec.rungs if r.load[0] == "lamp"}
-    return {"coils": state, "lamps": lamps}
+    # stable が False なら、状態が落ち着かない（発振する）回路。
+    return {"coils": state, "lamps": lamps, "stable": stable}
 
 
 def oracle_timeline(spec: Spec, events: list[dict[str, Any]], until: float, dt: float = 0.25) -> list[dict[str, Any]]:
@@ -278,7 +281,9 @@ def build(spec: Spec) -> dict[str, Any]:
         contacts_of.setdefault(device, []).append((s.index, c["ref"], kind, f"{column}{ROW_LETTERS[row]}"))
         return c
 
-    for rung in spec.rungs:
+    where: dict[tuple[int, str], tuple[int, int, int]] = {}  # (図面 ID, 接点の ref) → (段, 項, 並列の何番目)
+    coil_of: dict[int, tuple[int, str]] = {}                 # 段 → (図面 ID, 負荷の ref)
+    for r_index, rung in enumerate(spec.rungs):
         s = sheets[rung.sheet]
         column = s.column
         s.column += 2
@@ -287,6 +292,7 @@ def build(spec: Spec) -> dict[str, Any]:
             row = 3 + 3 * t
             if len(term) == 1:
                 c = contact(s, *term[0], column, row)
+                where[(s.index + 1, c["ref"])] = (r_index, t, 0)
                 s.wire(point, _t(c, 1))
                 point = _t(c, 2)
             else:
@@ -295,6 +301,7 @@ def build(spec: Spec) -> dict[str, Any]:
                 s.wire(point, _t(ja, 1))
                 for i, (device, kind) in enumerate(term):
                     c = contact(s, device, kind, column + i, row)
+                    where[(s.index + 1, c["ref"])] = (r_index, t, i)
                     s.wire(_t(ja, 1), _t(c, 1))
                     s.wire(_t(c, 2), _t(jb, 1))
                 point = _t(jb, 1)
@@ -316,6 +323,7 @@ def build(spec: Spec) -> dict[str, Any]:
             load["attributes"] = {"timer_mode": mode, "delay_s": delay}
         s.wire(point, _t(load, 1))
         s.wire(_t(load, 2), bottom_junction(s, column))
+        coil_of[r_index] = (s.index + 1, load["ref"])
 
     # 電線番号: つながり（ノード）ごとに 1 つ。行先札の両側は同じ番号。
     parent: dict[Any, Any] = {}
@@ -356,4 +364,5 @@ def build(spec: Spec) -> dict[str, Any]:
         sheets[coil].rows += rows
     for s in sheets:
         structures[s.index + 1] = {"relay_table": {"rows": s.rows}, "drawing_grid": copy.deepcopy(GRID)}
-    return {"pages": pages, "structures": structures, "bus_texts": bus_texts, "tag_pairs": len(tag_pairs)}
+    return {"pages": pages, "structures": structures, "bus_texts": bus_texts, "tag_pairs": len(tag_pairs),
+            "contacts": where, "loads": coil_of}
