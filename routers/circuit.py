@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from database import get_db
 from services.circuit_service import (
+    apply_consistency_fixes,
     circuit_code_text,
     circuit_impact,
     circuit_lcapy,
@@ -19,6 +20,7 @@ from services.circuit_service import (
     circuit_skidl,
     circuit_summary,
     circuit_what_if,
+    consistency_check,
     run_simulation,
 )
 from services.coil_wiring import split_through_wires
@@ -68,6 +70,14 @@ class SequenceRequest(WhatIfRequest):
 class ImpactRequest(BaseModel):
     project_ids: list[int] = Field(min_length=1)
     device: str
+
+
+class ConsistencyRequest(BaseModel):
+    project_ids: list[int] = Field(min_length=1)
+
+
+class ConsistencyApplyRequest(ConsistencyRequest):
+    issue_ids: list[str] = Field(min_length=1, max_length=500)
 
 
 class LcapyRequest(CircuitRequest):
@@ -182,5 +192,24 @@ def impact(payload: ImpactRequest, db: Session = Depends(get_db)):
     """機器（器具番号）が動いたら影響しうるリレー・負荷と、その機器を動かしうる機器（DD-0029）。"""
     try:
         return circuit_impact(db, payload.project_ids, payload.device)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@router.post("/consistency")
+def consistency(payload: ConsistencyRequest, db: Session = Depends(get_db)):
+    """複数の解析方法（リレー表・電線番号・行先札・回路計算・波及範囲・シミュレーション）の結果を突き合わせ、
+    矛盾と精査の結果・直し方を返す（DD-0031）。"""
+    try:
+        return consistency_check(db, payload.project_ids)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@router.post("/consistency/apply")
+def consistency_apply(payload: ConsistencyApplyRequest, db: Session = Depends(get_db)):
+    """選んだ矛盾の直し方を図面のアノテーションに適用し、もう一度チェックした結果を返す（DD-0031）。"""
+    try:
+        return apply_consistency_fixes(db, payload.project_ids, payload.issue_ids)
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc

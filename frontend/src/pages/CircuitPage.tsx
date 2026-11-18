@@ -4,6 +4,7 @@ import { AlertTriangle, Download, Loader2, RotateCcw, Zap } from 'lucide-react'
 
 import { api } from '../api/client'
 import type { CircuitResult, CircuitSummary, ProjectRow } from '../types'
+import ConsistencyPanel from './circuit/ConsistencyPanel'
 import WhatIfPanel from './circuit/WhatIfPanel'
 
 const ENGINE_LABEL = { ngspice: 'SPICE（ngspice）で解いています', builtin: '内蔵の回路計算で解いています（ngspice 未導入）' }
@@ -290,6 +291,8 @@ export default function CircuitPage() {
           </section>
         </div>
       )}
+
+      {summary && <ConsistencyPanel projectIds={selected} onApplied={() => void build()} />}
     </div>
   )
 }

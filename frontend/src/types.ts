@@ -437,6 +437,27 @@ export type CircuitImpact = {
   contacts: (CircuitSymbolRef & { label: string; kind: 'a' | 'b' })[]
 }
 
+// ---------- 解析結果の整合性（DD-0031） ----------
+export type ConsistencyIssue = {
+  id: string
+  check: string
+  severity: 'error' | 'warning' | 'info'
+  title: string
+  message: string
+  locations: { project_id: number; symbol_ref: string | null; page?: string | null; position?: string }[]
+  review: string[]
+  proposal: string
+  fix: { type: 'set_class' | 'set_label'; project_id: number; symbol_ref: string; value: string } | null
+}
+
+export type ConsistencyResult = {
+  checks: { check: string; method_a: string; method_b: string; compared: number; issues: number; status: 'ok' | 'issues' | 'skipped'; skipped_reason: string | null }[]
+  issues: ConsistencyIssue[]
+  summary: { errors: number; warnings: number; fixable: number }
+  applied?: { type: string; project_id: number; symbol_ref: string; value: string; before: string }[]
+  not_applied?: string[]
+}
+
 // ---------- 属性（DD-0010） ----------
 export type AttributeValue = string | number | boolean | null
 export type Attributes = Record<string, AttributeValue>

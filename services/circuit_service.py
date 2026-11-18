@@ -7,7 +7,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from models import AnnotationProject
-from services import circuit_code, circuit_interop, circuit_model, circuit_whatif
+from services import circuit_code, circuit_interop, circuit_model, circuit_whatif, consistency
 from services.annotation_service import WITH_ANNOTATIONS, serialize_project
 from services.circuit_model import SUPPLY_V, Circuit, build_circuit, export_netlist, simulate
 from services.structure_service import get_structure
@@ -146,4 +146,53 @@ def circuit_impact(db: Session, project_ids: list[int], device: str) -> dict[str
     result = circuit_whatif.impact(circuit, device)
     names = {p["id"]: p.get("sheet_no") or p["name"] for p in pages}
     result["loads"] = [{**x, "page": names.get(x["project_id"])} for x in result["loads"]]
+    return result
+
+
+FIX_CLASSES = frozenset({"contact_a", "contact_b", "relay_coil"})
+
+
+def consistency_check(db: Session, project_ids: list[int]) -> dict[str, Any]:
+    """複数の解析方法の結果の矛盾と、精査の結果・直し方（DD-0031）。"""
+    pages, texts = _pages(db, project_ids)
+    structures = {p["id"]: get_structure(db, p["id"]) for p in pages}
+    return consistency.check(pages, structures, bus_texts=texts)
+
+
+def apply_consistency_fixes(db: Session, project_ids: list[int], issue_ids: list[str]) -> dict[str, Any]:
+    """選んだ矛盾の直し方（記号の種類・ラベルの変更）を適用し、もう一度チェックした結果を返す（DD-0031）。
+
+    直し方はクライアントから受け取らず、いまの図面でチェックし直して出た直し方だけを使う（古い画面からの適用を防ぐ）。
+    """
+    from models import AnnotationSymbol
+    from services.annotation_service import class_map_by_key
+
+    current = consistency_check(db, project_ids)
+    wanted = set(issue_ids)
+    fixes = [i["fix"] for i in current["issues"] if i["id"] in wanted and i.get("fix")]
+    classes = class_map_by_key(db)
+    applied = []
+    for fix in fixes:
+        row = db.query(AnnotationSymbol).filter(AnnotationSymbol.project_id == fix["project_id"],
+                                                AnnotationSymbol.ref == fix["symbol_ref"]).one_or_none()
+        if row is None:
+            continue
+        if fix["type"] == "set_class":
+            if fix["value"] not in FIX_CLASSES or fix["value"] not in classes:
+                continue
+            before = next((k for k, c in classes.items() if c.id == row.class_id), "")
+            row.class_id = classes[fix["value"]].id
+        elif fix["type"] == "set_label":
+            before = row.label or ""
+            row.label = str(fix["value"])[:200]
+        else:
+            continue
+        note = f"整合性チェック（DD-0031）で {before or '空'} → {fix['value']} に変更"
+        row.note = f"{row.note}\n{note}" if row.note else note
+        applied.append({**fix, "before": before})
+    db.commit()
+    db.expire_all()
+    result = consistency_check(db, project_ids)
+    result["applied"] = applied
+    result["not_applied"] = sorted(wanted - {i["id"] for i in current["issues"] if i.get("fix")})
     return result

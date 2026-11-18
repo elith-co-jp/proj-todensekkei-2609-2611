@@ -6,6 +6,7 @@ import type {
   CircuitImpact,
   CircuitResult,
   CircuitWhatIf,
+  ConsistencyResult,
   CircuitSummary,
   CoilWiringSplitResult,
   ClassStats,
@@ -299,6 +300,20 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ project_ids: projectIds }),
     }, 'circuit_code.py'),
+
+  checkConsistency: (projectIds: number[]) =>
+    req<ConsistencyResult>('/api/circuit/consistency', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ project_ids: projectIds }),
+    }),
+
+  applyConsistencyFixes: (projectIds: number[], issueIds: string[]) =>
+    req<ConsistencyResult>('/api/circuit/consistency/apply', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ project_ids: projectIds, issue_ids: issueIds }),
+    }),
 
   splitCoilWires: (annotations: { symbols: unknown[]; connections: unknown[] }, imageWidth: number, imageHeight: number) =>
     req<CoilWiringSplitResult>('/api/circuit/split-coil-wires', {
