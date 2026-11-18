@@ -10,7 +10,13 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from database import get_db
-from services.circuit_service import circuit_netlist, circuit_summary, run_simulation
+from services.circuit_service import (
+    circuit_lcapy,
+    circuit_netlist,
+    circuit_skidl,
+    circuit_summary,
+    run_simulation,
+)
 from services.coil_wiring import split_through_wires
 
 router = APIRouter(prefix="/api/circuit", tags=["circuit"])
@@ -20,6 +26,12 @@ class CircuitRequest(BaseModel):
     project_ids: list[int] = Field(min_length=1)
     inputs: dict[str, bool] = {}
     energized: dict[str, bool] = {}
+
+
+class LcapyRequest(CircuitRequest):
+    """fixed: 外部入力と励磁から接点の開閉を決め、閉は導線 W・開は開放 O にする（False なら接点は SW no/nc）。"""
+
+    fixed: bool = False
 
 
 class CoilWiringRequest(BaseModel):
@@ -69,3 +81,27 @@ def netlist(payload: CircuitRequest, db: Session = Depends(get_db)):
         raise HTTPException(400, str(exc)) from exc
     return Response(text, media_type="text/plain; charset=utf-8",
                     headers={"Content-Disposition": 'attachment; filename="circuit.cir"'})
+
+
+def _download(text: str, filename: str) -> Response:
+    return Response(text, media_type="text/plain; charset=utf-8",
+                    headers={"Content-Disposition": f'attachment; filename="{filename}"'})
+
+
+@router.post("/lcapy")
+def lcapy(payload: LcapyRequest, db: Session = Depends(get_db)):
+    """Lcapy のネットリスト（DD-0028）。lcapy.Circuit(text) で読み込める。"""
+    try:
+        return _download(circuit_lcapy(db, payload.project_ids, payload.inputs, payload.energized, payload.fixed),
+                         "circuit_lcapy.txt")
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@router.post("/skidl")
+def skidl(payload: CircuitRequest, db: Session = Depends(get_db)):
+    """SKiDL のスクリプト（DD-0028）。python で実行すると KiCad のネットリスト circuit.net を書き出す。"""
+    try:
+        return _download(circuit_skidl(db, payload.project_ids), "circuit_skidl.py")
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc

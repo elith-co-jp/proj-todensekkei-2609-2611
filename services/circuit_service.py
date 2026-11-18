@@ -7,7 +7,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from models import AnnotationProject
-from services import circuit_model
+from services import circuit_interop, circuit_model
 from services.annotation_service import WITH_ANNOTATIONS, serialize_project
 from services.circuit_model import SUPPLY_V, Circuit, build_circuit, export_netlist, simulate
 from services.structure_service import get_structure
@@ -84,3 +84,18 @@ def run_simulation(db: Session, project_ids: list[int], inputs: dict[str, bool],
 def circuit_netlist(db: Session, project_ids: list[int], inputs: dict[str, bool]) -> str:
     pages, texts = _pages(db, project_ids)
     return export_netlist(build_circuit(pages, texts), inputs)
+
+
+def circuit_lcapy(db: Session, project_ids: list[int], inputs: dict[str, bool], energized: dict[str, bool],
+                  fixed: bool) -> str:
+    """Lcapy のネットリスト（DD-0028）。fixed なら外部入力と励磁から接点の開閉を決めて、そのまま直流解析できる形にする。"""
+    pages, texts = _pages(db, project_ids)
+    circuit = build_circuit(pages, texts)
+    closed = circuit_interop.contact_states(circuit, inputs, energized) if fixed else None
+    return circuit_interop.lcapy_netlist(circuit, closed, pages=pages)
+
+
+def circuit_skidl(db: Session, project_ids: list[int]) -> str:
+    """実行すると KiCad のネットリストを書き出す SKiDL のスクリプト（DD-0028）。"""
+    pages, texts = _pages(db, project_ids)
+    return circuit_interop.skidl_script(build_circuit(pages, texts), pages=pages)
