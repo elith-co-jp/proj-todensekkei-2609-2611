@@ -327,3 +327,26 @@ class TrainingRun(Base):
     finished_at = Column(DateTime, nullable=True)
 
     result_model = relationship("MlModel")
+
+
+class CircuitChangeSet(Base):
+    """図面のコード表現への変更（DD-0034）。操作の並びと、変更前後の図面（記号・端子・配線）を残し、取り消せるようにする。
+
+    author は変更した主体（user / llm / 名前）。LLM の提案は人が試した結果を見て適用する。
+    """
+
+    __tablename__ = "circuit_change_sets"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    title = Column(String(500), nullable=False)
+    reason = Column(Text, nullable=True)
+    author = Column(String(100), nullable=False, default="user")
+    project_ids_json = Column(Text, nullable=False, default="[]")
+    ops_json = Column(Text, nullable=False, default="[]")
+    notes_json = Column(Text, nullable=True)       # 操作ごとの説明
+    summary_json = Column(Text, nullable=True)     # 試した結果の要約（動作の変化・検証）
+    before_json = Column(Text, nullable=False)     # 変更前の図面（取り消しで戻す）
+    after_hash = Column(String(32), nullable=False)
+    status = Column(String(20), nullable=False, default="applied")  # applied / undone
+    created_at = Column(DateTime, default=utc_now_naive)
+    undone_at = Column(DateTime, nullable=True)

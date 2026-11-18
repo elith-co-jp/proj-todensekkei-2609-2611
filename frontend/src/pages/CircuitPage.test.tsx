@@ -13,8 +13,9 @@ const api = vi.hoisted(() => ({
   simulateCircuit: vi.fn(),
   downloadNetlist: vi.fn(),
   imageUrl: (id: number) => `/img/${id}`,
+  circuitEditHistory: vi.fn(async () => ({ change_sets: [] })),
 }))
-vi.mock('../api/client', () => ({ api }))
+vi.mock('../api/client', () => ({ api, BASE: '' }))
 
 const row = { id: 7, name: 'p.png', sheet_no: 'ER21216', image_width: 1000, image_height: 700, connection_count: 12 } as ProjectRow
 

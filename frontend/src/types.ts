@@ -393,6 +393,55 @@ export type CircuitTimeline = {
   }[]
 }
 
+/** 図面への変更の操作（DD-0034）。形は GET /api/circuit/edit/tools の JSON Schema を参照。 */
+export type CircuitEditOp = { op: string } & Record<string, unknown>
+
+export type CircuitEditTools = {
+  tools: { name: string; description: string; input_schema: Record<string, unknown> }[]
+  ops: Record<string, unknown>
+}
+
+export type CircuitEditIssue = { check: string; severity: string; title: string; message: string; locations?: unknown[] }
+
+export type CircuitEditPreview = {
+  ok: boolean
+  base_hash: string
+  after_hash?: string
+  errors?: { index: number; op: string | null; message: string }[]
+  notes?: string[]
+  diff?: ({ project_id: number; change: 'added' | 'removed' | 'changed'; symbol_ref?: string; wire?: { from: (string | null)[]; to: (string | null)[]; wire_no: string | null } } & Record<string, unknown>)[]
+  netlist_diff?: string
+  circuit?: { relays_added: string[]; relays_removed: string[]; inputs_added: string[]; inputs_removed: string[]; timers_changed: string[] }
+  behaviour?: {
+    inputs: string
+    coils: { device: string; before: boolean | null; after: boolean | null }[]
+    loads: { project_id: number; symbol_ref: string; label: string | null; before: boolean | null; after: boolean | null }[]
+    warnings: string[]
+  }[]
+  scenarios?: number
+  impact?: { device: string; devices: string[]; loads: string[] }[]
+  validation?: {
+    diagnostics_added: { kind: string; message?: string }[]
+    issues_added: CircuitEditIssue[]
+    issues_resolved: CircuitEditIssue[]
+    errors: number
+  }
+}
+
+export type CircuitChangeSet = {
+  id: number
+  title: string
+  reason: string | null
+  author: string
+  status: 'applied' | 'undone'
+  project_ids: number[]
+  ops: CircuitEditOp[]
+  notes: string[]
+  summary: Record<string, unknown>
+  created_at: string | null
+  undone_at: string | null
+}
+
 export type CircuitSheetTag = CircuitSymbolRef & { sheet: string | null; target: string; label: string; page?: string | null }
 
 export type CircuitBox = { cx: number; cy: number; w: number; h: number }
