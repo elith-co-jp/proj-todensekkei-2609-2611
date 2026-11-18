@@ -35,7 +35,7 @@ services/circuit_model.build_circuit ──> Circuit
 | 合わない点 | リレー（コイルの電圧で接点が開閉する非線形の動作）は表せない。開閉を決めた 1 状態ずつの解析になる。浮いたノードがあると行列が特異になる（大きな抵抗で接地して回避） | 解析はしない（シミュレーションは別ツール）。盤の配線図には基板の部品の形（footprint）が無く、仮の名前を入れる。KiCad の記号ライブラリは使わずその場で部品の型を作る |
 | 描画 | `cct.draw()` で回路図を描けるが、LaTeX（pdflatex + CircuiTikZ）が必要で、配置のヒント（right/down）を各素子に付ける必要がある | 回路図の自動生成（schematizer）は依存が入らず未評価 |
 | 速さ（合成回路 40 枚・素子 388・ノード 212） | 1 状態の直流解析 約 0.3 秒 | KiCad ネットリスト生成 約 0.1 秒（10 枚） |
-| インストール | 1.26 は依存の `importlib` のため Python 3.13 で `pip install lcapy` が失敗 | 3.0.0 は依存の `kinet2pcb` などのビルドが新しい setuptools で失敗 |
+| インストール | 仮想環境・公式 python イメージなら Python 3.11〜3.14 で `pip install lcapy` が通る（§6） | 同左（`pip install skidl`） |
 | ライセンス | LGPL-2.1 | MIT |
 
 ### 結論
@@ -47,7 +47,8 @@ services/circuit_model.build_circuit ──> Circuit
   リレーの自己保持のような繰り返しの計算は今まで通り `circuit_model.simulate` が受け持つ。
 - **SKiDL = ネットリスト交換用。** 変換前の回路と、SKiDL が出した KiCad のネットリストのネット（部品・端子の組）が一致する
   ことをテストで確かめた。器具番号（Device）と元の記号（Source = 図面 ID:記号 ref）を部品のフィールドに残す。
-- どちらも本体の必須依存にはしない。Windows exe と Docker に入れず、ライブラリ無しで作れる文字列（Lcapy のネットリスト、
+- どちらも本体の必須依存にはしない（依存を含めて約 350 MB 増える）。Windows exe には入れず、Docker は
+  `WITH_INTEROP=1` のときだけ入れる。ライブラリ無しで作れる文字列（Lcapy のネットリスト、
   SKiDL のスクリプト）を API から出し、ライブラリのオブジェクトは遅延 import の関数で作る。
 
 ## 4. 実装
@@ -57,7 +58,8 @@ services/circuit_model.build_circuit ──> Circuit
 | `services/circuit_interop.py` | `part_list`（参照記号: K コイル、S 接点、H 表示灯、Y 電磁弁、D ダイオード、R その他の負荷）、`lcapy_netlist`、`to_lcapy`、`solve_lcapy`、`contact_states`、`skidl_script`、`to_skidl`、`kicad_netlist` |
 | `POST /api/circuit/lcapy` | Lcapy のネットリスト。`fixed: true` なら `inputs`・`energized` から接点の開閉を決めて `W`/`O` にする |
 | `POST /api/circuit/skidl` | 実行すると `circuit.net`（KiCad 8）を書き出す SKiDL のスクリプト |
-| `requirements-interop.txt` | 任意。上のインストールの不具合を避ける手順つき |
+| `requirements-interop.txt` | 任意（`lcapy>=1.26`、`skidl>=3.0`） |
+| `Dockerfile` / `docker-compose.yml` | ビルド引数 `WITH_INTEROP=1` で Lcapy・SKiDL を入れる（既定は入れない） |
 | `tests/test_circuit_interop.py` | 文字列の変換と API はいつも、Lcapy の解との照合・SKiDL のネットの照合はライブラリがある環境で確かめる |
 
 ### 変換の規則
@@ -78,3 +80,22 @@ services/circuit_model.build_circuit ──> Circuit
 - Lcapy の回路図の描画は未対応。図面の記号の座標（cx, cy）から right/down の配置のヒントを付ければ描ける見込みだが、
   pdflatex が要る。描画は DD-0027 の Schemdraw の方針と合わせて判断する。
 - 画面からのダウンロードボタンは未追加（API のみ）。
+
+## 6. インストールの検証（2026-11-18）
+
+最初の検証では `pip install lcapy` / `pip install skidl` が失敗したため Python の版が原因かを調べた。
+uv で Python 3.11 / 3.12 / 3.13 / 3.14 の仮想環境を作り、lcapy 1.24・1.26、skidl 2.2.3・3.0.0 を入れたところ、
+すべて普通に入った。pip 24.0・25.0・26.3 でも同じだった。
+
+| 環境 | 結果 |
+|------|------|
+| 仮想環境（Python 3.11・3.12・3.13・3.14、pip 24〜26 / uv） | 入る |
+| 仮想環境で requirements.txt + requirements-interop.txt を入れて本 DD のテスト（3.11・3.13） | すべて通る |
+| Debian の apt の Python 3.13 の「システムの pip」に直接 | 失敗（依存 `importlib`・`kinet2pcb` の setup.py のビルドが Debian 独自の setuptools の改変 `install_layout` で止まる） |
+
+**Python の版を上げる必要は無い。** 失敗の原因は Python の版ではなく、Debian が改変した setuptools をビルドに使うシステムの pip
+だった。Docker（公式の `python:3.13-slim`）と Windows exe のビルド（actions/setup-python の 3.11）はどちらも公式の Python を
+使うため影響を受けない。手元では仮想環境に入れる。
+
+増える大きさ: requirements.txt だけの仮想環境 332 MB → Lcapy・SKiDL を足して 677 MB（約 +345 MB。sympy・scipy・
+matplotlib・IPython・skidl の付属ツールなど）。このため exe には入れず、Docker もビルド引数で選ぶ形にした。

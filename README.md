@@ -79,6 +79,10 @@ docker compose up --build -d
 パスワード等を変更する場合は `.env.example` を `.env` にコピーして編集します。
 PostgreSQL のデータと変換後のページ画像は Docker volume に永続化されます。
 
+回路を Lcapy・SKiDL のオブジェクトで扱う場合（[DD-0028](docs/dd/DD-0028-lcapy-skidl-interop.md)）は
+`WITH_INTEROP=1 docker compose up --build -d` でビルドします（約 350 MB 増えるため既定では入れません）。
+Docker を使わない場合は仮想環境で `pip install -r requirements-interop.txt` を実行します。
+
 ### PDF の登録とページ単位の作業
 
 1. http://localhost:3000 を開き、「PDF / 図面を登録」を押す。

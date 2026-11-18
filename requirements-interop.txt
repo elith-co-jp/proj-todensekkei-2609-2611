@@ -1,21 +1,11 @@
 # 任意: 図面から組んだ回路を Lcapy・SKiDL のオブジェクトで扱う・テストで照合するときだけ使う（DD-0028）。
 # API のネットリスト／スクリプトの出力はこのファイル無しで動く。
 #
-# lcapy 1.26 は依存に PyPI の古い "importlib" を書いており Python 3.13 で入らない。
-# skidl 3.0 は依存の kinet2pcb / hierplace / schematizer が新しい setuptools で入らない。
-# そのため本体は --no-deps で入れ、実際に import で使う依存だけをここに並べる:
 #   pip install -r requirements-interop.txt
-#   pip install --no-deps lcapy==1.26 skidl==3.0.0
-sympy>=1.12
-scipy>=1.11
-networkx>=3.0
-matplotlib>=3.8
-property-cached>=1.6
-ipython>=8.0
-setuptools
-wheel
-deprecation>=2.1
-graphviz>=0.20
-ply>=3.11
-rich>=13.0
-simp_sexp
+#
+# 仮想環境（venv / uv）や公式の python イメージなら Python 3.11〜3.14 のどれでも普通に入る（2026-11-18 確認）。
+# Debian / Ubuntu の apt で入れた Python の「システムの pip」に直接入れると、Debian 独自の setuptools の改変で
+# 依存（importlib・kinet2pcb など）のビルドが失敗する。その場合は仮想環境を作ってから入れる。
+# 依存（sympy・scipy・matplotlib・IPython など）を含めて約 350 MB 増えるため、本体の requirements.txt には入れない。
+lcapy>=1.26
+skidl>=3.0
