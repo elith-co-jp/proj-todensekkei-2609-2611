@@ -23,6 +23,7 @@ from typing import Any
 import numpy as np
 
 from analysis.wiring import classes
+from services import sheet_links
 
 PASS_CLASSES = classes.PASS_THROUGH
 CONTACT_CLASSES = {"contact_a": "a", "contact_b": "b"}
@@ -73,6 +74,8 @@ class Circuit:
     inputs: list[str]                        # 外部入力にした器具番号（コイルが選んだ図面に無い接点）
     diagnostics: list[dict[str, Any]]
     wires: list[dict[str, Any]] = field(default_factory=list)
+    # 行先札・来先札でつないだ図面間の組（DD-0030）。{"from": 札, "to": 札, "how": matched / guessed}
+    sheet_links: list[dict[str, Any]] = field(default_factory=list)
 
 
 def device_key(label: str | None) -> str | None:
@@ -118,7 +121,7 @@ def _load_resistance(attributes: dict[str, Any]) -> float:
 def joins_inside_symbol(symbol: dict[str, Any], from_ref: str | None, to_ref: str | None, width: float, height: float) -> bool:
     """同じ記号の 2 つの端子を結ぶ配線が導線か（DD-0022）。通り抜けの点は導線、機器（接点・コイルなど）は素子、
     「その他」（カード・盤の枠）は縦に長い線（カードの + と -）だけ素子で、ほかは導線。"""
-    if symbol["class_key"] in PASS_CLASSES:
+    if _is_pass(symbol):
         return True
     if symbol["class_key"] != "other" or width <= 0 or height <= 0:
         return False
@@ -127,6 +130,11 @@ def joins_inside_symbol(symbol: dict[str, Any], from_ref: str | None, to_ref: st
     if a is None or b is None:
         return False
     return not (abs(a[0] - b[0]) <= ELEMENT_LINK_ALIGN_PX and abs(a[1] - b[1]) >= ELEMENT_LINK_MIN_PX)
+
+
+def _is_pass(symbol: dict[str, Any]) -> bool:
+    """端子をすべて同じ点として扱う記号: 分岐点・端子・コネクタ・母線端と、行先札・来先札（DD-0030）。"""
+    return symbol["class_key"] in PASS_CLASSES or sheet_links.sheet_tag_target(symbol) is not None
 
 
 def build_circuit(pages: list[dict[str, Any]], bus_texts: dict[int, list[dict[str, Any]]] | None = None) -> Circuit:
@@ -146,6 +154,8 @@ def build_circuit(pages: list[dict[str, Any]], bus_texts: dict[int, list[dict[st
     diagnostics: list[dict[str, Any]] = []
     symbols: dict[tuple[int, str], dict[str, Any]] = {}
     wires = []
+    wire_numbers: dict[tuple[int, str], set[str]] = defaultdict(set)
+    tags: list[sheet_links.Tag] = []
     for page in pages:
         pid = page["id"]
         for s in page["symbols"]:
@@ -153,11 +163,11 @@ def build_circuit(pages: list[dict[str, Any]], bus_texts: dict[int, list[dict[st
             terms = [(pid, s["ref"], t["ref"]) for t in s.get("terminals") or []]
             for k in terms:
                 find(k)
-            if s["class_key"] in PASS_CLASSES:
+            if _is_pass(s):
                 for k in terms[1:]:
                     union(terms[0], k)
         for c in page["connections"]:
-            if c.get("kind", "wire") != "wire":
+            if c.get("kind", "wire") not in ("wire", "sheet_ref"):
                 continue
             ends = []
             for side in ("from", "to"):
@@ -167,9 +177,9 @@ def build_circuit(pages: list[dict[str, Any]], bus_texts: dict[int, list[dict[st
                     break
                 if tref is None:
                     terms = sym.get("terminals") or []
-                    if len(terms) == 1 or sym["class_key"] in PASS_CLASSES and terms:
+                    if len(terms) == 1 or _is_pass(sym) and terms:
                         tref = terms[0]["ref"]
-                    elif sym["class_key"] in PASS_CLASSES:
+                    elif _is_pass(sym):
                         # 端子の無い分岐点・コネクタは記号そのものが 1 つの節点（ER21297 の正解の黒丸、DD-0023）。
                         tref = PASS_NODE_TERMINAL
                     else:
@@ -185,6 +195,33 @@ def build_circuit(pages: list[dict[str, Any]], bus_texts: dict[int, list[dict[st
                     continue
                 union(ends[0], ends[1])
                 wires.append({"project_id": pid, "from": ends[0], "to": ends[1]})
+                wire_numbers[(pid, ends[0][1])].add(c.get("wire_no") or "")
+                wire_numbers[(pid, ends[1][1])].add(c.get("wire_no") or "")
+                # 種別「シート間参照」の配線は、external_ref のシート番号へ向かう札として終点を登録する（DD-0030）。
+                # 終点が札の記号なら、external_ref の語を札の識別に足す。
+                if c.get("kind") == "sheet_ref":
+                    if sheet_links.sheet_tag_target(symbols[(pid, ends[1][1])]) is not None:
+                        wire_numbers[(pid, ends[1][1])].add(c.get("external_ref") or "")
+                    else:
+                        tag = sheet_links.connection_tag(page, c, ends[1])
+                        if tag is not None:
+                            tags.append(tag)
+
+    # 行先札・来先札（DD-0030）: 向かい合う札を組にして、図面をまたいでノードを 1 つにする。
+    for page in pages:
+        for s in page["symbols"]:
+            if sheet_links.sheet_tag_target(s) is None:
+                continue
+            terms = s.get("terminals") or []
+            node = (page["id"], s["ref"], terms[0]["ref"] if terms else PASS_NODE_TERMINAL)
+            tag = sheet_links.symbol_tag(page, s, node, wire_numbers.get((page["id"], s["ref"]), set()))
+            if tag is not None:
+                tags.append(tag)
+    pairs, link_diagnostics = sheet_links.link_tags(tags, {p["id"]: sheet_links.page_sheet(p) for p in pages})
+    for t, u, _how in pairs:
+        union(t.node, u.node)
+    diagnostics += link_diagnostics
+    links = [{"from": t.describe(), "to": u.describe(), "how": how} for t, u, how in pairs]
 
     # 母線: 母線端の記号の位置に近い PER/NER の文字で決める。文字が無ければ上の母線端を P、下を 0 と推定する。
     bus_root: dict[Any, str] = {}
@@ -293,7 +330,7 @@ def build_circuit(pages: list[dict[str, Any]], bus_texts: dict[int, list[dict[st
             diagnostics.append({"kind": "coil_without_contacts", "device": dev,
                                 "message": f"コイル {dev} の接点が選んだ図面にありません"})
     nodes = sorted(set(node_of.values()))
-    return Circuit(elements, nodes, node_of, dict(coils), sorted(inputs), diagnostics, wires)
+    return Circuit(elements, nodes, node_of, dict(coils), sorted(inputs), diagnostics, wires, links)
 
 
 def netlist(circuit: Circuit, closed: dict[str, bool], title: str = "TodenYOLO circuit") -> str:

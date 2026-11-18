@@ -370,7 +370,11 @@ export type CircuitSummary = {
   coils: { device: string; symbols: CircuitSymbolRef[]; contacts: (CircuitSymbolRef & { kind: 'a' | 'b' })[] }[]
   inputs: { device: string; contacts: (CircuitSymbolRef & { kind: 'a' | 'b' })[] }[]
   diagnostics: CircuitDiagnostic[]
+  /** 行先札・来先札でつないだ図面間の組（DD-0030）。matched: 電線番号などで確認、guessed: 向かい合う札が 1 組だけ */
+  sheet_links?: { how: 'matched' | 'guessed'; from: CircuitSheetTag; to: CircuitSheetTag }[]
 }
+
+export type CircuitSheetTag = CircuitSymbolRef & { sheet: string | null; target: string; label: string; page?: string | null }
 
 export type CircuitBox = { cx: number; cy: number; w: number; h: number }
 

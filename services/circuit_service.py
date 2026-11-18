@@ -44,6 +44,9 @@ def _summary(circuit: Circuit, pages: list[dict[str, Any]]) -> dict[str, Any]:
                    "contacts": contacts_of.get(dev, [])} for dev, es in sorted(circuit.coils.items())],
         "inputs": [{"device": dev, "contacts": contacts_of.get(dev, [])} for dev in circuit.inputs],
         "diagnostics": [{**d, "page": names.get(d.get("project_id"))} for d in circuit.diagnostics],
+        # 行先札・来先札でつないだ図面間の組（DD-0030）
+        "sheet_links": [{"how": link["how"], "from": {**link["from"], "page": names.get(link["from"]["project_id"])},
+                         "to": {**link["to"], "page": names.get(link["to"]["project_id"])}} for link in circuit.sheet_links],
     }
 
 
