@@ -5,6 +5,8 @@ import type {
   CircuitChange,
   CircuitImpact,
   CircuitResult,
+  CircuitTimeline,
+  CircuitTimelineEvent,
   CircuitWhatIf,
   ConsistencyResult,
   CircuitSummary,
@@ -285,6 +287,13 @@ export const api = {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ project_ids: projectIds, inputs, energized, change }),
+    }),
+
+  circuitTimeline: (projectIds: number[], events: CircuitTimelineEvent[], delays: Record<string, number>, until?: number) =>
+    req<CircuitTimeline>('/api/circuit/timeline', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ project_ids: projectIds, events, delays, until }),
     }),
 
   circuitImpact: (projectIds: number[], device: string) =>

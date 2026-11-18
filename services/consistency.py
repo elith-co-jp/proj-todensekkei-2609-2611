@@ -9,6 +9,7 @@
 | wire_numbers | 配線のつながり（ノード） | 電線番号 |
 | sheet_links | 行先札の組（DD-0030） | 両側の電線番号・組にならない札 |
 | open_terminals | 記号の端子 | 配線（片方の端子だけつながる記号） |
+| input_names | 入力の接点の名前（停止は b、起動は a） | 接点の種類 |
 | solvers | 内蔵の回路計算 | ngspice・Lcapy |
 | impact | 静的な波及範囲 | もしもの結果（入力を 1 つずつ入れる） |
 | stability | シミュレーション（自己保持・発振） | 接点の種類（自分のコイルの段にある b 接点） |
@@ -99,6 +100,20 @@ def _unique_after_assignment(rows: list[dict[str, str]], index: int, found: dict
     return [sid for sid in same if sid not in taken] == [found[index]["symbol_id"]]
 
 
+# 入力の名前から決まる接点の種類（DD-0033）。英字は語の区切りで見る。
+_INPUT_B = re.compile(r"(?<![A-Z])(STOP|EMG|EMS|E-?STOP|OFF)(?![A-Z])|停止|非常|切")
+_INPUT_A = re.compile(r"(?<![A-Z])(START|RUN|ON)(?![A-Z])|起動|運転|入")
+
+
+def input_kind_by_name(device: str) -> str | None:
+    """入力の名前から、取り決めの接点の種類（"a" / "b"）。決まらなければ None。"""
+    text = normalize(device).upper()
+    b, a = bool(_INPUT_B.search(text)), bool(_INPUT_A.search(text))
+    if b == a:
+        return None
+    return "b" if b else "a"
+
+
 class Checker:
     def __init__(self, pages: list[dict[str, Any]], structures: dict[int, dict[str, Any] | None],
                  circuit: Circuit, *, solvers: bool = True) -> None:
@@ -159,9 +174,13 @@ class Checker:
                 else:
                     review.append("1 文字違いのコイルも無い → コイルの検出漏れか、表の読み違い" if not near
                                   else f"1 文字違いのコイルが {len(near)} 個あり 1 つに決まらない")
+                    used = [(p, r) for (p, r), c in self.symbols.items()
+                            if c["class_key"] in CONTACT_LABEL and same_relay_device(c.get("label") or "", device)][:5]
                     self.add("relay_table", "warning", "リレー表の器具のコイルが無い",
                              f"リレー表の {device} のコイルが図面に見つかりません",
-                             [_loc(pid, s["ref"], self.names) for s in near], review,
+                             [_loc(pid, s["ref"], self.names) for s in near]
+                             + [{"project_id": pid, "symbol_ref": None, "page": self.names.get(pid), "position": None}]
+                             + [_loc(p, r, self.names) for p, r in used], review,
                              "図面でコイルを探して登録するか、リレー表の読みを確かめる", key=(pid, device))
             # 行列の位置の接点（「本」はこの図面、ほかは選んだ図面のうちそのシート）。図面ごとに、表の行をまとめて
             # 1 行 1 接点で結び付ける（隣の列に同じリレーの接点があっても、行どうしで取り合わない）。
@@ -235,7 +254,10 @@ class Checker:
         if not found.get("device_match"):
             # ここに来るのは、ラベルが空か器具番号が 1 文字違いの接点（それ以外は上で見落としとして扱う）。
             m = SHEET.search(normalize(symbol.get("label") or "").replace(" ", ""))
-            value = f"{row['device']} ({m.group(0)})" if m else row["device"]  # コイルのシート番号は残す
+            coil_sheet = m.group(0) if m else (sheet_links.page_sheet(next(p for p in self.pages if p["id"] == pid))
+                                              if tid != pid else None)
+            # コイルのシート番号は残す。ラベルが空で、表が別の図面（コイルのある図面）にあれば、そのシート番号を付ける。
+            value = f"{row['device']} ({coil_sheet})" if coil_sheet else row["device"]
             self.add("relay_table", "error", "接点の器具番号が表と違う",
                      f"{where} の接点 {symbol.get('label') or ref} は、表では {row['device']}",
                      [_loc(tid, ref, self.names)],
@@ -453,6 +475,44 @@ class Checker:
                      locations, review, proposal, fix, key=(pid, ref, "unpaired"))
         return compared
 
+    def _overlapping(self, pid: int, symbol: dict[str, Any]) -> dict[str, Any] | None:
+        """同じ図面で、同じ種類で中心がほぼ同じ位置（大きさの半分以内）のほかの記号。"""
+        for (p, ref), other in self.symbols.items():
+            if p != pid or ref == symbol["ref"] or other["class_key"] != symbol["class_key"]:
+                continue
+            if (abs(other["cx"] - symbol["cx"]) <= max(symbol["w"], other["w"]) / 2
+                    and abs(other["cy"] - symbol["cy"]) <= max(symbol["h"], other["h"]) / 2):
+                return other
+        return None
+
+    # ------------------------------------------------------------------------------- 入力の接点の名前
+    def input_names(self) -> None:
+        """押しボタンなどの入力の接点は、リレー表のような照合先が無い。名前の取り決め（停止・非常停止は b、起動・運転は a）
+        と接点の種類を比べる（DD-0033）。取り決めに合わない使い方もあるので要確認にする。"""
+        compared = 0
+        for e in self.circuit.elements:
+            if e.kind not in ("a", "b") or e.device not in self.circuit.inputs:
+                continue
+            expected = input_kind_by_name(e.device)
+            if expected is None:
+                continue
+            compared += 1
+            if expected == e.kind:
+                continue
+            s = self.symbols.get((e.project_id, e.symbol_ref)) or {}
+            target = f"contact_{expected}"
+            self.add("input_names", "warning", "入力の接点の種類が名前と合わない",
+                     f"入力 {e.device} は名前から {CONTACT_LABEL[target]}のはずですが、図面では {CONTACT_LABEL[f'contact_{e.kind}']}です",
+                     [_loc(e.project_id, e.symbol_ref, self.names)],
+                     [f"入力 {e.device} はリレー表に行が無く、名前の取り決めと比べた",
+                      "停止・非常停止・切は b 接点、起動・運転・入は a 接点で描くことが多い",
+                      f"記号: {_symbol_trust(s)}", "停止用のリレーを動かす a 接点など、取り決めと違う使い方もある → 図面で確かめる"],
+                     f"図面で確かめ、読み違いなら接点 {e.symbol_ref} を {CONTACT_LABEL[target]}にする",
+                     {"type": "set_class", "project_id": e.project_id, "symbol_ref": e.symbol_ref, "value": target},
+                     key=(e.project_id, e.symbol_ref, "input"))
+        self.record("input_names", "入力の接点の名前", "接点の種類", compared,
+                    None if compared else "名前から種類が決まる入力（停止・起動など）がありません")
+
     # --------------------------------------------------------------------------------- 端子の配線
     def open_terminals(self) -> None:
         """接点・コイル・負荷の 2 つの端子のうち、片方だけ配線がある記号（段が途切れている）。"""
@@ -465,8 +525,22 @@ class Checker:
                 continue
             compared += 1
             lone = [t for t in terms if members[self.circuit.node_of.get((e.project_id, e.symbol_ref, t["ref"]))] == 1]
+            if len(lone) == 2:
+                twin = self._overlapping(e.project_id, s)
+                review = ["2 つの端子のどちらにも配線が無い"]
+                if twin:
+                    review.append(f"同じ種類の記号 {twin.get('label') or ''}（{twin['ref']}）とほぼ同じ位置に重なっている → 二重の検出の可能性が高い")
+                else:
+                    review.append("記号の誤検出（文字や線の一部を記号と見た）か、配線をすべて見落とした")
+                self.add("open_terminals", "warning", "どこにもつながっていない記号" if not twin else "記号が重なっている（二重の検出）",
+                         f"{self.names.get(e.project_id)} の {s.get('label') or e.symbol_ref} に配線がありません",
+                         [_loc(e.project_id, e.symbol_ref, self.names)]
+                         + ([_loc(e.project_id, twin["ref"], self.names)] if twin else []), review,
+                         f"記号 {e.symbol_ref} を消す（二重の検出）" if twin else "図面で確かめ、誤検出なら記号を消し、見落としなら配線をつなぐ",
+                         key=(e.project_id, e.symbol_ref, "isolated"))
+                continue
             if len(lone) != 1:
-                continue  # 両方つながっている（または記号ごと孤立: 検出の誤りの可能性で、ここでは出さない）
+                continue
             self.add("open_terminals", "warning", "配線がつながっていない端子",
                      f"{self.names.get(e.project_id)} の {s.get('label') or e.symbol_ref} の端子 {lone[0].get('name') or lone[0]['ref']} に配線がありません",
                      [_loc(e.project_id, e.symbol_ref, self.names)],
@@ -576,7 +650,7 @@ class Checker:
                     None if self.circuit.elements else "回路の素子がありません")
 
     def run(self) -> dict[str, Any]:
-        for step in (self.relay_table, self.coil_sheet, self.wire_numbers, self.sheet_link_numbers, self.open_terminals,
+        for step in (self.relay_table, self.coil_sheet, self.wire_numbers, self.sheet_link_numbers, self.open_terminals, self.input_names,
                      self.solver_agreement, self.impact_vs_whatif, self.stability):
             step()
         for page in self.pages:

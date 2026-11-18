@@ -372,6 +372,25 @@ export type CircuitSummary = {
   diagnostics: CircuitDiagnostic[]
   /** 行先札・来先札でつないだ図面間の組（DD-0030）。matched: 電線番号などで確認、guessed: 向かい合う札が 1 組だけ */
   sheet_links?: { how: 'matched' | 'guessed'; from: CircuitSheetTag; to: CircuitSheetTag }[]
+  /** タイマー（DD-0033）: コイルの属性 timer_mode・delay_s */
+  timers?: CircuitTimer[]
+}
+
+export type CircuitTimer = { device: string; mode: 'on_delay' | 'off_delay'; delay_s: number }
+
+export type CircuitTimelineEvent = { at: number; inputs: Record<string, boolean>; label?: string }
+
+export type CircuitTimeline = {
+  timers: CircuitTimer[]
+  timeline: {
+    t: number
+    label: string
+    inputs: Record<string, boolean>
+    coils: Record<string, boolean>
+    timers: Record<string, { output: boolean; due: number | null }>
+    changes: CircuitWhatIf['changes']
+    warnings: string[]
+  }[]
 }
 
 export type CircuitSheetTag = CircuitSymbolRef & { sheet: string | null; target: string; label: string; page?: string | null }

@@ -63,6 +63,7 @@ class Element:
     label: str
     device: str | None = None   # コイル・接点の器具番号（開閉の対応づけ）
     resistance: float = R_LOAD  # 負荷の抵抗。属性 coil_resistance_ohm / resistance_ohm があればその値（DD-0010）
+    instant: bool = False       # タイマーの瞬時接点（属性 timer_contact = instant。DD-0033）
 
 
 @dataclass
@@ -76,6 +77,8 @@ class Circuit:
     wires: list[dict[str, Any]] = field(default_factory=list)
     # 行先札・来先札でつないだ図面間の組（DD-0030）。{"from": 札, "to": 札, "how": matched / guessed}
     sheet_links: list[dict[str, Any]] = field(default_factory=list)
+    # タイマー（DD-0033）: 器具番号 → {"mode": "on_delay" / "off_delay", "delay_s": 秒}。コイルの属性から。
+    timers: dict[str, dict[str, Any]] = field(default_factory=dict)
 
 
 def device_key(label: str | None) -> str | None:
@@ -105,6 +108,27 @@ def _bus_side(text: str | None) -> str | None:
 
 def _spice_name(name: str) -> str:
     return re.sub(r"[^0-9A-Za-z_]", "_", name)
+
+
+TIMER_MODES = {
+    "on_delay": "on_delay", "ondelay": "on_delay", "オンディレー": "on_delay", "オンディレイ": "on_delay", "限時動作": "on_delay",
+    "off_delay": "off_delay", "offdelay": "off_delay", "オフディレー": "off_delay", "オフディレイ": "off_delay",
+    "限時復帰": "off_delay",
+}
+
+
+def timer_setting(attributes: dict[str, Any]) -> dict[str, Any] | None:
+    """コイルの属性 timer_mode（オンディレー・オフディレー）と delay_s（秒）からタイマーの設定。タイマーでなければ None。"""
+    mode = TIMER_MODES.get(str(attributes.get("timer_mode") or "").strip().lower().replace("-", "_").replace(" ", ""))
+    if mode is None:
+        mode = TIMER_MODES.get(str(attributes.get("timer_mode") or "").strip())
+    if mode is None:
+        return None
+    try:
+        delay = float(attributes.get("delay_s"))
+    except (TypeError, ValueError):
+        delay = None
+    return {"mode": mode, "delay_s": delay if delay is not None and delay >= 0 else None}
 
 
 def _load_resistance(attributes: dict[str, Any]) -> float:
@@ -284,6 +308,7 @@ def build_circuit(pages: list[dict[str, Any]], bus_texts: dict[int, list[dict[st
     elements: list[Element] = []
     coils: dict[str, list[Element]] = defaultdict(list)
     # 照合用の形 → 最初に見つけたコイルの器具番号。O と 0 だけが違うコイル・接点を同じリレーにする。
+    timers: dict[str, dict[str, Any]] = {}
     coil_by_canonical: dict[str, str] = {}
     for (pid, ref), s in sorted(symbols.items(), key=lambda kv: (kv[0][0], kv[0][1])):
         cls, terms = s["class_key"], s.get("terminals") or []
@@ -298,10 +323,18 @@ def build_circuit(pages: list[dict[str, Any]], bus_texts: dict[int, list[dict[st
         element = Element(f"{'SW' if kind in ('a', 'b') else 'R'}_{pid}_{_spice_name(ref)}", kind, a, b, pid, ref,
                           s.get("label") or "", device_key(s.get("label")) if cls in CONTACT_CLASSES or cls == "relay_coil" else None,
                           _load_resistance(s.get("attributes") or {}))
+        element.instant = str((s.get("attributes") or {}).get("timer_contact") or "").strip() in ("instant", "瞬時")
         elements.append(element)
         if cls == "relay_coil" and element.device:
             element.device = coil_by_canonical.setdefault(canonical_device(element.device), element.device)
             coils[element.device].append(element)
+            timer = timer_setting(s.get("attributes") or {})
+            if timer is not None:
+                if timer["delay_s"] is None:
+                    diagnostics.append({"kind": "timer_without_delay", "project_id": pid, "symbol_ref": ref,
+                                        "message": f"タイマー {element.device} の時間（delay_s）が無いため 0 秒として扱います"})
+                    timer["delay_s"] = 0.0
+                timers[element.device] = timer
 
     # ラベルに機器名が無い接点（「33LA」）は、器具番号が同じコイルが 1 つだけなら、そのコイルで開閉する。
     by_number: dict[str, list[str]] = defaultdict(list)
@@ -330,7 +363,7 @@ def build_circuit(pages: list[dict[str, Any]], bus_texts: dict[int, list[dict[st
             diagnostics.append({"kind": "coil_without_contacts", "device": dev,
                                 "message": f"コイル {dev} の接点が選んだ図面にありません"})
     nodes = sorted(set(node_of.values()))
-    return Circuit(elements, nodes, node_of, dict(coils), sorted(inputs), diagnostics, wires, links)
+    return Circuit(elements, nodes, node_of, dict(coils), sorted(inputs), diagnostics, wires, links, timers)
 
 
 def netlist(circuit: Circuit, closed: dict[str, bool], title: str = "TodenYOLO circuit") -> str:
@@ -423,7 +456,8 @@ def _volt(volts: dict[str, float], node: str) -> float:
 
 
 def simulate(circuit: Circuit, inputs: dict[str, bool], energized: dict[str, bool] | None = None, *,
-             forced_devices: dict[str, bool] | None = None, forced_contacts: dict[str, bool] | None = None) -> dict[str, Any]:
+             forced_devices: dict[str, bool] | None = None, forced_contacts: dict[str, bool] | None = None,
+             timer_outputs: dict[str, bool] | None = None) -> dict[str, Any]:
     """外部入力の On/Off と前の励磁状態から、状態が変わらなくなるまで解く。
 
     forced_devices: 器具番号 → 動作の固定（リレーを手で押し込む・コイルが動かない、などの「もしも」。DD-0029）。
@@ -431,6 +465,14 @@ def simulate(circuit: Circuit, inputs: dict[str, bool], energized: dict[str, boo
     """
     forced_devices = forced_devices or {}
     forced_contacts = forced_contacts or {}
+    # タイマーの限時接点は、コイルの励磁でなく時間の経過で決まる出力に従う（DD-0033。瞬時接点はコイルに従う）。
+    timer_outputs = timer_outputs or {}
+
+    def contact_on(e: Element) -> bool:
+        if e.device in timer_outputs and e.device not in forced_devices and not e.instant:
+            return bool(timer_outputs[e.device])
+        return is_on(e.device)
+
     state = {dev: bool(forced_devices.get(dev, (energized or {}).get(dev))) for dev in circuit.coils}
     seen: list[dict[str, bool]] = []
     warnings: list[str] = []
@@ -443,7 +485,7 @@ def simulate(circuit: Circuit, inputs: dict[str, bool], energized: dict[str, boo
 
     steps = 0
     for steps in range(1, MAX_STEPS + 1):  # noqa: B007  回数を結果に出す
-        closed = {e.name: forced_contacts.get(e.name, is_on(e.device) == (e.kind == "a"))
+        closed = {e.name: forced_contacts.get(e.name, contact_on(e) == (e.kind == "a"))
                   for e in circuit.elements if e.kind in ("a", "b")}
         volts, current, engine = solve(netlist(circuit, closed))
         coil_v = {dev: max(abs(_volt(volts, e.a) - _volt(volts, e.b)) for e in es) for dev, es in circuit.coils.items()}

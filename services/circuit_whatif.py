@@ -95,9 +95,10 @@ def apply_change(circuit: Circuit, change: dict[str, Any] | None) -> tuple[Circu
     return circuit, options
 
 
-def _run(circuit: Circuit, inputs: dict[str, bool], energized: dict[str, bool], options: dict[str, Any]) -> dict[str, Any]:
+def _run(circuit: Circuit, inputs: dict[str, bool], energized: dict[str, bool], options: dict[str, Any],
+         timer_outputs: dict[str, bool] | None = None) -> dict[str, Any]:
     result = simulate(circuit, inputs, energized, forced_devices=options.get("forced_devices"),
-                      forced_contacts=options.get("forced_contacts"))
+                      forced_contacts=options.get("forced_contacts"), timer_outputs=timer_outputs)
     broken = options.get("broken") or set()
     names = {(e.project_id, e.symbol_ref): e.name for e in circuit.elements}
     for load in result["loads"]:

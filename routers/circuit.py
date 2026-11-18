@@ -19,6 +19,7 @@ from services.circuit_service import (
     circuit_sequence,
     circuit_skidl,
     circuit_summary,
+    circuit_timeline,
     circuit_what_if,
     consistency_check,
     run_simulation,
@@ -65,6 +66,20 @@ class SequenceStep(BaseModel):
 
 class SequenceRequest(WhatIfRequest):
     steps: list[SequenceStep] = Field(min_length=1, max_length=50)
+
+
+class TimelineEvent(BaseModel):
+    at: float = Field(ge=0, le=86400)
+    label: str | None = None
+    inputs: dict[str, bool] = {}
+
+
+class TimelineRequest(WhatIfRequest):
+    """時刻つきの操作（DD-0033）。delays: タイマーの時間の変更（器具番号 → 秒）、until: ここまで進める（秒）。"""
+
+    events: list[TimelineEvent] = Field(default=[], max_length=100)
+    delays: dict[str, float] = {}
+    until: float | None = Field(default=None, ge=0, le=86400)
 
 
 class ImpactRequest(BaseModel):
@@ -183,6 +198,16 @@ def sequence(payload: SequenceRequest, db: Session = Depends(get_db)):
     try:
         return circuit_sequence(db, payload.project_ids, [s.model_dump() for s in payload.steps], payload.inputs,
                                 payload.energized, payload.change.model_dump())
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@router.post("/timeline")
+def timeline(payload: TimelineRequest, db: Session = Depends(get_db)):
+    """時刻つきの操作とタイマー（オンディレー・オフディレー）で、時間の流れを解く（DD-0033）。"""
+    try:
+        return circuit_timeline(db, payload.project_ids, [e.model_dump() for e in payload.events], payload.inputs,
+                                payload.energized, payload.change.model_dump(), payload.delays, payload.until)
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
 

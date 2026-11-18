@@ -5,6 +5,7 @@ import { AlertTriangle, Download, Loader2, RotateCcw, Zap } from 'lucide-react'
 import { api } from '../api/client'
 import type { CircuitResult, CircuitSummary, ProjectRow } from '../types'
 import ConsistencyPanel from './circuit/ConsistencyPanel'
+import TimelinePanel from './circuit/TimelinePanel'
 import WhatIfPanel from './circuit/WhatIfPanel'
 
 const ENGINE_LABEL = { ngspice: 'SPICE（ngspice）で解いています', builtin: '内蔵の回路計算で解いています（ngspice 未導入）' }
@@ -183,6 +184,7 @@ export default function CircuitPage() {
             </section>
 
             <WhatIfPanel projectIds={selected} summary={summary} inputs={inputs} energized={energizedNow()} />
+            <TimelinePanel projectIds={selected} summary={summary} />
 
             {(summary.sheet_links?.length ?? 0) > 0 && (
               <section className="card p-4" aria-label="図面間のつながり">

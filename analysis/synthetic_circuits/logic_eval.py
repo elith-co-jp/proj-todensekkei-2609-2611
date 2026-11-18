@@ -18,12 +18,13 @@ from collections import Counter, defaultdict
 from typing import Any
 
 from analysis.synthetic_circuits import logic
-from services import circuit_code, circuit_model, circuit_whatif, consistency
+from services import circuit_code, circuit_model, circuit_timing, circuit_whatif, consistency
 from services.circuit_model import canonical_device
 
 FAULTS = ["flip_ab", "coil_label", "contact_label", "contact_sheet_ref", "drop_contact", "cut_wire",
-          "wrong_wire_no", "extra_wire", "tag_target", "flip_ab_input", "contact_label_input", "drop_contact_input"]
-FIXABLE = {"flip_ab", "coil_label", "contact_label", "contact_sheet_ref", "tag_target"}
+          "wrong_wire_no", "extra_wire", "tag_target", "missing_label", "missing_coil", "duplicate_symbol",
+          "spurious_symbol", "flip_ab_input", "contact_label_input", "drop_contact_input"]
+FIXABLE = {"flip_ab", "coil_label", "contact_label", "contact_sheet_ref", "tag_target", "flip_ab_input", "missing_label"}
 FAULT_LABEL = {
     "flip_ab": "接点の a/b の読み違い",
     "coil_label": "コイルの器具番号の 1 文字の読み違い",
@@ -34,6 +35,10 @@ FAULT_LABEL = {
     "wrong_wire_no": "電線番号の読み違い",
     "extra_wire": "余分な接続（交差を分岐と誤認）",
     "tag_target": "行先札のシート番号の読み違い",
+    "missing_label": "接点のラベルの読み落とし（空）",
+    "missing_coil": "コイルの見落とし",
+    "duplicate_symbol": "記号の二重の検出",
+    "spurious_symbol": "記号の誤検出（配線の無い余分な接点）",
     "flip_ab_input": "入力（押しボタン等）の接点の a/b の読み違い",
     "contact_label_input": "入力の接点の器具番号の 1 文字の読み違い",
     "drop_contact_input": "入力の接点の見落とし",
@@ -78,6 +83,28 @@ def behaviour(spec: logic.Spec, circuit: circuit_model.Circuit, *, trials: int =
         total += 1
         agree += _agree(spec, sim, truth)
         truth_state, sim_state = truth["coils"], sim["coils"]
+    return {"agree": agree, "total": total}
+
+
+def timed_behaviour(spec: logic.Spec, circuit: circuit_model.Circuit, *, runs: int = 3, seed: int = 0,
+                    until: float = 25.0, dt: float = 0.25) -> dict[str, int]:
+    """時刻つきの操作（入力を 0.5 秒刻みの時刻で切り替える）で、出来事の順に解く circuit_timing と、刻みで解く正解を
+    刻みごとに比べる（リレーの励磁・タイマーの出力・表示灯）。"""
+    rng = random.Random(seed)
+    agree = total = 0
+    for _ in range(runs if spec.inputs else 0):
+        events = sorted(({"at": 0.5 * rng.randint(1, 30), "inputs": {rng.choice(spec.inputs): rng.random() < 0.6}}
+                         for _ in range(rng.randint(3, 8))), key=lambda e: e["at"])
+        truth = logic.oracle_timeline(spec, events, until, dt)
+        got = circuit_timing.run_timeline(circuit, events, until=until)["timeline"]
+        for row in truth:
+            snap = circuit_timing.state_at(got, row["t"])
+            lamps = {x["label"]: x["energized"] for x in snap["loads"] if x["device"] not in snap["coils"]}
+            ok = (all(snap["coils"].get(d) == v for d, v in row["coils"].items())
+                  and all(snap["timers"].get(d, {}).get("output") == v for d, v in row["outputs"].items())
+                  and all(lamps.get(k) == v for k, v in row["lamps"].items()))
+            total += 1
+            agree += ok
     return {"agree": agree, "total": total}
 
 
@@ -190,6 +217,31 @@ def inject(data: dict[str, Any], spec: logic.Spec, kind: str, rng: random.Random
                                             "origin": "inference"})
                 return {"page": page["id"], "refs": [s1["ref"], s2["ref"]], "fix": None}
         return None
+    if kind == "missing_label":
+        page, s = rng.choice(contacts)
+        old = s["label"]
+        s["label"] = ""
+        return {"page": page["id"], "refs": [s["ref"]], "fix": ("set_label", s["ref"], old)}
+    if kind == "missing_coil":
+        page, s = rng.choice(coils)
+        neighbours = [r for c in page["connections"] if s["ref"] in ends(c) for r in ends(c) if r != s["ref"]]
+        page["symbols"].remove(s)
+        page["connections"] = [c for c in page["connections"] if s["ref"] not in ends(c)]
+        return {"page": page["id"], "refs": [s["ref"], *neighbours], "fix": None, "page_hint": True}
+    if kind in ("duplicate_symbol", "spurious_symbol"):
+        page, s = rng.choice(contacts)
+        twin = copy.deepcopy(s)
+        twin["ref"] = f"{s['ref']}X"
+        for t in twin["terminals"]:
+            t["ref"] = t["ref"].replace(s["ref"], twin["ref"])
+        if kind == "spurious_symbol":  # 段と段の間の空いたところに、ラベルの無い接点
+            twin["cx"] += 35 / logic.WIDTH
+            twin["cy"] = (logic.TOP_Y + 20) / logic.HEIGHT
+            twin["label"] = ""
+            for t in twin["terminals"]:
+                t["tx"] += 35 / logic.WIDTH
+        page["symbols"].append(twin)
+        return {"page": page["id"], "refs": [twin["ref"]], "fix": None}
     if kind == "tag_target":
         tags = [(p, s) for p in pages for s in p["symbols"] if s["class_key"] == "other" and s["label"].endswith("へ")]
         if not tags or len(spec.sheets) < 3:
@@ -248,6 +300,8 @@ def evaluate_fault(spec: logic.Spec, clean: dict[str, Any], kind: str, seed: int
     at = {(fault["page"], ref) for ref in fault["refs"]}
     located = [i for i in issues if any((loc["project_id"], loc["symbol_ref"]) in at
                                         or (loc["project_id"], loc.get("position")) == (fault["page"], fault.get("position"))
+                                        or (fault.get("page_hint") and loc["project_id"] == fault["page"]
+                                            and loc["symbol_ref"] is None)
                                         for loc in i["locations"])]
     fixes = [i["fix"] for i in issues if i.get("fix")]
     right_fix = fault["fix"] and any(
@@ -277,14 +331,15 @@ def _same_value(a: str, b: str) -> bool:
     return canonical_device(" ".join(a.split())) == canonical_device(" ".join(b.split()))
 
 
-def evaluate(seeds: range, *, faults_per_kind: int = 2, trials: int = 20, solvers: int = 0) -> dict[str, Any]:
+def evaluate(seeds: range, *, faults_per_kind: int = 2, trials: int = 20, solvers: int = 0,
+             timers: bool = False) -> dict[str, Any]:
     """seeds の回路ごとに、誤り無しの検証と、誤りの種類ごとに faults_per_kind 回の注入。
 
     solvers: 最初の何件の回路で、回路計算どうし（内蔵・ngspice・Lcapy）の突き合わせも流すか（遅い）。
     """
     clean_rows, fault_rows = [], []
     for n, seed in enumerate(seeds):
-        spec = logic.make_spec(seed)
+        spec = logic.make_spec(seed, timers=timers)
         data = logic.build(spec)
         circuit = circuit_model.build_circuit(copy.deepcopy(data["pages"]), data["bus_texts"])
         sim = behaviour(spec, circuit, trials=trials, seed=seed)
@@ -304,6 +359,7 @@ def evaluate(seeds: range, *, faults_per_kind: int = 2, trials: int = 20, solver
             and sorted(circuit.inputs) == sorted(spec.inputs),
             "links": len(circuit.sheet_links), "sim": sim, "code_roundtrip": again,
             "impact": impact_agreement(spec, circuit),
+            "timers": len(spec.timers), "timed": timed_behaviour(spec, circuit, seed=seed) if spec.timers else {"agree": 0, "total": 0},
             "issues": [{"check": i["check"], "title": i["title"], "severity": i["severity"]} for i in result["issues"]],
             "compared": {c["check"]: c["compared"] for c in result["checks"]},
         })
@@ -328,7 +384,8 @@ def summarize(clean: list[dict[str, Any]], faults: list[dict[str, Any]]) -> dict
         total["devices_match"] += r["devices_match"]
         total["links"] += r["links"]
         total["tag_pairs"] += r["tag_pairs"]
-        for key in ("sim", "code_roundtrip", "impact"):
+        total["timers"] += r.get("timers", 0)
+        for key in ("sim", "code_roundtrip", "impact", "timed"):
             total[f"{key}_agree"] += r[key]["agree"]
             total[f"{key}_total"] += r[key]["total"]
         if r.get("solvers"):
@@ -368,6 +425,8 @@ def markdown(report: dict[str, Any]) -> str:
         f"| シミュレーションが正解の論理と一致（入力・励磁・操作手順） | {_rate(c['sim_agree'], c['sim_total'])} |",
         f"| 回路のコードに書き出して実行し直した回路も一致 | {_rate(c['code_roundtrip_agree'], c['code_roundtrip_total'])} |",
         f"| 静的な波及範囲が正解の依存関係と一致 | {_rate(c['impact_agree'], c['impact_total'])} |",
+        *([f"| タイマー {c['timers']} 個を含む時間の流れ（0.25 秒刻み）が正解と一致 | {_rate(c['timed_agree'], c['timed_total'])} |"]
+          if c.get("timed_total") else []),
         *([(f"| 回路計算どうし（内蔵と {c['solver_methods']}）が一致した回路（比べた状態 {c['solver_compared']}） | "
             f"{_rate(c['solver_ok'], c['solver_runs'])} |")] if c.get("solver_runs") else []),
         f"| 矛盾チェックの誤検出（指摘の数・指摘が出た回路） | {c['false_alarms']} 件・{_rate(c['false_alarm_circuits'], c['circuits'])} |",

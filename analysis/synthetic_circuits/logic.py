@@ -45,6 +45,7 @@ class Spec:
     inputs: list[str]
     rungs: list[Rung]
     coil_sheet: dict[str, int] = field(default_factory=dict)
+    timers: dict[str, tuple[str, float]] = field(default_factory=dict)  # 器具番号 → (on_delay / off_delay, 秒)。DD-0033
 
     def depends(self) -> dict[str, set[str]]:
         """負荷 → その段に接点がある器具。"""
@@ -58,8 +59,12 @@ def _relay_name(k: int) -> str:
     return f"{30 + k}H{DEVICE_LETTERS[k % len(DEVICE_LETTERS)]} FV{2301 + k}"
 
 
-def make_spec(seed: int, *, sheets: int | None = None) -> Spec:
-    """回路の正本。リレーは番号順にしか前のリレーの接点を使わない（自己保持を除き、循環しない）。"""
+def make_spec(seed: int, *, sheets: int | None = None, timers: bool = False) -> Spec:
+    """回路の正本。リレーは番号順にしか前のリレーの接点を使わない（自己保持を除き、循環しない）。
+
+    timers: リレーの一部をタイマー（オンディレー・オフディレー、0.5〜5 秒）にする（DD-0033）。乱数は別の系列で、
+    タイマーの有無で回路の形は変わらない。
+    """
     rng = random.Random(seed)
     n_sheets = sheets or rng.randint(2, 4)
     sheet_names = [f"ER{21301 + 10 * (seed % 50) + i}" for i in range(n_sheets)]
@@ -99,7 +104,13 @@ def make_spec(seed: int, *, sheets: int | None = None) -> Spec:
     for k, relay in enumerate(relays):
         if relay not in used:
             rungs.append(Rung(rng.randrange(n_sheets), ("lamp", f"RL{k + 1:02d}"), [[(relay, "a")]]))
-    return Spec(seed, sheet_names, relays, inputs, rungs, coil_sheet)
+    spec = Spec(seed, sheet_names, relays, inputs, rungs, coil_sheet)
+    if timers:
+        trng = random.Random(seed + 1_000_003)
+        for relay in relays:
+            if trng.random() < 0.35:
+                spec.timers[relay] = (trng.choice(["on_delay", "off_delay"]), 0.5 * trng.randint(1, 10))
+    return spec
 
 
 # ------------------------------------------------------------------------------------------- 正解の動作
@@ -122,6 +133,60 @@ def oracle(spec: Spec, inputs: dict[str, bool], energized: dict[str, bool] | Non
         state = new
     lamps = {r.load[1]: live(r) for r in spec.rungs if r.load[0] == "lamp"}
     return {"coils": state, "lamps": lamps}
+
+
+def oracle_timeline(spec: Spec, events: list[dict[str, Any]], until: float, dt: float = 0.25) -> list[dict[str, Any]]:
+    """時刻つきの操作の正解: 一定の刻み dt で時間を進める（出来事の順に進める circuit_timing と別の解き方）。
+
+    タイマーの接点は出力に従う。オンディレーは励磁が続いた時間、オフディレーは切れてからの時間を刻みで数える。
+    戻り値は刻みごとの {"t", "coils", "outputs", "lamps"}。
+    """
+    ticks = round(until / dt)
+    at: dict[int, dict[str, bool]] = {}
+    for e in events:
+        at.setdefault(round(float(e["at"]) / dt), {}).update(e["inputs"])
+    inputs: dict[str, bool] = {}
+    coil = dict.fromkeys(spec.relays, False)
+    out = dict.fromkeys(spec.timers, False)
+    count = dict.fromkeys(spec.timers, 0)
+    need = {d: round(delay / dt) for d, (_, delay) in spec.timers.items()}
+    rows = []
+
+    def on(device: str) -> bool:
+        if device in out:
+            return out[device]
+        return coil[device] if device in coil else bool(inputs.get(device))
+
+    def live(r: Rung) -> bool:
+        return all(any(on(d) == (kind == "a") for d, kind in term) for term in r.terms)
+
+    for k in range(ticks + 1):
+        inputs.update(at.get(k, {}))
+        for _ in range(100):
+            for _ in range(50):
+                new = {relay: any(live(r) for r in spec.rungs if r.load == ("coil", relay)) for relay in spec.relays}
+                if new == coil:
+                    break
+                coil = new
+            before = dict(out)
+            for d, (mode, _) in spec.timers.items():
+                if mode == "on_delay":
+                    if not coil[d]:
+                        count[d], out[d] = 0, False
+                    elif count[d] >= need[d]:
+                        out[d] = True
+                elif coil[d]:
+                    count[d], out[d] = 0, True
+                elif count[d] >= need[d]:
+                    out[d] = False
+            if out == before:
+                break
+        rows.append({"t": k * dt, "coils": dict(coil), "outputs": dict(out),
+                     "lamps": {r.load[1]: live(r) for r in spec.rungs if r.load[0] == "lamp"}})
+        for d, (mode, _) in spec.timers.items():
+            if (mode == "on_delay" and coil[d] and not out[d]) or (mode == "off_delay" and not coil[d] and out[d]):
+                count[d] += 1
+    return rows
 
 
 def oracle_reach(spec: Spec, device: str) -> set[str]:
@@ -246,6 +311,9 @@ def build(spec: Spec) -> dict[str, Any]:
         kind, name = rung.load
         load = s.add(s.ref("K" if kind == "coil" else "H"), "relay_coil" if kind == "coil" else "lamp", name,
                      _x(column), _y(LOAD_ROW + 0.5), 50, 50, 2)
+        if kind == "coil" and name in spec.timers:
+            mode, delay = spec.timers[name]
+            load["attributes"] = {"timer_mode": mode, "delay_s": delay}
         s.wire(point, _t(load, 1))
         s.wire(_t(load, 2), bottom_junction(s, column))
 

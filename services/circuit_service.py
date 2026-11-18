@@ -7,7 +7,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from models import AnnotationProject
-from services import circuit_code, circuit_interop, circuit_model, circuit_whatif, consistency
+from services import circuit_code, circuit_interop, circuit_model, circuit_timing, circuit_whatif, consistency
 from services.annotation_service import WITH_ANNOTATIONS, serialize_project
 from services.circuit_model import SUPPLY_V, Circuit, build_circuit, export_netlist, simulate
 from services.structure_service import get_structure
@@ -47,6 +47,8 @@ def _summary(circuit: Circuit, pages: list[dict[str, Any]]) -> dict[str, Any]:
         # 行先札・来先札でつないだ図面間の組（DD-0030）
         "sheet_links": [{"how": link["how"], "from": {**link["from"], "page": names.get(link["from"]["project_id"])},
                          "to": {**link["to"], "page": names.get(link["to"]["project_id"])}} for link in circuit.sheet_links],
+        # タイマー（DD-0033）: コイルの属性 timer_mode・delay_s
+        "timers": [{"device": dev, **cfg} for dev, cfg in sorted(circuit.timers.items())],
     }
 
 
@@ -138,6 +140,18 @@ def circuit_sequence(db: Session, project_ids: list[int], steps: list[dict[str, 
     circuit, pages = _circuit(db, project_ids)
     out = circuit_whatif.run_sequence(circuit, steps, inputs=inputs, energized=energized, change=change)
     return {"steps": [{**s, "changes": _with_pages(s["changes"], pages)} for s in out]}
+
+
+def circuit_timeline(db: Session, project_ids: list[int], events: list[dict[str, Any]], inputs: dict[str, bool],
+                     energized: dict[str, bool], change: dict[str, Any], delays: dict[str, float],
+                     until: float | None) -> dict[str, Any]:
+    """時刻つきの操作とタイマーで、時間の流れを解く（DD-0033）。"""
+    circuit, pages = _circuit(db, project_ids)
+    out = circuit_timing.run_timeline(circuit, events, inputs=inputs, energized=energized, until=until, change=change,
+                                      delays=delays)
+    out["timeline"] = [{**s, "changes": _with_pages(s["changes"], pages)} for s in out["timeline"]]
+    out["timers"] = [{"device": dev, **cfg} for dev, cfg in sorted(out["timers"].items())]
+    return out
 
 
 def circuit_impact(db: Session, project_ids: list[int], device: str) -> dict[str, Any]:

@@ -55,7 +55,7 @@ def test_oracle_is_independent_of_the_circuit_solver():
     assert not logic.oracle(spec, {"STOP01": True}, {"30HA FV1": True})["coils"]["30HA FV1"]
 
 
-@pytest.mark.parametrize("kind", sorted(logic_eval.FIXABLE))
+@pytest.mark.parametrize("kind", sorted(logic_eval.FIXABLE - {"flip_ab_input"}))
 @pytest.mark.parametrize("seed", [0, 7])
 def test_misreads_are_found_and_fixed_back_to_the_truth(kind, seed):
     spec = logic.make_spec(seed)
@@ -96,3 +96,14 @@ def test_cut_wire_is_reported_as_open_terminal():
     result = consistency.check(copy.deepcopy(data["pages"]), data["structures"], bus_texts=data["bus_texts"], solvers=False)
     issues = [i for i in result["issues"] if i["check"] == "open_terminals"]
     assert [loc["symbol_ref"] for i in issues for loc in i["locations"]] == [coil["ref"]]
+
+
+def test_stop_button_misread_as_a_contact_is_flagged_by_its_name():
+    spec = logic.make_spec(0)
+    data = logic.build(spec)
+    stop = next(s for p in data["pages"] for s in p["symbols"] if (s["label"] or "").startswith("STOP"))
+    stop["class_key"] = stop["class_label"] = "contact_a"
+    result = consistency.check(copy.deepcopy(data["pages"]), data["structures"], bus_texts=data["bus_texts"], solvers=False)
+    issues = [i for i in result["issues"] if i["check"] == "input_names"]
+    assert [i["fix"]["value"] for i in issues] == ["contact_b"]
+    assert issues[0]["severity"] == "warning"  # 取り決めと違う使い方もあるので、まとめて直す対象にしない

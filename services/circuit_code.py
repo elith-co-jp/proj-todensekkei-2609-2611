@@ -28,6 +28,7 @@ class CircuitCode:
         self.refs: dict[str, Element] = {}
         self.extra_nodes: list[str] = []
         self.diagnostics: list[dict[str, Any]] = []
+        self.timers: dict[str, dict[str, Any]] = {}
 
     # 素子 ---------------------------------------------------------------------------------------------
     def _add(self, ref: str, kind: str, a: str, b: str, *, source: tuple[int, str], label: str = "",
@@ -41,13 +42,26 @@ class CircuitCode:
         self.refs[ref] = element
         return element
 
-    def contact_a(self, ref: str, a: str, b: str, *, device: str, source: tuple[int, str], label: str = "") -> Element:
-        """a 接点（メーク）。器具番号 device のコイルが励磁（または外部入力が On）で閉じる。"""
-        return self._add(ref, "a", a, b, source=source, label=label, device=device)
+    def contact_a(self, ref: str, a: str, b: str, *, device: str, source: tuple[int, str], label: str = "",
+                  instant: bool = False) -> Element:
+        """a 接点（メーク）。器具番号 device のコイルが励磁（または外部入力が On）で閉じる。
+        device がタイマーなら時間の経過で閉じる（instant=True の瞬時接点はコイルに従う）。"""
+        e = self._add(ref, "a", a, b, source=source, label=label, device=device)
+        e.instant = instant
+        return e
 
-    def contact_b(self, ref: str, a: str, b: str, *, device: str, source: tuple[int, str], label: str = "") -> Element:
+    def contact_b(self, ref: str, a: str, b: str, *, device: str, source: tuple[int, str], label: str = "",
+                  instant: bool = False) -> Element:
         """b 接点（ブレーク）。器具番号 device が動作すると開く。"""
-        return self._add(ref, "b", a, b, source=source, label=label, device=device)
+        e = self._add(ref, "b", a, b, source=source, label=label, device=device)
+        e.instant = instant
+        return e
+
+    def timer(self, device: str, mode: str, delay_s: float) -> None:
+        """器具番号 device のリレーをタイマーにする。mode は "on_delay"（オンディレー）か "off_delay"（オフディレー）。"""
+        if mode not in ("on_delay", "off_delay"):
+            raise ValueError(f"タイマーの種類 {mode} は on_delay か off_delay")
+        self.timers[device] = {"mode": mode, "delay_s": float(delay_s)}
 
     def coil(self, ref: str, a: str, b: str, *, device: str, source: tuple[int, str], label: str = "",
              resistance: float = R_LOAD) -> Element:
@@ -74,7 +88,8 @@ class CircuitCode:
                 coils.setdefault(e.device, []).append(e)
         inputs = sorted({e.device for e in self.elements if e.kind in ("a", "b") and e.device and e.device not in coils})
         nodes = sorted({n for e in self.elements for n in (e.a, e.b)} | set(self.extra_nodes))
-        return Circuit(list(self.elements), nodes, {}, coils, inputs, list(self.diagnostics))
+        timers = {dev: dict(cfg) for dev, cfg in self.timers.items() if dev in coils}
+        return Circuit(list(self.elements), nodes, {}, coils, inputs, list(self.diagnostics), timers=timers)
 
 
 def _src(e: Element) -> str:
@@ -111,13 +126,17 @@ def to_python(circuit: Circuit, *, pages: list[dict[str, Any]] | None = None, ti
         args = f"{p.ref!r}, {e.a!r}, {e.b!r}"
         label = f", label={e.label!r}" if e.label else ""
         if e.kind in ("a", "b"):
-            lines.append(f"c.{KIND_CALL[e.kind]}({args}, device={e.device!r}, source={_src(e)}{label})")
+            instant = ", instant=True" if e.instant else ""
+            lines.append(f"c.{KIND_CALL[e.kind]}({args}, device={e.device!r}, source={_src(e)}{label}{instant})")
         elif e.device and e.device in circuit.coils:
             res = "" if e.resistance == R_LOAD else f", resistance={e.resistance:g}"
             lines.append(f"c.coil({args}, device={e.device!r}, source={_src(e)}{label}{res})")
         else:
             res = "" if e.resistance == R_LOAD else f", resistance={e.resistance:g}"
             lines.append(f"c.load({args}, source={_src(e)}{label}{res})")
+    if circuit.timers:
+        lines += ["", "# ---- タイマー（オンディレー: 励磁が続いて delay_s 秒で接点が動く。オフディレー: 切れて delay_s 秒で戻る）"]
+        lines += [f"c.timer({dev!r}, {cfg['mode']!r}, {cfg['delay_s']:g})" for dev, cfg in sorted(circuit.timers.items())]
     extra = [n for n in circuit.nodes if n not in used]
     if extra:
         lines += ["", "# 素子のつながっていないノード", f"c.nodes({', '.join(repr(n) for n in extra)})"]
