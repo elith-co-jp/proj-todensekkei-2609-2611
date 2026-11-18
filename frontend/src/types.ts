@@ -394,6 +394,45 @@ export type CircuitResult = CircuitSummary & {
   overlay: CircuitOverlay[]
 }
 
+// ---------- もしも・波及範囲（DD-0029） ----------
+export type CircuitChange = {
+  inputs?: Record<string, boolean>
+  devices?: Record<string, boolean>
+  contacts?: (CircuitSymbolRef & { closed: boolean })[]
+  open?: CircuitSymbolRef[]
+  short?: CircuitSymbolRef[]
+}
+
+export type CircuitChangeRow = CircuitSymbolRef & {
+  label?: string | null
+  device?: string | null
+  kind?: 'a' | 'b'
+  page?: string | null
+  before: boolean | null
+  after: boolean
+}
+
+export type CircuitWhatIf = {
+  before: { coils: Record<string, boolean> }
+  after: { coils: Record<string, boolean> }
+  changes: {
+    coils: { device: string; before: boolean | null; after: boolean }[]
+    loads: CircuitChangeRow[]
+    contacts: CircuitChangeRow[]
+  }
+  unknown_symbols: CircuitSymbolRef[]
+  warnings: string[]
+}
+
+export type CircuitImpact = {
+  device: string
+  kind: 'relay' | 'input'
+  devices: { device: string; depth: number; via: string }[]
+  loads: (CircuitSymbolRef & { label: string; depth: number; device: string | null; via: string; page?: string | null })[]
+  upstream: string[]
+  contacts: (CircuitSymbolRef & { label: string; kind: 'a' | 'b' })[]
+}
+
 // ---------- 属性（DD-0010） ----------
 export type AttributeValue = string | number | boolean | null
 export type Attributes = Record<string, AttributeValue>

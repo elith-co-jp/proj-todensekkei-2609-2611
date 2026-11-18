@@ -385,22 +385,33 @@ def _volt(volts: dict[str, float], node: str) -> float:
     return volts.get(_spice_name(node).lower(), 0.0)
 
 
-def simulate(circuit: Circuit, inputs: dict[str, bool], energized: dict[str, bool] | None = None) -> dict[str, Any]:
-    """外部入力の On/Off と前の励磁状態から、状態が変わらなくなるまで解く。"""
-    state = {dev: bool((energized or {}).get(dev)) for dev in circuit.coils}
+def simulate(circuit: Circuit, inputs: dict[str, bool], energized: dict[str, bool] | None = None, *,
+             forced_devices: dict[str, bool] | None = None, forced_contacts: dict[str, bool] | None = None) -> dict[str, Any]:
+    """外部入力の On/Off と前の励磁状態から、状態が変わらなくなるまで解く。
+
+    forced_devices: 器具番号 → 動作の固定（リレーを手で押し込む・コイルが動かない、などの「もしも」。DD-0029）。
+    forced_contacts: 接点の素子名 → 閉の固定（接点の溶着・接触不良）。
+    """
+    forced_devices = forced_devices or {}
+    forced_contacts = forced_contacts or {}
+    state = {dev: bool(forced_devices.get(dev, (energized or {}).get(dev))) for dev in circuit.coils}
     seen: list[dict[str, bool]] = []
     warnings: list[str] = []
     engine = "builtin"
 
     def is_on(dev: str | None) -> bool:
+        if dev in forced_devices:
+            return bool(forced_devices[dev])
         return state[dev] if dev in circuit.coils else bool(inputs.get(dev))
 
     steps = 0
     for steps in range(1, MAX_STEPS + 1):  # noqa: B007  回数を結果に出す
-        closed = {e.name: is_on(e.device) == (e.kind == "a") for e in circuit.elements if e.kind in ("a", "b")}
+        closed = {e.name: forced_contacts.get(e.name, is_on(e.device) == (e.kind == "a"))
+                  for e in circuit.elements if e.kind in ("a", "b")}
         volts, current, engine = solve(netlist(circuit, closed))
         coil_v = {dev: max(abs(_volt(volts, e.a) - _volt(volts, e.b)) for e in es) for dev, es in circuit.coils.items()}
-        new = {dev: coil_v[dev] >= PICKUP_RATIO * SUPPLY_V for dev in circuit.coils}
+        new = {dev: bool(forced_devices[dev]) if dev in forced_devices else coil_v[dev] >= PICKUP_RATIO * SUPPLY_V
+               for dev in circuit.coils}
         if new == state:
             break
         if new in seen:
@@ -416,6 +427,11 @@ def simulate(circuit: Circuit, inputs: dict[str, bool], energized: dict[str, boo
         "coils": {dev: {"energized": state[dev], "voltage": round(coil_v[dev], 2)} for dev in circuit.coils},
         "contacts": [{"project_id": e.project_id, "symbol_ref": e.symbol_ref, "device": e.device, "kind": e.kind,
                       "closed": closed[e.name]} for e in circuit.elements if e.kind in ("a", "b")],
+        # コイル・表示灯・電磁弁などの負荷の両端の電圧（表示灯が点くか、電磁弁が動くか。DD-0029）。
+        "loads": [{"project_id": e.project_id, "symbol_ref": e.symbol_ref, "label": e.label, "device": e.device,
+                   "voltage": round(abs(_volt(volts, e.a) - _volt(volts, e.b)), 2),
+                   "energized": abs(_volt(volts, e.a) - _volt(volts, e.b)) >= PICKUP_RATIO * SUPPLY_V}
+                  for e in circuit.elements if e.kind == "load"],
         "nodes": {n: round(_volt(volts, n), 2) for n in circuit.nodes},
         "netlist": netlist(circuit, closed),
     }

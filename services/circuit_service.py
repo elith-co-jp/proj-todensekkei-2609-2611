@@ -7,7 +7,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from models import AnnotationProject
-from services import circuit_interop, circuit_model
+from services import circuit_code, circuit_interop, circuit_model, circuit_whatif
 from services.annotation_service import WITH_ANNOTATIONS, serialize_project
 from services.circuit_model import SUPPLY_V, Circuit, build_circuit, export_netlist, simulate
 from services.structure_service import get_structure
@@ -99,3 +99,48 @@ def circuit_skidl(db: Session, project_ids: list[int]) -> str:
     """実行すると KiCad のネットリストを書き出す SKiDL のスクリプト（DD-0028）。"""
     pages, texts = _pages(db, project_ids)
     return circuit_interop.skidl_script(build_circuit(pages, texts), pages=pages)
+
+
+def _circuit(db: Session, project_ids: list[int]) -> tuple[Circuit, list[dict[str, Any]]]:
+    pages, texts = _pages(db, project_ids)
+    return build_circuit(pages, texts), pages
+
+
+def circuit_code_text(db: Session, project_ids: list[int]) -> str:
+    """回路を書き換えられる Python のコードにする（DD-0029）。"""
+    circuit, pages = _circuit(db, project_ids)
+    title = "、".join(p.get("sheet_no") or p["name"] for p in pages)
+    return circuit_code.to_python(circuit, pages=pages, title=title)
+
+
+def _with_pages(changes: dict[str, list[dict[str, Any]]], pages: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    names = {p["id"]: p.get("sheet_no") or p["name"] for p in pages}
+    return {k: [{**x, "page": names.get(x.get("project_id"))} if "project_id" in x else x for x in v]
+            for k, v in changes.items()}
+
+
+def circuit_what_if(db: Session, project_ids: list[int], inputs: dict[str, bool], energized: dict[str, bool],
+                    change: dict[str, Any]) -> dict[str, Any]:
+    """今の状態に変更を加えたら何が変わるか（DD-0029）。"""
+    circuit, pages = _circuit(db, project_ids)
+    result = circuit_whatif.what_if(circuit, inputs, energized, change)
+    result.pop("result")
+    result["changes"] = _with_pages(result["changes"], pages)
+    return result
+
+
+def circuit_sequence(db: Session, project_ids: list[int], steps: list[dict[str, Any]], inputs: dict[str, bool],
+                     energized: dict[str, bool], change: dict[str, Any]) -> dict[str, Any]:
+    """操作の手順を順に解く（DD-0029）。"""
+    circuit, pages = _circuit(db, project_ids)
+    out = circuit_whatif.run_sequence(circuit, steps, inputs=inputs, energized=energized, change=change)
+    return {"steps": [{**s, "changes": _with_pages(s["changes"], pages)} for s in out]}
+
+
+def circuit_impact(db: Session, project_ids: list[int], device: str) -> dict[str, Any]:
+    """機器が動いたら影響しうる範囲（DD-0029）。"""
+    circuit, pages = _circuit(db, project_ids)
+    result = circuit_whatif.impact(circuit, device)
+    names = {p["id"]: p.get("sheet_no") or p["name"] for p in pages}
+    result["loads"] = [{**x, "page": names.get(x["project_id"])} for x in result["loads"]]
+    return result

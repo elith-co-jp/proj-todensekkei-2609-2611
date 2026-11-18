@@ -4,6 +4,7 @@ import { AlertTriangle, Download, Loader2, RotateCcw, Zap } from 'lucide-react'
 
 import { api } from '../api/client'
 import type { CircuitResult, CircuitSummary, ProjectRow } from '../types'
+import WhatIfPanel from './circuit/WhatIfPanel'
 
 const ENGINE_LABEL = { ngspice: 'SPICE（ngspice）で解いています', builtin: '内蔵の回路計算で解いています（ngspice 未導入）' }
 
@@ -179,6 +180,8 @@ export default function CircuitPage() {
                 <p key={w} className="mt-2 flex gap-1.5 text-[11px] font-bold text-rose-700"><AlertTriangle size={13} /> {w}</p>
               ))}
             </section>
+
+            <WhatIfPanel projectIds={selected} summary={summary} inputs={inputs} energized={energizedNow()} />
 
             {summary.diagnostics.length > 0 && (
               <section className="card p-4" aria-label="回路にできなかった箇所">

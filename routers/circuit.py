@@ -11,10 +11,14 @@ from sqlalchemy.orm import Session
 
 from database import get_db
 from services.circuit_service import (
+    circuit_code_text,
+    circuit_impact,
     circuit_lcapy,
     circuit_netlist,
+    circuit_sequence,
     circuit_skidl,
     circuit_summary,
+    circuit_what_if,
     run_simulation,
 )
 from services.coil_wiring import split_through_wires
@@ -26,6 +30,44 @@ class CircuitRequest(BaseModel):
     project_ids: list[int] = Field(min_length=1)
     inputs: dict[str, bool] = {}
     energized: dict[str, bool] = {}
+
+
+class SymbolRef(BaseModel):
+    project_id: int
+    symbol_ref: str
+
+
+class ContactFix(SymbolRef):
+    closed: bool
+
+
+class Change(BaseModel):
+    """「もしも」の変更（DD-0029）。inputs: 外部入力の切り替え、devices: リレー・入力の動作を固定、
+    contacts: 接点の溶着（closed=true）・接触不良（false）、open: 断線、short: 短絡。"""
+
+    inputs: dict[str, bool] = {}
+    devices: dict[str, bool] = {}
+    contacts: list[ContactFix] = []
+    open: list[SymbolRef] = []
+    short: list[SymbolRef] = []
+
+
+class WhatIfRequest(CircuitRequest):
+    change: Change = Change()
+
+
+class SequenceStep(BaseModel):
+    label: str | None = None
+    inputs: dict[str, bool] = {}
+
+
+class SequenceRequest(WhatIfRequest):
+    steps: list[SequenceStep] = Field(min_length=1, max_length=50)
+
+
+class ImpactRequest(BaseModel):
+    project_ids: list[int] = Field(min_length=1)
+    device: str
 
 
 class LcapyRequest(CircuitRequest):
@@ -103,5 +145,42 @@ def skidl(payload: CircuitRequest, db: Session = Depends(get_db)):
     """SKiDL のスクリプト（DD-0028）。python で実行すると KiCad のネットリスト circuit.net を書き出す。"""
     try:
         return _download(circuit_skidl(db, payload.project_ids), "circuit_skidl.py")
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@router.post("/code")
+def code(payload: CircuitRequest, db: Session = Depends(get_db)):
+    """回路を書き換えられる Python のコードにしたもの（DD-0029）。リポジトリの中で python で実行できる。"""
+    try:
+        return _download(circuit_code_text(db, payload.project_ids), "circuit_code.py")
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@router.post("/what-if")
+def what_if(payload: WhatIfRequest, db: Session = Depends(get_db)):
+    """今の状態（inputs・energized）に変更（change）を加えたら、どのリレー・負荷・接点が変わるか（DD-0029）。"""
+    try:
+        return circuit_what_if(db, payload.project_ids, payload.inputs, payload.energized, payload.change.model_dump())
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@router.post("/sequence")
+def sequence(payload: SequenceRequest, db: Session = Depends(get_db)):
+    """操作の手順（押す → 離す → …）を順に解き、各手順で変わったところを返す（DD-0029）。"""
+    try:
+        return circuit_sequence(db, payload.project_ids, [s.model_dump() for s in payload.steps], payload.inputs,
+                                payload.energized, payload.change.model_dump())
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@router.post("/impact")
+def impact(payload: ImpactRequest, db: Session = Depends(get_db)):
+    """機器（器具番号）が動いたら影響しうるリレー・負荷と、その機器を動かしうる機器（DD-0029）。"""
+    try:
+        return circuit_impact(db, payload.project_ids, payload.device)
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc

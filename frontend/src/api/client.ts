@@ -2,7 +2,10 @@ import type {
   AiImportResult,
   AttributeDefinitions,
   AttributeImportReport,
+  CircuitChange,
+  CircuitImpact,
   CircuitResult,
+  CircuitWhatIf,
   CircuitSummary,
   CoilWiringSplitResult,
   ClassStats,
@@ -275,6 +278,27 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ project_ids: projectIds, inputs }),
     }, 'circuit.cir'),
+
+  circuitWhatIf: (projectIds: number[], inputs: Record<string, boolean>, energized: Record<string, boolean>, change: CircuitChange) =>
+    req<CircuitWhatIf>('/api/circuit/what-if', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ project_ids: projectIds, inputs, energized, change }),
+    }),
+
+  circuitImpact: (projectIds: number[], device: string) =>
+    req<CircuitImpact>('/api/circuit/impact', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ project_ids: projectIds, device }),
+    }),
+
+  downloadCircuitCode: (projectIds: number[]) =>
+    download('/api/circuit/code', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ project_ids: projectIds }),
+    }, 'circuit_code.py'),
 
   splitCoilWires: (annotations: { symbols: unknown[]; connections: unknown[] }, imageWidth: number, imageHeight: number) =>
     req<CoilWiringSplitResult>('/api/circuit/split-coil-wires', {
