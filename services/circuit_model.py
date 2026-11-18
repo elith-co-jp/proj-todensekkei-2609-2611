@@ -23,6 +23,7 @@ from typing import Any
 import numpy as np
 
 from analysis.wiring import classes
+from services import sheet_links
 
 PASS_CLASSES = classes.PASS_THROUGH
 CONTACT_CLASSES = {"contact_a": "a", "contact_b": "b"}
@@ -62,6 +63,7 @@ class Element:
     label: str
     device: str | None = None   # コイル・接点の器具番号（開閉の対応づけ）
     resistance: float = R_LOAD  # 負荷の抵抗。属性 coil_resistance_ohm / resistance_ohm があればその値（DD-0010）
+    instant: bool = False       # タイマーの瞬時接点（属性 timer_contact = instant。DD-0033）
 
 
 @dataclass
@@ -73,6 +75,10 @@ class Circuit:
     inputs: list[str]                        # 外部入力にした器具番号（コイルが選んだ図面に無い接点）
     diagnostics: list[dict[str, Any]]
     wires: list[dict[str, Any]] = field(default_factory=list)
+    # 行先札・来先札でつないだ図面間の組（DD-0030）。{"from": 札, "to": 札, "how": matched / guessed}
+    sheet_links: list[dict[str, Any]] = field(default_factory=list)
+    # タイマー（DD-0033）: 器具番号 → {"mode": "on_delay" / "off_delay", "delay_s": 秒}。コイルの属性から。
+    timers: dict[str, dict[str, Any]] = field(default_factory=dict)
 
 
 def device_key(label: str | None) -> str | None:
@@ -104,6 +110,27 @@ def _spice_name(name: str) -> str:
     return re.sub(r"[^0-9A-Za-z_]", "_", name)
 
 
+TIMER_MODES = {
+    "on_delay": "on_delay", "ondelay": "on_delay", "オンディレー": "on_delay", "オンディレイ": "on_delay", "限時動作": "on_delay",
+    "off_delay": "off_delay", "offdelay": "off_delay", "オフディレー": "off_delay", "オフディレイ": "off_delay",
+    "限時復帰": "off_delay",
+}
+
+
+def timer_setting(attributes: dict[str, Any]) -> dict[str, Any] | None:
+    """コイルの属性 timer_mode（オンディレー・オフディレー）と delay_s（秒）からタイマーの設定。タイマーでなければ None。"""
+    mode = TIMER_MODES.get(str(attributes.get("timer_mode") or "").strip().lower().replace("-", "_").replace(" ", ""))
+    if mode is None:
+        mode = TIMER_MODES.get(str(attributes.get("timer_mode") or "").strip())
+    if mode is None:
+        return None
+    try:
+        delay = float(attributes.get("delay_s"))
+    except (TypeError, ValueError):
+        delay = None
+    return {"mode": mode, "delay_s": delay if delay is not None and delay >= 0 else None}
+
+
 def _load_resistance(attributes: dict[str, Any]) -> float:
     for key in ("coil_resistance_ohm", "resistance_ohm"):
         try:
@@ -118,7 +145,7 @@ def _load_resistance(attributes: dict[str, Any]) -> float:
 def joins_inside_symbol(symbol: dict[str, Any], from_ref: str | None, to_ref: str | None, width: float, height: float) -> bool:
     """同じ記号の 2 つの端子を結ぶ配線が導線か（DD-0022）。通り抜けの点は導線、機器（接点・コイルなど）は素子、
     「その他」（カード・盤の枠）は縦に長い線（カードの + と -）だけ素子で、ほかは導線。"""
-    if symbol["class_key"] in PASS_CLASSES:
+    if _is_pass(symbol):
         return True
     if symbol["class_key"] != "other" or width <= 0 or height <= 0:
         return False
@@ -127,6 +154,11 @@ def joins_inside_symbol(symbol: dict[str, Any], from_ref: str | None, to_ref: st
     if a is None or b is None:
         return False
     return not (abs(a[0] - b[0]) <= ELEMENT_LINK_ALIGN_PX and abs(a[1] - b[1]) >= ELEMENT_LINK_MIN_PX)
+
+
+def _is_pass(symbol: dict[str, Any]) -> bool:
+    """端子をすべて同じ点として扱う記号: 分岐点・端子・コネクタ・母線端と、行先札・来先札（DD-0030）。"""
+    return symbol["class_key"] in PASS_CLASSES or sheet_links.sheet_tag_target(symbol) is not None
 
 
 def build_circuit(pages: list[dict[str, Any]], bus_texts: dict[int, list[dict[str, Any]]] | None = None) -> Circuit:
@@ -146,6 +178,8 @@ def build_circuit(pages: list[dict[str, Any]], bus_texts: dict[int, list[dict[st
     diagnostics: list[dict[str, Any]] = []
     symbols: dict[tuple[int, str], dict[str, Any]] = {}
     wires = []
+    wire_numbers: dict[tuple[int, str], set[str]] = defaultdict(set)
+    tags: list[sheet_links.Tag] = []
     for page in pages:
         pid = page["id"]
         for s in page["symbols"]:
@@ -153,11 +187,11 @@ def build_circuit(pages: list[dict[str, Any]], bus_texts: dict[int, list[dict[st
             terms = [(pid, s["ref"], t["ref"]) for t in s.get("terminals") or []]
             for k in terms:
                 find(k)
-            if s["class_key"] in PASS_CLASSES:
+            if _is_pass(s):
                 for k in terms[1:]:
                     union(terms[0], k)
         for c in page["connections"]:
-            if c.get("kind", "wire") != "wire":
+            if c.get("kind", "wire") not in ("wire", "sheet_ref"):
                 continue
             ends = []
             for side in ("from", "to"):
@@ -167,9 +201,9 @@ def build_circuit(pages: list[dict[str, Any]], bus_texts: dict[int, list[dict[st
                     break
                 if tref is None:
                     terms = sym.get("terminals") or []
-                    if len(terms) == 1 or sym["class_key"] in PASS_CLASSES and terms:
+                    if len(terms) == 1 or _is_pass(sym) and terms:
                         tref = terms[0]["ref"]
-                    elif sym["class_key"] in PASS_CLASSES:
+                    elif _is_pass(sym):
                         # 端子の無い分岐点・コネクタは記号そのものが 1 つの節点（ER21297 の正解の黒丸、DD-0023）。
                         tref = PASS_NODE_TERMINAL
                     else:
@@ -185,6 +219,33 @@ def build_circuit(pages: list[dict[str, Any]], bus_texts: dict[int, list[dict[st
                     continue
                 union(ends[0], ends[1])
                 wires.append({"project_id": pid, "from": ends[0], "to": ends[1]})
+                wire_numbers[(pid, ends[0][1])].add(c.get("wire_no") or "")
+                wire_numbers[(pid, ends[1][1])].add(c.get("wire_no") or "")
+                # 種別「シート間参照」の配線は、external_ref のシート番号へ向かう札として終点を登録する（DD-0030）。
+                # 終点が札の記号なら、external_ref の語を札の識別に足す。
+                if c.get("kind") == "sheet_ref":
+                    if sheet_links.sheet_tag_target(symbols[(pid, ends[1][1])]) is not None:
+                        wire_numbers[(pid, ends[1][1])].add(c.get("external_ref") or "")
+                    else:
+                        tag = sheet_links.connection_tag(page, c, ends[1])
+                        if tag is not None:
+                            tags.append(tag)
+
+    # 行先札・来先札（DD-0030）: 向かい合う札を組にして、図面をまたいでノードを 1 つにする。
+    for page in pages:
+        for s in page["symbols"]:
+            if sheet_links.sheet_tag_target(s) is None:
+                continue
+            terms = s.get("terminals") or []
+            node = (page["id"], s["ref"], terms[0]["ref"] if terms else PASS_NODE_TERMINAL)
+            tag = sheet_links.symbol_tag(page, s, node, wire_numbers.get((page["id"], s["ref"]), set()))
+            if tag is not None:
+                tags.append(tag)
+    pairs, link_diagnostics = sheet_links.link_tags(tags, {p["id"]: sheet_links.page_sheet(p) for p in pages})
+    for t, u, _how in pairs:
+        union(t.node, u.node)
+    diagnostics += link_diagnostics
+    links = [{"from": t.describe(), "to": u.describe(), "how": how} for t, u, how in pairs]
 
     # 母線: 母線端の記号の位置に近い PER/NER の文字で決める。文字が無ければ上の母線端を P、下を 0 と推定する。
     bus_root: dict[Any, str] = {}
@@ -247,6 +308,7 @@ def build_circuit(pages: list[dict[str, Any]], bus_texts: dict[int, list[dict[st
     elements: list[Element] = []
     coils: dict[str, list[Element]] = defaultdict(list)
     # 照合用の形 → 最初に見つけたコイルの器具番号。O と 0 だけが違うコイル・接点を同じリレーにする。
+    timers: dict[str, dict[str, Any]] = {}
     coil_by_canonical: dict[str, str] = {}
     for (pid, ref), s in sorted(symbols.items(), key=lambda kv: (kv[0][0], kv[0][1])):
         cls, terms = s["class_key"], s.get("terminals") or []
@@ -261,10 +323,18 @@ def build_circuit(pages: list[dict[str, Any]], bus_texts: dict[int, list[dict[st
         element = Element(f"{'SW' if kind in ('a', 'b') else 'R'}_{pid}_{_spice_name(ref)}", kind, a, b, pid, ref,
                           s.get("label") or "", device_key(s.get("label")) if cls in CONTACT_CLASSES or cls == "relay_coil" else None,
                           _load_resistance(s.get("attributes") or {}))
+        element.instant = str((s.get("attributes") or {}).get("timer_contact") or "").strip() in ("instant", "瞬時")
         elements.append(element)
         if cls == "relay_coil" and element.device:
             element.device = coil_by_canonical.setdefault(canonical_device(element.device), element.device)
             coils[element.device].append(element)
+            timer = timer_setting(s.get("attributes") or {})
+            if timer is not None:
+                if timer["delay_s"] is None:
+                    diagnostics.append({"kind": "timer_without_delay", "project_id": pid, "symbol_ref": ref,
+                                        "message": f"タイマー {element.device} の時間（delay_s）が無いため 0 秒として扱います"})
+                    timer["delay_s"] = 0.0
+                timers[element.device] = timer
 
     # ラベルに機器名が無い接点（「33LA」）は、器具番号が同じコイルが 1 つだけなら、そのコイルで開閉する。
     by_number: dict[str, list[str]] = defaultdict(list)
@@ -293,7 +363,7 @@ def build_circuit(pages: list[dict[str, Any]], bus_texts: dict[int, list[dict[st
             diagnostics.append({"kind": "coil_without_contacts", "device": dev,
                                 "message": f"コイル {dev} の接点が選んだ図面にありません"})
     nodes = sorted(set(node_of.values()))
-    return Circuit(elements, nodes, node_of, dict(coils), sorted(inputs), diagnostics, wires)
+    return Circuit(elements, nodes, node_of, dict(coils), sorted(inputs), diagnostics, wires, links, timers)
 
 
 def netlist(circuit: Circuit, closed: dict[str, bool], title: str = "TodenYOLO circuit") -> str:
@@ -385,22 +455,42 @@ def _volt(volts: dict[str, float], node: str) -> float:
     return volts.get(_spice_name(node).lower(), 0.0)
 
 
-def simulate(circuit: Circuit, inputs: dict[str, bool], energized: dict[str, bool] | None = None) -> dict[str, Any]:
-    """外部入力の On/Off と前の励磁状態から、状態が変わらなくなるまで解く。"""
-    state = {dev: bool((energized or {}).get(dev)) for dev in circuit.coils}
+def simulate(circuit: Circuit, inputs: dict[str, bool], energized: dict[str, bool] | None = None, *,
+             forced_devices: dict[str, bool] | None = None, forced_contacts: dict[str, bool] | None = None,
+             timer_outputs: dict[str, bool] | None = None) -> dict[str, Any]:
+    """外部入力の On/Off と前の励磁状態から、状態が変わらなくなるまで解く。
+
+    forced_devices: 器具番号 → 動作の固定（リレーを手で押し込む・コイルが動かない、などの「もしも」。DD-0029）。
+    forced_contacts: 接点の素子名 → 閉の固定（接点の溶着・接触不良）。
+    """
+    forced_devices = forced_devices or {}
+    forced_contacts = forced_contacts or {}
+    # タイマーの限時接点は、コイルの励磁でなく時間の経過で決まる出力に従う（DD-0033。瞬時接点はコイルに従う）。
+    timer_outputs = timer_outputs or {}
+
+    def contact_on(e: Element) -> bool:
+        if e.device in timer_outputs and e.device not in forced_devices and not e.instant:
+            return bool(timer_outputs[e.device])
+        return is_on(e.device)
+
+    state = {dev: bool(forced_devices.get(dev, (energized or {}).get(dev))) for dev in circuit.coils}
     seen: list[dict[str, bool]] = []
     warnings: list[str] = []
     engine = "builtin"
 
     def is_on(dev: str | None) -> bool:
+        if dev in forced_devices:
+            return bool(forced_devices[dev])
         return state[dev] if dev in circuit.coils else bool(inputs.get(dev))
 
     steps = 0
     for steps in range(1, MAX_STEPS + 1):  # noqa: B007  回数を結果に出す
-        closed = {e.name: is_on(e.device) == (e.kind == "a") for e in circuit.elements if e.kind in ("a", "b")}
+        closed = {e.name: forced_contacts.get(e.name, contact_on(e) == (e.kind == "a"))
+                  for e in circuit.elements if e.kind in ("a", "b")}
         volts, current, engine = solve(netlist(circuit, closed))
         coil_v = {dev: max(abs(_volt(volts, e.a) - _volt(volts, e.b)) for e in es) for dev, es in circuit.coils.items()}
-        new = {dev: coil_v[dev] >= PICKUP_RATIO * SUPPLY_V for dev in circuit.coils}
+        new = {dev: bool(forced_devices[dev]) if dev in forced_devices else coil_v[dev] >= PICKUP_RATIO * SUPPLY_V
+               for dev in circuit.coils}
         if new == state:
             break
         if new in seen:
@@ -416,6 +506,11 @@ def simulate(circuit: Circuit, inputs: dict[str, bool], energized: dict[str, boo
         "coils": {dev: {"energized": state[dev], "voltage": round(coil_v[dev], 2)} for dev in circuit.coils},
         "contacts": [{"project_id": e.project_id, "symbol_ref": e.symbol_ref, "device": e.device, "kind": e.kind,
                       "closed": closed[e.name]} for e in circuit.elements if e.kind in ("a", "b")],
+        # コイル・表示灯・電磁弁などの負荷の両端の電圧（表示灯が点くか、電磁弁が動くか。DD-0029）。
+        "loads": [{"project_id": e.project_id, "symbol_ref": e.symbol_ref, "label": e.label, "device": e.device,
+                   "voltage": round(abs(_volt(volts, e.a) - _volt(volts, e.b)), 2),
+                   "energized": abs(_volt(volts, e.a) - _volt(volts, e.b)) >= PICKUP_RATIO * SUPPLY_V}
+                  for e in circuit.elements if e.kind == "load"],
         "nodes": {n: round(_volt(volts, n), 2) for n in circuit.nodes},
         "netlist": netlist(circuit, closed),
     }

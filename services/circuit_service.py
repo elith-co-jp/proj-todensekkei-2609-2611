@@ -7,7 +7,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from models import AnnotationProject
-from services import circuit_model
+from services import circuit_code, circuit_interop, circuit_model, circuit_timing, circuit_whatif, consistency
 from services.annotation_service import WITH_ANNOTATIONS, serialize_project
 from services.circuit_model import SUPPLY_V, Circuit, build_circuit, export_netlist, simulate
 from services.structure_service import get_structure
@@ -44,6 +44,11 @@ def _summary(circuit: Circuit, pages: list[dict[str, Any]]) -> dict[str, Any]:
                    "contacts": contacts_of.get(dev, [])} for dev, es in sorted(circuit.coils.items())],
         "inputs": [{"device": dev, "contacts": contacts_of.get(dev, [])} for dev in circuit.inputs],
         "diagnostics": [{**d, "page": names.get(d.get("project_id"))} for d in circuit.diagnostics],
+        # 行先札・来先札でつないだ図面間の組（DD-0030）
+        "sheet_links": [{"how": link["how"], "from": {**link["from"], "page": names.get(link["from"]["project_id"])},
+                         "to": {**link["to"], "page": names.get(link["to"]["project_id"])}} for link in circuit.sheet_links],
+        # タイマー（DD-0033）: コイルの属性 timer_mode・delay_s
+        "timers": [{"device": dev, **cfg} for dev, cfg in sorted(circuit.timers.items())],
     }
 
 
@@ -84,3 +89,124 @@ def run_simulation(db: Session, project_ids: list[int], inputs: dict[str, bool],
 def circuit_netlist(db: Session, project_ids: list[int], inputs: dict[str, bool]) -> str:
     pages, texts = _pages(db, project_ids)
     return export_netlist(build_circuit(pages, texts), inputs)
+
+
+def circuit_lcapy(db: Session, project_ids: list[int], inputs: dict[str, bool], energized: dict[str, bool],
+                  fixed: bool) -> str:
+    """Lcapy のネットリスト（DD-0028）。fixed なら外部入力と励磁から接点の開閉を決めて、そのまま直流解析できる形にする。"""
+    pages, texts = _pages(db, project_ids)
+    circuit = build_circuit(pages, texts)
+    closed = circuit_interop.contact_states(circuit, inputs, energized) if fixed else None
+    return circuit_interop.lcapy_netlist(circuit, closed, pages=pages)
+
+
+def circuit_skidl(db: Session, project_ids: list[int]) -> str:
+    """実行すると KiCad のネットリストを書き出す SKiDL のスクリプト（DD-0028）。"""
+    pages, texts = _pages(db, project_ids)
+    return circuit_interop.skidl_script(build_circuit(pages, texts), pages=pages)
+
+
+def _circuit(db: Session, project_ids: list[int]) -> tuple[Circuit, list[dict[str, Any]]]:
+    pages, texts = _pages(db, project_ids)
+    return build_circuit(pages, texts), pages
+
+
+def circuit_code_text(db: Session, project_ids: list[int]) -> str:
+    """回路を書き換えられる Python のコードにする（DD-0029）。"""
+    circuit, pages = _circuit(db, project_ids)
+    title = "、".join(p.get("sheet_no") or p["name"] for p in pages)
+    return circuit_code.to_python(circuit, pages=pages, title=title)
+
+
+def _with_pages(changes: dict[str, list[dict[str, Any]]], pages: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    names = {p["id"]: p.get("sheet_no") or p["name"] for p in pages}
+    return {k: [{**x, "page": names.get(x.get("project_id"))} if "project_id" in x else x for x in v]
+            for k, v in changes.items()}
+
+
+def circuit_what_if(db: Session, project_ids: list[int], inputs: dict[str, bool], energized: dict[str, bool],
+                    change: dict[str, Any]) -> dict[str, Any]:
+    """今の状態に変更を加えたら何が変わるか（DD-0029）。"""
+    circuit, pages = _circuit(db, project_ids)
+    result = circuit_whatif.what_if(circuit, inputs, energized, change)
+    result.pop("result")
+    result["changes"] = _with_pages(result["changes"], pages)
+    return result
+
+
+def circuit_sequence(db: Session, project_ids: list[int], steps: list[dict[str, Any]], inputs: dict[str, bool],
+                     energized: dict[str, bool], change: dict[str, Any]) -> dict[str, Any]:
+    """操作の手順を順に解く（DD-0029）。"""
+    circuit, pages = _circuit(db, project_ids)
+    out = circuit_whatif.run_sequence(circuit, steps, inputs=inputs, energized=energized, change=change)
+    return {"steps": [{**s, "changes": _with_pages(s["changes"], pages)} for s in out]}
+
+
+def circuit_timeline(db: Session, project_ids: list[int], events: list[dict[str, Any]], inputs: dict[str, bool],
+                     energized: dict[str, bool], change: dict[str, Any], delays: dict[str, float],
+                     until: float | None) -> dict[str, Any]:
+    """時刻つきの操作とタイマーで、時間の流れを解く（DD-0033）。"""
+    circuit, pages = _circuit(db, project_ids)
+    out = circuit_timing.run_timeline(circuit, events, inputs=inputs, energized=energized, until=until, change=change,
+                                      delays=delays)
+    out["timeline"] = [{**s, "changes": _with_pages(s["changes"], pages)} for s in out["timeline"]]
+    out["timers"] = [{"device": dev, **cfg} for dev, cfg in sorted(out["timers"].items())]
+    return out
+
+
+def circuit_impact(db: Session, project_ids: list[int], device: str) -> dict[str, Any]:
+    """機器が動いたら影響しうる範囲（DD-0029）。"""
+    circuit, pages = _circuit(db, project_ids)
+    result = circuit_whatif.impact(circuit, device)
+    names = {p["id"]: p.get("sheet_no") or p["name"] for p in pages}
+    result["loads"] = [{**x, "page": names.get(x["project_id"])} for x in result["loads"]]
+    return result
+
+
+FIX_CLASSES = frozenset({"contact_a", "contact_b", "relay_coil"})
+
+
+def consistency_check(db: Session, project_ids: list[int]) -> dict[str, Any]:
+    """複数の解析方法の結果の矛盾と、精査の結果・直し方（DD-0031）。"""
+    pages, texts = _pages(db, project_ids)
+    structures = {p["id"]: get_structure(db, p["id"]) for p in pages}
+    return consistency.check(pages, structures, bus_texts=texts)
+
+
+def apply_consistency_fixes(db: Session, project_ids: list[int], issue_ids: list[str]) -> dict[str, Any]:
+    """選んだ矛盾の直し方（記号の種類・ラベルの変更）を適用し、もう一度チェックした結果を返す（DD-0031）。
+
+    直し方はクライアントから受け取らず、いまの図面でチェックし直して出た直し方だけを使う（古い画面からの適用を防ぐ）。
+    """
+    from models import AnnotationSymbol
+    from services.annotation_service import class_map_by_key
+
+    current = consistency_check(db, project_ids)
+    wanted = set(issue_ids)
+    fixes = [i["fix"] for i in current["issues"] if i["id"] in wanted and i.get("fix")]
+    classes = class_map_by_key(db)
+    applied = []
+    for fix in fixes:
+        row = db.query(AnnotationSymbol).filter(AnnotationSymbol.project_id == fix["project_id"],
+                                                AnnotationSymbol.ref == fix["symbol_ref"]).one_or_none()
+        if row is None:
+            continue
+        if fix["type"] == "set_class":
+            if fix["value"] not in FIX_CLASSES or fix["value"] not in classes:
+                continue
+            before = next((k for k, c in classes.items() if c.id == row.class_id), "")
+            row.class_id = classes[fix["value"]].id
+        elif fix["type"] == "set_label":
+            before = row.label or ""
+            row.label = str(fix["value"])[:200]
+        else:
+            continue
+        note = f"整合性チェック（DD-0031）で {before or '空'} → {fix['value']} に変更"
+        row.note = f"{row.note}\n{note}" if row.note else note
+        applied.append({**fix, "before": before})
+    db.commit()
+    db.expire_all()
+    result = consistency_check(db, project_ids)
+    result["applied"] = applied
+    result["not_applied"] = sorted(wanted - {i["id"] for i in current["issues"] if i.get("fix")})
+    return result

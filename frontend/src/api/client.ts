@@ -2,7 +2,13 @@ import type {
   AiImportResult,
   AttributeDefinitions,
   AttributeImportReport,
+  CircuitChange,
+  CircuitImpact,
   CircuitResult,
+  CircuitTimeline,
+  CircuitTimelineEvent,
+  CircuitWhatIf,
+  ConsistencyResult,
   CircuitSummary,
   CoilWiringSplitResult,
   ClassStats,
@@ -275,6 +281,48 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ project_ids: projectIds, inputs }),
     }, 'circuit.cir'),
+
+  circuitWhatIf: (projectIds: number[], inputs: Record<string, boolean>, energized: Record<string, boolean>, change: CircuitChange) =>
+    req<CircuitWhatIf>('/api/circuit/what-if', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ project_ids: projectIds, inputs, energized, change }),
+    }),
+
+  circuitTimeline: (projectIds: number[], events: CircuitTimelineEvent[], delays: Record<string, number>, until?: number) =>
+    req<CircuitTimeline>('/api/circuit/timeline', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ project_ids: projectIds, events, delays, until }),
+    }),
+
+  circuitImpact: (projectIds: number[], device: string) =>
+    req<CircuitImpact>('/api/circuit/impact', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ project_ids: projectIds, device }),
+    }),
+
+  downloadCircuitCode: (projectIds: number[]) =>
+    download('/api/circuit/code', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ project_ids: projectIds }),
+    }, 'circuit_code.py'),
+
+  checkConsistency: (projectIds: number[]) =>
+    req<ConsistencyResult>('/api/circuit/consistency', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ project_ids: projectIds }),
+    }),
+
+  applyConsistencyFixes: (projectIds: number[], issueIds: string[]) =>
+    req<ConsistencyResult>('/api/circuit/consistency/apply', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ project_ids: projectIds, issue_ids: issueIds }),
+    }),
 
   splitCoilWires: (annotations: { symbols: unknown[]; connections: unknown[] }, imageWidth: number, imageHeight: number) =>
     req<CoilWiringSplitResult>('/api/circuit/split-coil-wires', {

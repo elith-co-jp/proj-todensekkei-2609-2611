@@ -26,6 +26,11 @@ const summary: CircuitSummary = {
   supplies: ['P'],
   coils: [{ device: 'X R100', symbols: [{ project_id: 7, symbol_ref: 'XC' }], contacts: [{ project_id: 7, symbol_ref: 'XA', kind: 'a' }] }],
   inputs: [{ device: 'PB1', contacts: [{ project_id: 7, symbol_ref: 'PB1', kind: 'a' }] }],
+  sheet_links: [{
+    how: 'guessed',
+    from: { project_id: 7, symbol_ref: 'T1', sheet: 'ER21216', target: 'ER21217', label: 'ER21217へ', page: 'ER21216' },
+    to: { project_id: 8, symbol_ref: 'R1', sheet: 'ER21217', target: 'ER21216', label: '(ER21216)', page: 'ER21217' },
+  }],
   diagnostics: [{ kind: 'terminals_missing', message: 'リレーコイルの端子が 1 個のため回路に含めません（2 個必要）', page: 'ER21216', symbol_ref: 'Y' }],
 }
 
@@ -62,6 +67,8 @@ describe('CircuitPage', () => {
     await waitFor(() => expect(api.simulateCircuit).toHaveBeenCalledWith([7], {}, {}))
     expect(view.getByText('無励磁')).toBeTruthy()
     expect(view.getByText(/端子が 1 個のため/)).toBeTruthy()
+    expect(view.getByLabelText('図面間のつながり').textContent).toContain('ER21217へ')
+    expect(view.getByText('推定')).toBeTruthy()
 
     fireEvent.click(view.getByRole('button', { name: /PB1/ }))
     await waitFor(() => expect(view.getByText('励磁')).toBeTruthy())

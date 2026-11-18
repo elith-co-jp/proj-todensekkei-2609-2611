@@ -370,7 +370,30 @@ export type CircuitSummary = {
   coils: { device: string; symbols: CircuitSymbolRef[]; contacts: (CircuitSymbolRef & { kind: 'a' | 'b' })[] }[]
   inputs: { device: string; contacts: (CircuitSymbolRef & { kind: 'a' | 'b' })[] }[]
   diagnostics: CircuitDiagnostic[]
+  /** 行先札・来先札でつないだ図面間の組（DD-0030）。matched: 電線番号などで確認、guessed: 向かい合う札が 1 組だけ */
+  sheet_links?: { how: 'matched' | 'guessed'; from: CircuitSheetTag; to: CircuitSheetTag }[]
+  /** タイマー（DD-0033）: コイルの属性 timer_mode・delay_s */
+  timers?: CircuitTimer[]
 }
+
+export type CircuitTimer = { device: string; mode: 'on_delay' | 'off_delay'; delay_s: number }
+
+export type CircuitTimelineEvent = { at: number; inputs: Record<string, boolean>; label?: string }
+
+export type CircuitTimeline = {
+  timers: CircuitTimer[]
+  timeline: {
+    t: number
+    label: string
+    inputs: Record<string, boolean>
+    coils: Record<string, boolean>
+    timers: Record<string, { output: boolean; due: number | null }>
+    changes: CircuitWhatIf['changes']
+    warnings: string[]
+  }[]
+}
+
+export type CircuitSheetTag = CircuitSymbolRef & { sheet: string | null; target: string; label: string; page?: string | null }
 
 export type CircuitBox = { cx: number; cy: number; w: number; h: number }
 
@@ -392,6 +415,66 @@ export type CircuitResult = CircuitSummary & {
   warnings: string[]
   coil_states: Record<string, { energized: boolean; voltage: number }>
   overlay: CircuitOverlay[]
+}
+
+// ---------- もしも・波及範囲（DD-0029） ----------
+export type CircuitChange = {
+  inputs?: Record<string, boolean>
+  devices?: Record<string, boolean>
+  contacts?: (CircuitSymbolRef & { closed: boolean })[]
+  open?: CircuitSymbolRef[]
+  short?: CircuitSymbolRef[]
+}
+
+export type CircuitChangeRow = CircuitSymbolRef & {
+  label?: string | null
+  device?: string | null
+  kind?: 'a' | 'b'
+  page?: string | null
+  before: boolean | null
+  after: boolean
+}
+
+export type CircuitWhatIf = {
+  before: { coils: Record<string, boolean> }
+  after: { coils: Record<string, boolean> }
+  changes: {
+    coils: { device: string; before: boolean | null; after: boolean }[]
+    loads: CircuitChangeRow[]
+    contacts: CircuitChangeRow[]
+  }
+  unknown_symbols: CircuitSymbolRef[]
+  warnings: string[]
+}
+
+export type CircuitImpact = {
+  device: string
+  kind: 'relay' | 'input'
+  devices: { device: string; depth: number; via: string }[]
+  loads: (CircuitSymbolRef & { label: string; depth: number; device: string | null; via: string; page?: string | null })[]
+  upstream: string[]
+  contacts: (CircuitSymbolRef & { label: string; kind: 'a' | 'b' })[]
+}
+
+// ---------- 解析結果の整合性（DD-0031） ----------
+export type ConsistencyIssue = {
+  id: string
+  check: string
+  severity: 'error' | 'warning' | 'info'
+  title: string
+  message: string
+  locations: { project_id: number; symbol_ref: string | null; page?: string | null; position?: string }[]
+  review: string[]
+  proposal: string
+  fix: { type: 'set_class' | 'set_label'; project_id: number; symbol_ref: string; value: string } | null
+}
+
+export type ConsistencyResult = {
+  checks: { check: string; method_a: string; method_b: string; compared: number; issues: number; status: 'ok' | 'issues' | 'skipped'; skipped_reason: string | null }[]
+  issues: ConsistencyIssue[]
+  summary: { errors: number; warnings: number; fixable: number }
+  applied?: { type: string; project_id: number; symbol_ref: string; value: string; before: string }[]
+  not_applied?: string[]
 }
 
 // ---------- 属性（DD-0010） ----------

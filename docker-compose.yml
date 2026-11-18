@@ -18,6 +18,9 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        # 1 で Lcapy・SKiDL を入れる（DD-0028）。WITH_INTEROP=1 docker compose up --build -d
+        WITH_INTEROP: ${WITH_INTEROP:-0}
     environment:
       SEQANNO_DATA_DIR: /app/data
       SEQANNO_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-seqanno}:${POSTGRES_PASSWORD:-seqanno_local_password}@db:5432/${POSTGRES_DB:-seqanno}

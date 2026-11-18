@@ -4,6 +4,9 @@ import { AlertTriangle, Download, Loader2, RotateCcw, Zap } from 'lucide-react'
 
 import { api } from '../api/client'
 import type { CircuitResult, CircuitSummary, ProjectRow } from '../types'
+import ConsistencyPanel from './circuit/ConsistencyPanel'
+import TimelinePanel from './circuit/TimelinePanel'
+import WhatIfPanel from './circuit/WhatIfPanel'
 
 const ENGINE_LABEL = { ngspice: 'SPICE（ngspice）で解いています', builtin: '内蔵の回路計算で解いています（ngspice 未導入）' }
 
@@ -180,6 +183,32 @@ export default function CircuitPage() {
               ))}
             </section>
 
+            <WhatIfPanel projectIds={selected} summary={summary} inputs={inputs} energized={energizedNow()} />
+            <TimelinePanel projectIds={selected} summary={summary} />
+
+            {(summary.sheet_links?.length ?? 0) > 0 && (
+              <section className="card p-4" aria-label="図面間のつながり">
+                <div className="mb-1 text-sm font-black">図面間のつながり（{summary.sheet_links?.length}）</div>
+                <p className="mb-2 text-[11px] leading-5 text-slate-500">
+                  行先札・来先札を組にして、図面をまたいで配線をつなぎました。「推定」は向かい合う札が 1 組だけだったものです。
+                </p>
+                <ul className="thin-scroll max-h-48 space-y-1 overflow-auto text-[11px] text-slate-600">
+                  {summary.sheet_links?.map((link, i) => (
+                    <li key={i} className="flex flex-wrap items-center gap-1 rounded-lg bg-slate-50 px-2 py-1">
+                      <Link className="font-bold text-cyan-700 underline" to={editorLink(link.from.project_id, link.from.symbol_ref)}>
+                        {link.from.page} {link.from.label || link.from.symbol_ref}
+                      </Link>
+                      <span>⇄</span>
+                      <Link className="font-bold text-cyan-700 underline" to={editorLink(link.to.project_id, link.to.symbol_ref)}>
+                        {link.to.page} {link.to.label || link.to.symbol_ref}
+                      </Link>
+                      {link.how === 'guessed' && <span className="rounded bg-amber-100 px-1 text-[10px] font-bold text-amber-700">推定</span>}
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            )}
+
             {summary.diagnostics.length > 0 && (
               <section className="card p-4" aria-label="回路にできなかった箇所">
                 <div className="mb-1 text-sm font-black">確認が必要な箇所（{summary.diagnostics.length}）</div>
@@ -264,6 +293,8 @@ export default function CircuitPage() {
           </section>
         </div>
       )}
+
+      {summary && <ConsistencyPanel projectIds={selected} onApplied={() => void build()} />}
     </div>
   )
 }

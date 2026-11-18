@@ -1,0 +1,686 @@
+"""複数の解析方法の結果を突き合わせ、矛盾を見つけて精査し、直し方を出す（DD-0031）。DB を使わない。
+
+突き合わせる組み合わせ（check）:
+
+| check | 方法 A | 方法 B |
+|-------|--------|--------|
+| relay_table | 図面の記号（アノテーション） | 図面下部のリレー表（構造解析の文字の読み取り） |
+| coil_sheet | 接点の枠の中のシート番号（コイルのあるシート） | 実際にコイルがある図面 |
+| wire_numbers | 配線のつながり（ノード） | 電線番号 |
+| sheet_links | 行先札の組（DD-0030） | 両側の電線番号・組にならない札 |
+| open_terminals | 記号の端子 | 配線（片方の端子だけつながる記号） |
+| input_names | 入力の接点の名前（停止は b、起動は a） | 接点の種類 |
+| solvers | 内蔵の回路計算 | ngspice・Lcapy |
+| impact | 静的な波及範囲 | もしもの結果（入力を 1 つずつ入れる） |
+| stability | シミュレーション（自己保持・発振） | 接点の種類（自分のコイルの段にある b 接点） |
+
+矛盾（issue）ごとに「精査」の結果（review: 調べたことと結論）と、直し方（proposal）を付ける。根拠がそろう直し方には
+fix（記号の種類・ラベルの変更）を付け、画面から適用できる。
+"""
+
+from __future__ import annotations
+
+import hashlib
+import re
+from collections import Counter, defaultdict
+from functools import cached_property
+from typing import Any
+
+from analysis import relay_links
+from analysis.relay_links import match_rows
+from analysis.text_extraction import SHEET_REF, normalize, same_relay_device
+from services import circuit_model, circuit_whatif, sheet_links
+from services.circuit_model import Circuit, canonical_device, simulate
+
+SHEET = re.compile(SHEET_REF)
+CONTACT_LABEL = {"contact_a": "a 接点", "contact_b": "b 接点"}
+MAX_INPUT_TRIALS = 20
+# 電圧の有無: 電源の 9 割以上を「あり」、1 割以下を「なし」とする。その間は開いた接点の間で浮いたノード
+# （開いた接点を内蔵は大きな抵抗、Lcapy は開放で扱うため、方法で値が違ってよい）で、比べない。
+LIVE = 0.9 * circuit_model.SUPPLY_V
+DEAD = 0.1 * circuit_model.SUPPLY_V
+
+
+def _issue_id(*parts: Any) -> str:
+    return hashlib.sha1("|".join(map(str, parts)).encode()).hexdigest()[:10]
+
+
+def _loc(pid: int, ref: str, names: dict[int, str]) -> dict[str, Any]:
+    return {"project_id": pid, "symbol_ref": ref, "page": names.get(pid)}
+
+
+def _px_symbols(page: dict[str, Any]) -> list[dict[str, Any]]:
+    """アノテーションの記号を、リレー表の照合（analysis.relay_links）の形（画素の枠）にする。"""
+    w, h = page.get("image_width") or 0, page.get("image_height") or 0
+    return [{"id": s["ref"], "class_name": s["class_key"], "label": s.get("label") or "",
+             "bbox": {"x0": (s["cx"] - s["w"] / 2) * w, "y0": (s["cy"] - s["h"] / 2) * h,
+                      "x1": (s["cx"] + s["w"] / 2) * w, "y1": (s["cy"] + s["h"] / 2) * h}}
+            for s in page["symbols"]]
+
+
+def _first_token(text: str) -> str:
+    words = re.sub(rf"\(?{SHEET_REF}\)?", " ", normalize(text)).split()
+    while len(words) > 1 and words[0].isdigit():
+        words = words[1:]
+    return canonical_device(words[0]) if words else ""
+
+
+def _near(a: str, b: str) -> bool:
+    """器具番号の 1 文字違い（読み違い）か。"""
+    if not a or not b or a == b or abs(len(a) - len(b)) > 1:
+        return False
+    if len(a) == len(b):
+        return sum(x != y for x, y in zip(a, b, strict=True)) == 1
+    short, long_ = sorted((a, b), key=len)
+    return any(long_[:i] + long_[i + 1:] == short for i in range(len(long_)))
+
+
+def _symbol_trust(symbol: dict[str, Any]) -> str:
+    if symbol.get("origin") == "inference":
+        conf = symbol.get("confidence")
+        return f"AI の検出（確信度 {conf:.2f}）" if isinstance(conf, (int, float)) else "AI の検出"
+    return "人が登録した記号"
+
+
+def _unique_after_assignment(rows: list[dict[str, str]], index: int, found: dict[int, dict[str, Any]],
+                             symbols: list[dict[str, Any]], grid: dict[str, Any]) -> bool:
+    """窓の中に同じ器具番号の接点が複数あっても、ほかの接点がすべて表の別の行に結び付いたなら、この行の接点は 1 つに決まる。"""
+    cell = relay_links._position(rows[index]["position"])
+    if cell is None:
+        return False
+    taken = {m["symbol_id"] for i, m in found.items() if i != index and m.get("symbol_id")}
+    same = []
+    for s in symbols:
+        if s["class_name"] not in CONTACT_LABEL or not same_relay_device(s["label"], rows[index]["device"]):
+            continue
+        u, v = relay_links.grid_coordinates(grid, *relay_links._center(s))
+        du, dv = u - cell[0], v - cell[1]
+        if abs(du) <= relay_links.COLUMN_WINDOW and relay_links.ROW_WINDOW[0] <= dv <= relay_links.ROW_WINDOW[1]:
+            same.append(s["id"])
+    return [sid for sid in same if sid not in taken] == [found[index]["symbol_id"]]
+
+
+# 入力の名前から決まる接点の種類（DD-0033）。英字は語の区切りで見る。
+_INPUT_B = re.compile(r"(?<![A-Z])(STOP|EMG|EMS|E-?STOP|OFF)(?![A-Z])|停止|非常|切")
+_INPUT_A = re.compile(r"(?<![A-Z])(START|RUN|ON)(?![A-Z])|起動|運転|入")
+
+
+def input_kind_by_name(device: str) -> str | None:
+    """入力の名前から、取り決めの接点の種類（"a" / "b"）。決まらなければ None。"""
+    text = normalize(device).upper()
+    b, a = bool(_INPUT_B.search(text)), bool(_INPUT_A.search(text))
+    if b == a:
+        return None
+    return "b" if b else "a"
+
+
+class Checker:
+    def __init__(self, pages: list[dict[str, Any]], structures: dict[int, dict[str, Any] | None],
+                 circuit: Circuit, *, solvers: bool = True) -> None:
+        self.pages = pages
+        self.structures = structures
+        self.circuit = circuit
+        self.solvers = solvers
+        self.names = {p["id"]: p.get("sheet_no") or p["name"] for p in pages}
+        self.symbols = {(p["id"], s["ref"]): s for p in pages for s in p["symbols"]}
+        self.sheet_page = {sheet_links.base_sheet(sh): p for p in pages if (sh := sheet_links.page_sheet(p))}
+        self.issues: list[dict[str, Any]] = []
+        self.checks: list[dict[str, Any]] = []
+        self.table_kind: dict[tuple[int, str], str] = {}  # リレー表の行に結び付いた接点 → 表の a/b
+
+    def add(self, check: str, severity: str, title: str, message: str, locations: list[dict[str, Any]],
+            review: list[str], proposal: str, fix: dict[str, Any] | None = None, key: Any = None) -> None:
+        self.issues.append({
+            "id": _issue_id(check, key if key is not None else (title, message)), "check": check, "severity": severity,
+            "title": title, "message": message, "locations": locations, "review": review, "proposal": proposal,
+            "fix": fix,
+        })
+
+    def record(self, check: str, a: str, b: str, compared: int, skipped: str | None = None) -> None:
+        found = sum(1 for i in self.issues if i["check"] == check)
+        status = "skipped" if skipped else "issues" if found else "ok"
+        self.checks.append({"check": check, "method_a": a, "method_b": b, "compared": compared, "issues": found,
+                            "status": status, "skipped_reason": skipped})
+
+    # ----------------------------------------------------------------------------------------- リレー表
+    def relay_table(self) -> None:
+        compared = 0
+        have_table = False
+        matched_contacts: set[tuple[int, str]] = set()
+        rows_by_device: dict[str, int] = defaultdict(int)
+        for page in self.pages:
+            structure = self.structures.get(page["id"]) or {}
+            rows = (structure.get("relay_table") or {}).get("rows") or []
+            if not rows:
+                continue
+            have_table = True
+            pid = page["id"]
+            coils = [s for s in page["symbols"] if s["class_key"] == "relay_coil"]
+            for device in dict.fromkeys(r["device"] for r in rows if r.get("device")):
+                compared += 1
+                if any(same_relay_device(s.get("label") or "", device) for s in coils):
+                    continue
+                near = [s for s in coils if _near(_first_token(s.get("label") or ""), _first_token(device))]
+                review = [f"リレー表に {device} がある（表はコイルのある図面に書かれる）",
+                          f"この図面のコイル {len(coils)} 個のラベルに {device} が無い"]
+                if len(near) == 1:
+                    s = near[0]
+                    review.append(f"1 文字違いのコイル {s.get('label')}（{s['ref']}）がある → ラベルの読み違いの可能性が高い")
+                    self.add("relay_table", "error", "リレー表の器具のコイルが無い",
+                             f"リレー表の {device} のコイルが図面に見つかりません", [_loc(pid, s["ref"], self.names)],
+                             review, f"コイル {s['ref']} のラベルを「{device}」に直す",
+                             {"type": "set_label", "project_id": pid, "symbol_ref": s["ref"], "value": device},
+                             key=(pid, device))
+                else:
+                    review.append("1 文字違いのコイルも無い → コイルの検出漏れか、表の読み違い" if not near
+                                  else f"1 文字違いのコイルが {len(near)} 個あり 1 つに決まらない")
+                    used = [(p, r) for (p, r), c in self.symbols.items()
+                            if c["class_key"] in CONTACT_LABEL and same_relay_device(c.get("label") or "", device)][:5]
+                    self.add("relay_table", "warning", "リレー表の器具のコイルが無い",
+                             f"リレー表の {device} のコイルが図面に見つかりません",
+                             [_loc(pid, s["ref"], self.names) for s in near]
+                             + [{"project_id": pid, "symbol_ref": None, "page": self.names.get(pid), "position": None}]
+                             + [_loc(p, r, self.names) for p, r in used], review,
+                             "図面でコイルを探して登録するか、リレー表の読みを確かめる", key=(pid, device))
+            # 行列の位置の接点（「本」はこの図面、ほかは選んだ図面のうちそのシート）。図面ごとに、表の行をまとめて
+            # 1 行 1 接点で結び付ける（隣の列に同じリレーの接点があっても、行どうしで取り合わない）。
+            by_target: dict[int, list[int]] = defaultdict(list)
+            for index, row in enumerate(rows):
+                if not row.get("position") or not row.get("device"):
+                    continue
+                sheet = row.get("sheet") or ""
+                target = page if sheet == "本" else self.sheet_page.get(
+                    sheet_links.base_sheet(normalize(sheet).replace(" ", "")))
+                if target is None or not (self.structures.get(target["id"]) or {}).get("drawing_grid"):
+                    continue
+                by_target[target["id"]].append(index)
+            for tid, indexes in by_target.items():
+                target = next(p for p in self.pages if p["id"] == tid)
+                grid = self.structures[tid]["drawing_grid"]
+                symbols = _px_symbols(target)
+                found = match_rows(rows, indexes, symbols, grid)
+                for index in indexes:
+                    rows_by_device[rows[index]["device"]] += 1
+                    compared += 1
+                    match = dict(found.get(index) or {})
+                    if match.get("device_match") and not match.get("unique"):
+                        match["unique"] = _unique_after_assignment(rows, index, found, symbols, grid)
+                    self._relay_row(pid, rows[index], index, target, match, matched_contacts)
+        # 表に無い接点: 表がある器具の接点で、どの行にも結び付かなかったもの（選んだ図面の中だけ）。
+        for (pid, ref), s in self.symbols.items():
+            if s["class_key"] not in CONTACT_LABEL or (pid, ref) in matched_contacts:
+                continue
+            device = next((d for d in rows_by_device if same_relay_device(s.get("label") or "", d)), None)
+            if device is None:
+                continue
+            self.add("relay_table", "warning", "リレー表に無い接点",
+                     f"{s.get('label')}（{CONTACT_LABEL[s['class_key']]}）がリレー表のどの行の位置にも当たりません",
+                     [_loc(pid, ref, self.names)],
+                     [f"リレー表の {device} の行は {rows_by_device[device]} 行で、行列の位置にこの接点が無い",
+                      "接点のラベルの読み違い（別の器具）か、表の行の読み落とし"],
+                     "接点のラベルと、リレー表の行列の位置を確かめる", key=(pid, ref))
+        self.record("relay_table", "図面の記号", "リレー表", compared,
+                    None if have_table else "構造解析（リレー表の読み取り）の結果がある図面がありません")
+
+    def _relay_row(self, pid: int, row: dict[str, str], index: int, target: dict[str, Any], found: dict[str, Any],
+                   matched_contacts: set[tuple[int, str]]) -> None:
+        tid = target["id"]
+        where = f"{self.names.get(tid)} の {row['position']}"
+        ref = found.get("symbol_id")
+        nearest = None
+        if ref is not None and not found.get("device_match"):
+            # 窓の中で最も近い接点が別の器具（ラベルがあり、1 文字違いでもない）なら、この行の接点は見落とし。
+            label = self.symbols[(tid, ref)].get("label") or ""
+            token = _first_token(label)
+            row_token = _first_token(row["device"])
+            if token and token != row_token and not _near(token, row_token):
+                other = "表の別の行の器具" if token in self._table_tokens else "別の器具"
+                nearest, ref = (f"{label}（{ref}）", other, ref), None
+        if ref is None:
+            self.add("relay_table", "warning", "リレー表の位置に接点が無い",
+                     f"リレー表の {row['device']}（{row.get('contact')} 接点）の位置 {where} に接点がありません",
+                     [{"project_id": tid, "symbol_ref": None, "page": self.names.get(tid), "position": row["position"]},
+                      *([_loc(tid, nearest[2], self.names)] if nearest else [])],
+                     ["表の行列を図面の座標に直し、その窓の中の接点を探した",
+                      f"窓の中で最も近い接点 {nearest[0]} は{nearest[1]} → この行の接点の検出漏れの可能性" if nearest
+                      else "窓の中に接点の記号が無い → 接点の検出漏れの可能性"],
+                     f"{where} 付近で接点を探して登録する", key=(pid, index, "missing"))
+            return
+        symbol = self.symbols[(tid, ref)]
+        matched_contacts.add((tid, ref))
+        if found.get("device_match") and found.get("unique") and row.get("contact") in ("a", "b"):
+            self.table_kind[(tid, ref)] = row["contact"]
+        table_class = f"contact_{row.get('contact')}" if row.get("contact") in ("a", "b") else None
+        if not found.get("device_match"):
+            # ここに来るのは、ラベルが空か器具番号が 1 文字違いの接点（それ以外は上で見落としとして扱う）。
+            m = SHEET.search(normalize(symbol.get("label") or "").replace(" ", ""))
+            coil_sheet = m.group(0) if m else (sheet_links.page_sheet(next(p for p in self.pages if p["id"] == pid))
+                                              if tid != pid else None)
+            # コイルのシート番号は残す。ラベルが空で、表が別の図面（コイルのある図面）にあれば、そのシート番号を付ける。
+            value = f"{row['device']} ({coil_sheet})" if coil_sheet else row["device"]
+            self.add("relay_table", "error", "接点の器具番号が表と違う",
+                     f"{where} の接点 {symbol.get('label') or ref} は、表では {row['device']}",
+                     [_loc(tid, ref, self.names)],
+                     [f"{where} の窓で最も近い接点は {symbol.get('label') or 'ラベルなし'}（{ref}）",
+                      f"器具番号が表の {row['device']} と違う", "ラベルが空か 1 文字違い → 読み違いの可能性が高い"],
+                     f"接点 {ref} のラベルを「{value}」に直す",
+                     {"type": "set_label", "project_id": tid, "symbol_ref": ref, "value": value}, key=(pid, index, "device"))
+            return
+        if table_class and symbol["class_key"] != table_class:
+            review = [f"{where} の接点 {ref} は器具番号が表と一致（{row['device']}）",
+                      f"図面では {CONTACT_LABEL.get(symbol['class_key'])}、表では {CONTACT_LABEL[table_class]}",
+                      f"記号: {_symbol_trust(symbol)}"]
+            unique = found.get("unique")
+            review.append("窓の中で器具番号が一致する接点はこれ 1 つ → 表の種類が正しい可能性が高い" if unique
+                          else "窓の中に同じ器具番号の接点が複数ある → どれが表の行か確かめる")
+            self.add("relay_table", "error", "接点の種類（a/b）が表と違う",
+                     f"{where} の {row['device']} の接点は、図面では {CONTACT_LABEL.get(symbol['class_key'])}、"
+                     f"表では {CONTACT_LABEL[table_class]}", [_loc(tid, ref, self.names)], review,
+                     f"接点 {ref} を {CONTACT_LABEL[table_class]}にする",
+                     {"type": "set_class", "project_id": tid, "symbol_ref": ref, "value": table_class} if unique else None,
+                     key=(pid, index, "class"))
+
+    @cached_property
+    def _table_tokens(self) -> set[str]:
+        """リレー表のすべての行の器具番号（最初の語）。"""
+        return {_first_token(r.get("device") or "") for st in self.structures.values()
+                for r in ((st or {}).get("relay_table") or {}).get("rows") or []} - {""}
+
+    # ------------------------------------------------------------------------------- 接点のコイルのシート
+    def coil_sheet(self) -> None:
+        compared = 0
+        coil_pages: dict[str, set[int]] = defaultdict(set)
+        for dev, coils in self.circuit.coils.items():
+            for e in coils:
+                coil_pages[canonical_device(dev.split()[0])].add(e.project_id)
+        contact_tokens = Counter(_first_token(s.get("label") or "") for s in self.symbols.values()
+                                 if s["class_key"] in CONTACT_LABEL)
+        table_tokens = Counter(_first_token(r.get("device") or "") for st in self.structures.values()
+                               for r in ((st or {}).get("relay_table") or {}).get("rows") or [])
+        for (pid, ref), s in self.symbols.items():
+            if s["class_key"] not in CONTACT_LABEL:
+                continue
+            m = SHEET.search(normalize(s.get("label") or "").replace(" ", ""))
+            if not m:
+                continue
+            target = self.sheet_page.get(sheet_links.base_sheet(m.group(0)))
+            if target is None:
+                continue
+            compared += 1
+            number = _first_token(s.get("label") or "")
+            where = coil_pages.get(number, set())
+            if target["id"] in where:
+                continue
+            coils_there = [c for c in target["symbols"] if c["class_key"] == "relay_coil"]
+            near = [c for c in coils_there if _near(_first_token(c.get("label") or ""), number)]
+            review = [f"接点のラベルではコイルは {m.group(0)}（{self.names.get(target['id'])}）にある",
+                      f"その図面に {number} のコイルが無い"
+                      + (f"（{'、'.join(self.names.get(p, str(p)) for p in sorted(where))} にはある）" if where else "")]
+            support = contact_tokens[number] - 1 + table_tokens[number]
+            if len(near) == 1 and not where and support:
+                # ほかの接点・リレー表も接点と同じ器具番号 → 読み違えたのはコイルの側。
+                c = near[0]
+                coil_label = normalize(c.get("label") or "")
+                value = re.sub(re.escape(coil_label.split()[0]), number, coil_label, count=1)
+                review.append(f"その図面に 1 文字違いのコイル {c.get('label')}（{c['ref']}）がある")
+                review.append(f"ほかの接点・リレー表の行 {support} 個も {number} → コイルのラベルの読み違いの可能性が高い")
+                fix = {"type": "set_label", "project_id": target["id"], "symbol_ref": c["ref"], "value": value}
+                proposal = f"コイル {c['ref']} のラベルを「{value}」に直す"
+                self.add("coil_sheet", "error", "接点の指すシートにコイルが無い",
+                         f"接点 {s.get('label')} はコイルが {m.group(0)} にあると書かれていますが、見つかりません",
+                         [_loc(pid, ref, self.names), _loc(target["id"], c["ref"], self.names)], review, proposal, fix,
+                         key=(pid, ref))
+                continue
+            if len(near) == 1 and not where:
+                c = near[0]
+                review.append(f"その図面に 1 文字違いのコイル {c.get('label')}（{c['ref']}）がある → 接点のラベルの読み違いの可能性")
+                label = re.sub(re.escape(normalize(s.get("label") or "").split()[0]),
+                               normalize(c.get("label") or "").split()[0], normalize(s.get("label") or ""), count=1)
+                fix = {"type": "set_label", "project_id": pid, "symbol_ref": ref, "value": label}
+                proposal = f"接点 {ref} のラベルを「{label}」に直す"
+            elif len(where) == 1 and not near:
+                # 器具番号が同じコイルがほかの 1 枚の図面にだけある → 接点のシート番号の読み違い。
+                there = sheet_links.page_sheet(next(p for p in self.pages if p["id"] in where)) or ""
+                label = normalize(s.get("label") or "").replace(m.group(0), there, 1)
+                review.append(f"{number} のコイルは {there} だけにあり、指す図面に 1 文字違いのコイルも無い → シート番号の読み違いの可能性が高い")
+                fix = {"type": "set_label", "project_id": pid, "symbol_ref": ref, "value": label} if there else None
+                proposal = f"接点 {ref} のラベルを「{label}」に直す" if fix else "接点のシート番号を確かめる"
+            else:
+                fix, proposal = None, "接点のラベル（器具番号・シート番号）とコイルの図面を確かめる"
+            self.add("coil_sheet", "error" if fix or where else "warning", "接点の指すシートにコイルが無い",
+                     f"接点 {s.get('label')} はコイルが {m.group(0)} にあると書かれていますが、見つかりません",
+                     [_loc(pid, ref, self.names)], review, proposal, fix, key=(pid, ref))
+        self.record("coil_sheet", "接点のラベルのシート番号", "コイルのある図面", compared,
+                    None if compared else "選んだ図面を指すシート番号つきの接点のラベルがありません")
+
+    # --------------------------------------------------------------------------------------- 電線番号
+    def wire_numbers(self) -> None:
+        compared = 0
+        node_of = self.circuit.node_of
+        for page in self.pages:
+            pid = page["id"]
+            by_number: dict[str, set[str]] = defaultdict(set)
+            by_node: dict[str, set[str]] = defaultdict(set)
+            where: dict[tuple[str, str], list[str]] = defaultdict(list)
+            for w in self.circuit.wires:
+                if w["project_id"] != pid:
+                    continue
+                c = self._connection(page, w)
+                number = normalize((c or {}).get("wire_no") or "").replace(" ", "")
+                if not number:
+                    continue
+                node = node_of.get(w["from"])
+                if node is None:
+                    continue
+                compared += 1
+                by_number[number].add(node)
+                if not circuit_whatif._is_bus(node):
+                    by_node[node].add(number)
+                where[(number, node)] += [w["from"][1], w["to"][1]]
+            for number, nodes in by_number.items():
+                if len(nodes) < 2:
+                    continue
+                groups = sorted(nodes, key=lambda n: len(where[(number, n)]))
+                minority = groups[0]
+                self.add("wire_numbers", "warning", "同じ電線番号が別々のつながりにある",
+                         f"{self.names.get(pid)} の電線番号 {number} の配線が {len(nodes)} つのつながりに分かれています",
+                         [_loc(pid, ref, self.names) for ref in dict.fromkeys(where[(number, minority)])],
+                         [f"電線番号 {number} の配線が {len(nodes)} つのノードにある（同じ番号は同じ線のはず）",
+                          f"いちばん配線の少ないつながり（{minority}）の記号を先に確かめる",
+                          "配線の途切れ（つなぎ忘れ・分岐点の見落とし）か、電線番号の読み違い"],
+                         "途切れている配線をつなぐか、電線番号を直す", key=(pid, "number", number))
+            for node, numbers in by_node.items():
+                if len(numbers) < 2:
+                    continue
+                refs = [ref for n in sorted(numbers) for ref in where[(n, node)]]
+                self.add("wire_numbers", "warning", "1 つのつながりに電線番号が 2 つ以上",
+                         f"{self.names.get(pid)} の 1 つのつながりに電線番号 {'・'.join(sorted(numbers))} が混ざっています",
+                         [_loc(pid, ref, self.names) for ref in dict.fromkeys(refs)],
+                         ["違う電線番号の配線が 1 つのノードにつながっている", "余分な接続（誤った分岐点・交差の誤認）か、電線番号の読み違い"],
+                         "余分な接続を外すか、電線番号を直す", key=(pid, "node", node, tuple(sorted(numbers))))
+        self.record("wire_numbers", "配線のつながり", "電線番号", compared,
+                    None if compared else "電線番号の付いた配線がありません")
+
+    def _connection(self, page: dict[str, Any], wire: dict[str, Any]) -> dict[str, Any] | None:
+        cache = page.setdefault("_wire_lookup", {})
+        if not cache:
+            for c in page["connections"]:
+                cache.setdefault((c["from_symbol_ref"], c["to_symbol_ref"]), c)
+        return cache.get((wire["from"][1], wire["to"][1]))
+
+    # --------------------------------------------------------------------------------------- 行先札
+    def sheet_link_numbers(self) -> None:
+        compared = 0
+        numbers: dict[tuple[int, str], set[str]] = defaultdict(set)
+        for page in self.pages:
+            for c in page["connections"]:
+                if c.get("wire_no"):
+                    for side in ("from", "to"):
+                        numbers[(page["id"], c[f"{side}_symbol_ref"])].add(normalize(c["wire_no"]).replace(" ", ""))
+        for link in self.circuit.sheet_links:
+            a, b = link["from"], link["to"]
+            na, nb = numbers.get((a["project_id"], a["symbol_ref"]), set()), numbers.get((b["project_id"], b["symbol_ref"]), set())
+            if not na or not nb:
+                continue
+            compared += 1
+            if na & nb:
+                continue
+            self.add("sheet_links", "error", "行先札の両側で電線番号が違う",
+                     f"{a['sheet']} の札 {a['label'] or a['symbol_ref']}（{'・'.join(sorted(na))}）と "
+                     f"{b['sheet']} の札 {b['label'] or b['symbol_ref']}（{'・'.join(sorted(nb))}）",
+                     [_loc(a["project_id"], a["symbol_ref"], self.names), _loc(b["project_id"], b["symbol_ref"], self.names)],
+                     ["札を組にした（向かい合う札）が、両側の配線の電線番号に共通のものが無い",
+                      "札の組み違い（同じ行先の別の札）か、電線番号の読み違い"],
+                     "札のラベルに電線番号を入れて組を確かめる", key=(a["project_id"], a["symbol_ref"]))
+        compared += self._unpaired_tags(numbers)
+        self.record("sheet_links", "行先札の組", "両側の電線番号", compared,
+                    None if compared or self.circuit.sheet_links else "図面間でつないだ行先札がありません")
+
+    def _unpaired_tags(self, numbers: dict[tuple[int, str], set[str]]) -> int:
+        """組にならなかった札: 電線番号が同じで、こちらの図面へ向かう札がほかの図面に 1 つだけあれば、札のシート番号の読み違い。"""
+        loaded = {sheet_links.base_sheet(s) for s in (sheet_links.page_sheet(p) for p in self.pages) if s}
+        open_tags = [d for d in self.circuit.diagnostics if d["kind"] == "sheet_link_unresolved"]
+        page_by_id = {p["id"]: p for p in self.pages}
+        compared = 0
+        for d in open_tags:
+            pid, ref = d["project_id"], d["symbol_ref"]
+            own = sheet_links.page_sheet(page_by_id[pid])
+            mine = numbers.get((pid, ref), set())
+            if not own or not mine:
+                continue
+            compared += 1
+            partners = [u for u in open_tags if u["project_id"] != pid and mine & numbers.get((u["project_id"], u["symbol_ref"]), set())
+                        and sheet_links.base_sheet(u["target"]) == sheet_links.base_sheet(own)]
+            label = (self.symbols.get((pid, ref)) or {}).get("label") or ""
+            review = [f"札 {label or ref}（{own}）の行先 {d['target']} に、組になる札が見つからない",
+                      f"札の配線の電線番号: {'・'.join(sorted(mine))}"]
+            fix, proposal = None, "札のラベル（行先のシート番号）と、行先の図面の札を確かめる"
+            locations = [_loc(pid, ref, self.names)]
+            if sheet_links.base_sheet(d["target"]) not in loaded and not partners:
+                continue  # 行先の図面を選んでいないだけ（回路の診断に出る）
+            if len(partners) == 1:
+                u = partners[0]
+                there = sheet_links.page_sheet(page_by_id[u["project_id"]]) or ""
+                review.append(f"{there} の札 {(self.symbols.get((u['project_id'], u['symbol_ref'])) or {}).get('label')}"
+                              f"（{u['symbol_ref']}）が同じ電線番号で、{own} へ向かう → 行先のシート番号の読み違いの可能性が高い")
+                locations.append(_loc(u["project_id"], u["symbol_ref"], self.names))
+                value = normalize(label).replace(d["target"], there, 1) if d["target"] in normalize(label) else None
+                if value and there:
+                    fix = {"type": "set_label", "project_id": pid, "symbol_ref": ref, "value": value}
+                    proposal = f"札 {ref} のラベルを「{value}」に直す"
+            else:
+                review.append("同じ電線番号でこの図面へ向かう札が " + ("無い" if not partners else f"{len(partners)} 個ある"))
+            self.add("sheet_links", "error" if fix else "warning", "行先札の相手が見つからない",
+                     f"{self.names.get(pid)} の札 {label or ref} の行先 {d['target']} に組になる札がありません",
+                     locations, review, proposal, fix, key=(pid, ref, "unpaired"))
+        return compared
+
+    def _overlapping(self, pid: int, symbol: dict[str, Any]) -> dict[str, Any] | None:
+        """同じ図面で、同じ種類で中心がほぼ同じ位置（大きさの半分以内）のほかの記号。"""
+        for (p, ref), other in self.symbols.items():
+            if p != pid or ref == symbol["ref"] or other["class_key"] != symbol["class_key"]:
+                continue
+            if (abs(other["cx"] - symbol["cx"]) <= max(symbol["w"], other["w"]) / 2
+                    and abs(other["cy"] - symbol["cy"]) <= max(symbol["h"], other["h"]) / 2):
+                return other
+        return None
+
+    # ------------------------------------------------------------------------------- 入力の接点の名前
+    def input_names(self) -> None:
+        """押しボタンなどの入力の接点は、リレー表のような照合先が無い。名前の取り決め（停止・非常停止は b、起動・運転は a）
+        と接点の種類を比べる（DD-0033）。取り決めに合わない使い方もあるので要確認にする。"""
+        compared = 0
+        for e in self.circuit.elements:
+            if e.kind not in ("a", "b") or e.device not in self.circuit.inputs:
+                continue
+            expected = input_kind_by_name(e.device)
+            if expected is None:
+                continue
+            compared += 1
+            if expected == e.kind:
+                continue
+            s = self.symbols.get((e.project_id, e.symbol_ref)) or {}
+            target = f"contact_{expected}"
+            self.add("input_names", "warning", "入力の接点の種類が名前と合わない",
+                     f"入力 {e.device} は名前から {CONTACT_LABEL[target]}のはずですが、図面では {CONTACT_LABEL[f'contact_{e.kind}']}です",
+                     [_loc(e.project_id, e.symbol_ref, self.names)],
+                     [f"入力 {e.device} はリレー表に行が無く、名前の取り決めと比べた",
+                      "停止・非常停止・切は b 接点、起動・運転・入は a 接点で描くことが多い",
+                      f"記号: {_symbol_trust(s)}", "停止用のリレーを動かす a 接点など、取り決めと違う使い方もある → 図面で確かめる"],
+                     f"図面で確かめ、読み違いなら接点 {e.symbol_ref} を {CONTACT_LABEL[target]}にする",
+                     {"type": "set_class", "project_id": e.project_id, "symbol_ref": e.symbol_ref, "value": target},
+                     key=(e.project_id, e.symbol_ref, "input"))
+        self.record("input_names", "入力の接点の名前", "接点の種類", compared,
+                    None if compared else "名前から種類が決まる入力（停止・起動など）がありません")
+
+    # --------------------------------------------------------------------------------- 端子の配線
+    def open_terminals(self) -> None:
+        """接点・コイル・負荷の 2 つの端子のうち、片方だけ配線がある記号（段が途切れている）。"""
+        members: Counter[str] = Counter(self.circuit.node_of.values())
+        compared = 0
+        for e in self.circuit.elements:
+            s = self.symbols.get((e.project_id, e.symbol_ref)) or {}
+            terms = s.get("terminals") or []
+            if len(terms) != 2:
+                continue
+            compared += 1
+            lone = [t for t in terms if members[self.circuit.node_of.get((e.project_id, e.symbol_ref, t["ref"]))] == 1]
+            if len(lone) == 2:
+                twin = self._overlapping(e.project_id, s)
+                review = ["2 つの端子のどちらにも配線が無い"]
+                if twin:
+                    review.append(f"同じ種類の記号 {twin.get('label') or ''}（{twin['ref']}）とほぼ同じ位置に重なっている → 二重の検出の可能性が高い")
+                else:
+                    review.append("記号の誤検出（文字や線の一部を記号と見た）か、配線をすべて見落とした")
+                self.add("open_terminals", "warning", "どこにもつながっていない記号" if not twin else "記号が重なっている（二重の検出）",
+                         f"{self.names.get(e.project_id)} の {s.get('label') or e.symbol_ref} に配線がありません",
+                         [_loc(e.project_id, e.symbol_ref, self.names)]
+                         + ([_loc(e.project_id, twin["ref"], self.names)] if twin else []), review,
+                         f"記号 {e.symbol_ref} を消す（二重の検出）" if twin else "図面で確かめ、誤検出なら記号を消し、見落としなら配線をつなぐ",
+                         key=(e.project_id, e.symbol_ref, "isolated"))
+                continue
+            if len(lone) != 1:
+                continue
+            self.add("open_terminals", "warning", "配線がつながっていない端子",
+                     f"{self.names.get(e.project_id)} の {s.get('label') or e.symbol_ref} の端子 {lone[0].get('name') or lone[0]['ref']} に配線がありません",
+                     [_loc(e.project_id, e.symbol_ref, self.names)],
+                     ["接点・コイル・負荷は 2 つの端子の両方が配線につながるはず", "片方だけつながっている → 段が途中で途切れている",
+                      "配線のつなぎ忘れ（線の見落とし）か、隣の記号の見落とし"],
+                     "端子の先の配線を図面で確かめてつなぐ", key=(e.project_id, e.symbol_ref, "open"))
+        self.record("open_terminals", "記号の端子", "配線", compared, None if compared else "回路の素子がありません")
+
+    # ----------------------------------------------------------------------------- シミュレーション
+    def _trials(self) -> list[dict[str, bool]]:
+        return [{}] + [{dev: True} for dev in self.circuit.inputs[:MAX_INPUT_TRIALS]]
+
+    def solver_agreement(self) -> None:
+        engines = []
+        if circuit_model.ngspice_path():
+            engines.append("ngspice")
+        try:
+            import lcapy  # noqa: F401
+            engines.append("Lcapy")
+        except ImportError:
+            pass
+        if not self.solvers or not engines or not self.circuit.elements:
+            self.record("solvers", "内蔵の回路計算", "ngspice・Lcapy", 0,
+                        "ngspice も Lcapy も入っていません" if self.solvers and self.circuit.elements else "対象外")
+            return
+        from services import circuit_interop
+
+        compared = 0
+        for inputs in self._trials():
+            closed = circuit_interop.contact_states(self.circuit, inputs, {})
+            text = circuit_model.netlist(self.circuit, closed)
+            builtin = {k: v for k, v in circuit_model._solve_mna(text)[0].items()}
+            results = {"内蔵": {n: circuit_model._volt({k.lower(): v for k, v in builtin.items()}, n) for n in self.circuit.nodes}}
+            if "ngspice" in engines:
+                volts = circuit_model._solve_ngspice(text, circuit_model.ngspice_path())[0]
+                results["ngspice"] = {n: circuit_model._volt(volts, n) for n in self.circuit.nodes}
+            if "Lcapy" in engines:
+                results["Lcapy"] = circuit_interop.solve_lcapy(self.circuit, closed)
+            compared += 1
+            live = {name: {n for n, v in r.items() if v >= LIVE} for name, r in results.items()}
+            dead = {name: {n for n, v in r.items() if v <= DEAD} for name, r in results.items()}
+            differ = {n for s in live.values() for n in s} & {n for s in dead.values() for n in s}
+            if not differ:
+                continue
+            votes = {n: [name for name, s in live.items() if n in s] for n in sorted(differ)}
+            label = "、".join(f"{k}={'ON' if v else 'OFF'}" for k, v in inputs.items()) or "すべての入力 OFF"
+            self.add("solvers", "warning", "回路計算の方法で結果が違う",
+                     f"{label} のとき、{len(differ)} 個のノードで電圧の有無が方法によって違います",
+                     [], [f"{n}: 電圧ありと解いた方法 = {'・'.join(v) or 'なし'}" for n, v in list(votes.items())[:10]]
+                     + ["多数決で外れた方法の解き方（開いた接点の扱い・浮いたノード）を確かめる"],
+                     "浮いたノード（どこにもつながらない線）や短絡を図面で確かめる", key=(label,))
+        self.record("solvers", "内蔵の回路計算", "・".join(engines), compared)
+
+    def impact_vs_whatif(self) -> None:
+        compared = 0
+        for dev in self.circuit.inputs[:MAX_INPUT_TRIALS]:
+            reach = circuit_whatif.impact(self.circuit, dev)
+            devices = {d["device"] for d in reach["devices"]}
+            loads = {(x["project_id"], x["symbol_ref"]) for x in reach["loads"]}
+            r = circuit_whatif.what_if(self.circuit, {}, {}, {"inputs": {dev: True}})
+            compared += 1
+            outside = [c["device"] for c in r["changes"]["coils"] if c["device"] not in devices]
+            outside_loads = [x for x in r["changes"]["loads"] if (x["project_id"], x["symbol_ref"]) not in loads]
+            if outside or outside_loads:
+                self.add("impact", "error", "波及範囲の外で状態が変わった",
+                         f"{dev} を ON にすると、波及範囲に入っていない {len(outside) + len(outside_loads)} 個が変わりました",
+                         [_loc(x["project_id"], x["symbol_ref"], self.names) for x in outside_loads],
+                         ["静的な波及範囲は取りこぼさない側のはず → 回路の組み方の矛盾",
+                          f"範囲外で変わったリレー: {'、'.join(outside) or 'なし'}"],
+                         "開発者に報告する（回路の組み方の不具合）", key=(dev,))
+        self.record("impact", "静的な波及範囲", "もしも（入力を 1 つずつ ON）", compared,
+                    None if self.circuit.inputs else "外部入力がありません")
+
+    def stability(self) -> None:
+        compared = 0
+        rung = circuit_whatif.rungs(self.circuit) if self.circuit.elements else {}
+        for inputs in self._trials():
+            r = simulate(self.circuit, inputs, {})
+            compared += 1
+            if not any("落ち着きません" in w for w in r["warnings"]):
+                continue
+            label = "、".join(f"{k}=ON" for k in inputs) or "すべての入力 OFF"
+            for dev, coils in self.circuit.coils.items():
+                own = {rung[e.name] for e in coils}
+                selfcut = [e for e in self.circuit.elements
+                           if e.kind == "b" and e.device == dev and rung[e.name] in own]
+                for e in selfcut:
+                    s = self.symbols.get((e.project_id, e.symbol_ref)) or {}
+                    review = ["シミュレーションでリレーの状態が繰り返し変わった",
+                              f"{dev} のコイルと同じ段に {dev} の b 接点（{e.symbol_ref}）がある → 自分で自分を切る回路"]
+                    if self.table_kind.get((e.project_id, e.symbol_ref)) == "b":
+                        # リレー表でも b 接点 → 種類は正しく、段のつながり（余分な接続）がおかしい。
+                        review.append("リレー表でもこの接点は b 接点 → a/b の読み違いではない")
+                        review.append("別の段の b 接点がつながって見えている → 余分な接続（交差を分岐と誤認）の可能性")
+                        fix, proposal = None, f"接点 {e.symbol_ref} とコイルの間の配線（余分な接続）を図面で確かめる"
+                    else:
+                        review += ["自己保持の回路なら a 接点のはず → a/b の読み違いの可能性", f"記号: {_symbol_trust(s)}"]
+                        fix = {"type": "set_class", "project_id": e.project_id, "symbol_ref": e.symbol_ref,
+                               "value": "contact_a"}
+                        proposal = f"接点 {e.symbol_ref} を a 接点にする（リレー表があれば表で確かめる）"
+                    self.add("stability", "warning", "自分の b 接点でコイルを切っている（発振）",
+                             f"{label} のとき、{dev} のコイルの段に {dev} 自身の b 接点があり、状態が落ち着きません",
+                             [_loc(e.project_id, e.symbol_ref, self.names)], review, proposal, fix,
+                             key=(e.project_id, e.symbol_ref))
+            break
+        self.record("stability", "シミュレーション", "接点の種類", compared,
+                    None if self.circuit.elements else "回路の素子がありません")
+
+    def run(self) -> dict[str, Any]:
+        for step in (self.relay_table, self.coil_sheet, self.wire_numbers, self.sheet_link_numbers, self.open_terminals, self.input_names,
+                     self.solver_agreement, self.impact_vs_whatif, self.stability):
+            step()
+        for page in self.pages:
+            page.pop("_wire_lookup", None)
+        # 同じ記号への直し方をまとめる: 同じ直し方は 1 つにし、違う直し方がぶつかるときは人の判断に回す。
+        by_symbol: dict[tuple, list[dict[str, Any]]] = defaultdict(list)
+        for issue in self.issues:
+            if issue.get("fix"):
+                f = issue["fix"]
+                by_symbol[(f["type"], f["project_id"], f["symbol_ref"])].append(issue)
+        for group in by_symbol.values():
+            values = {i["fix"]["value"] for i in group}
+            if len(values) > 1:
+                for i in group:
+                    i["review"].append("同じ記号に別の直し方を出した矛盾がある → 人が判断する")
+                    i["fix"] = None
+                continue
+            for i in group[1:]:
+                group[0]["review"].append(f"（「{i['title']}」の精査でも同じ直し方になった）")
+                i["review"].append(f"（「{group[0]['title']}」と同じ直し方。そちらで適用する）")
+                i["fix"] = None
+        order = {"error": 0, "warning": 1, "info": 2}
+        self.issues.sort(key=lambda i: (order[i["severity"]], i["check"]))
+        return {"checks": self.checks, "issues": self.issues,
+                "summary": {"errors": sum(i["severity"] == "error" for i in self.issues),
+                            "warnings": sum(i["severity"] == "warning" for i in self.issues),
+                            "fixable": sum(bool(i["fix"]) for i in self.issues)}}
+
+
+def check(pages: list[dict[str, Any]], structures: dict[int, dict[str, Any] | None], *,
+          bus_texts: dict[int, list[dict[str, Any]]] | None = None, solvers: bool = True) -> dict[str, Any]:
+    circuit = circuit_model.build_circuit(pages, bus_texts)
+    return Checker(pages, structures, circuit, solvers=solvers).run()
