@@ -92,7 +92,7 @@ export default function ExportPage() {
       notifyImport({
         kind: 'success',
         title: '読み込みが完了しました',
-        body: `${f.name} を読み込みました（${r.count} 枚）。図面ワークスペースで内容を確認してください。`,
+        body: `${f.name} を読み込みました（${r.count} 枚）。図面一覧で内容を確認してください。`,
       })
       await reload()
     } catch (e) {
@@ -147,14 +147,14 @@ export default function ExportPage() {
       <header className="page-header">
         <div>
           <div className="eyebrow">Data handoff</div>
-          <h1 className="page-title">データ<span className="title-accent">受け渡し</span></h1>
+          <h1 className="page-title">データ<span className="title-accent">入出力</span></h1>
           <p className="page-description">
             入力したシンボル・端子・配線情報の書き出しと、このツールで書き出したZIPの読み込みを行います
           </p>
         </div>
       </header>
 
-      <section className="mb-5 rounded-2xl border border-slate-200 bg-slate-100/70 p-4 sm:p-5" aria-label="データ受け渡しの説明">
+      <section className="mb-5 rounded-2xl border border-slate-200 bg-slate-100/70 p-4 sm:p-5" aria-label="データ入出力の説明">
         <div className="grid gap-3 sm:grid-cols-2">
           <div className="flex gap-3 rounded-xl bg-white p-4 ring-1 ring-slate-200">
             <span className="flex h-11 w-11 flex-none items-center justify-center rounded-xl bg-emerald-100 text-emerald-700">

@@ -117,7 +117,7 @@ export function EditorHeader({
         title="保存済みの AI の結果（シンボル・端子・配線）を確認用の候補として取り込みます"
       >
         <Sparkles className={aiApplying ? 'animate-pulse' : undefined} size={15} />
-        AI 推論
+        AI 取込
       </button>
       <button
         type="button"
@@ -125,8 +125,8 @@ export function EditorHeader({
         onClick={onExport}
         disabled={exporting}
         aria-busy={exporting}
-        aria-label={exporting ? 'この図面を出力中' : 'この図面を出力'}
-        title={exporting ? 'この図面を出力中' : 'この図面を出力'}
+        aria-label={exporting ? '書き出し中' : 'この図面を書き出し'}
+        title={exporting ? '書き出し中' : 'この図面を書き出し（ZIP）'}
       >
         <Download className={exporting ? 'animate-pulse' : undefined} size={17} />
       </button>

@@ -198,7 +198,7 @@ describe('EditorPage interactions', () => {
     fireEvent.click(getByRole('tab', { name: /^配線/ }))
 
     expect(getByRole('button', { name: 'SYM-0001→SYM-0002' })).toBeTruthy()
-    expect(getByRole('button', { name: '選択・移動（Vキー）' })).toBeTruthy()
+    expect(getByRole('button', { name: '選択（Vキー）' })).toBeTruthy()
   })
 
   it('Escでポインターを解放し、次の描画を開始できる', async () => {
@@ -428,7 +428,7 @@ describe('EditorPage interactions', () => {
     const { findByRole, getAllByRole } = renderEditor()
     await findByRole('region', { name: '図面アノテーションキャンバス' })
     fireEvent.click(getAllByRole('button', { name: '詳細パネルを閉じる' })[0])
-    const exportButton = await findByRole('button', { name: 'この図面を出力' })
+    const exportButton = await findByRole('button', { name: 'この図面を書き出し' })
 
     fireEvent.click(exportButton)
 
@@ -470,7 +470,7 @@ describe('EditorPage interactions', () => {
     const { container, findByRole, findByText, getByRole } = renderEditor()
     await findByRole('region', { name: '図面アノテーションキャンバス' })
 
-    fireEvent.click(getByRole('button', { name: 'AI 推論' }))
+    fireEvent.click(getByRole('button', { name: 'AI 取込' }))
 
     expect(
       await findByText(
@@ -508,7 +508,7 @@ describe('EditorPage interactions', () => {
     const { findByRole, findByText, getByRole, queryByRole } = renderEditor()
     await findByRole('region', { name: '図面アノテーションキャンバス' })
 
-    fireEvent.click(getByRole('button', { name: 'AI 推論' }))
+    fireEvent.click(getByRole('button', { name: 'AI 取込' }))
 
     expect(
       await findByText('AI の結果はすべて取り込み済みです／端子と配線は「AI 解析」を実行すると取り込めます'),
@@ -527,10 +527,10 @@ describe('EditorPage interactions', () => {
     const { findByRole, findByText, getByRole } = renderEditor()
     await findByRole('region', { name: '図面アノテーションキャンバス' })
 
-    fireEvent.click(getByRole('button', { name: 'AI 推論' }))
+    fireEvent.click(getByRole('button', { name: 'AI 取込' }))
 
     expect(
-      await findByText('この図面の推論結果がありません。「AI 改善サイクル」で推論を実行してください'),
+      await findByText('この図面の推論結果がありません。「AI 学習」で推論を実行してください'),
     ).toBeTruthy()
   })
 
@@ -859,7 +859,7 @@ describe('EditorPage 選択の連動', () => {
     fireEvent.click(getByRole('button', { name: /^SYM-0002リレー$/ }))
     expect(canvasTransform(container)).toEqual(fitted)
 
-    for (let i = 0; i < 3; i += 1) fireEvent.click(getByRole('button', { name: '図面を拡大' }))
+    for (let i = 0; i < 3; i += 1) fireEvent.click(getByRole('button', { name: '拡大' }))
     const zoomed = canvasTransform(container)
     fireEvent.click(getByRole('button', { name: /^SYM-0001リレー$/ }))
     const centered = canvasTransform(container)

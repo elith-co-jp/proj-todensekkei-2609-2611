@@ -22,7 +22,7 @@ const WORKFLOW = [
     title: 'PDFを登録してページを選ぶ',
     icon: FileUp,
     steps: [
-      '「図面ワークスペース」→「PDF / 図面を登録」からPDFを選びます。複数ファイルもまとめて選択できます。',
+      '「図面一覧」→「図面を登録」からPDFを選びます。複数ファイルもまとめて選択できます。',
       'PDFは自動で1ページずつ画像化され、ページ番号付きの作業行として一覧に追加されます。',
       '作業するページを開き、編集画面上部の前後ボタンで連続してページを移動できます。',
     ],
@@ -32,9 +32,9 @@ const WORKFLOW = [
     title: 'シンボルを矩形で囲む',
     icon: Square,
     steps: [
-      'ツールバーで「シンボル描画」（B）を選び、図面上をドラッグして矩形を作ります。',
+      'ツールバーで「シンボル」（B）を選び、図面上をドラッグして矩形を作ります。',
       '描画前にシンボル種別を選びます。数字キー1〜9でも種別を切り替えられます。',
-      '「選択・移動」（V）では、矩形の移動と四隅ハンドルでのリサイズができます。詳細パネルは右上のボタンで開閉できます。',
+      '「選択」（V）では、矩形の移動と四隅ハンドルでのリサイズができます。詳細パネルは右上のボタンで開閉できます。',
     ],
   },
   {
@@ -42,7 +42,7 @@ const WORKFLOW = [
     title: '端子を置く（必要な機器のみ）',
     icon: CircleDot,
     steps: [
-      '「端子を置く」（T）を選び、シンボルの内側をクリックすると端子が追加されます。',
+      '「端子」（T）を選び、シンボルの内側をクリックすると端子が追加されます。',
       '端子名は右パネルのシンボル欄で編集します。',
       'リレーコイル・電磁弁・表示灯には、上下（または左右）に端子を 2 個置きます。回路シミュレーションでコイルの両側を区別するためです。',
       '端子を置かない場合は、配線をシンボル単位で登録できます。',
@@ -53,7 +53,7 @@ const WORKFLOW = [
     title: '配線（from-to）を登録する',
     icon: Cable,
     steps: [
-      '「配線 (from-to)」（C）を選び、始点→終点の順にクリックします。',
+      '「配線」（C）を選び、始点→終点の順にクリックします。',
       '端子を選ぶと端子単位、矩形の内側を選ぶとシンボル単位で接続されます。',
       'コイルの配線はコイルの端子で止め、コイルの中を通り抜ける 1 本の線にしません。合わないコイルは「図面情報」の確認状況に一覧で出ます。',
       '右パネルの「配線」で電線番号・種別・シート間参照先を入力します。Escで始点を取り消せます。',
@@ -66,16 +66,16 @@ const WORKFLOW = [
     steps: [
       '編集が止まってから約0.4秒後に自動保存されます。右上が「自動保存済み」になれば完了です。',
       'Ctrl+S（MacはCmd+S）を押すと、待たずに即時保存できます。',
-      '「データ受け渡し」から、シンボル・端子・配線情報を含むZIPを出力できます。',
+      '「入出力」から、シンボル・端子・配線情報を含むZIPを出力できます。',
     ],
   },
 ]
 
 const SHORTCUTS: [string, string][] = [
-  ['V', '選択・移動モードに切り替え'],
-  ['B', 'シンボル描画モードに切り替え'],
-  ['T', '端子を置くモードに切り替え'],
-  ['C', '配線 from-to モードに切り替え'],
+  ['V', '選択モード'],
+  ['B', 'シンボルモード'],
+  ['T', '端子モード'],
+  ['C', '配線モード'],
   ['1〜9', 'シンボル種別を番号で切り替え'],
   ['Delete / Backspace', '選択中のシンボル・端子・配線を削除'],
   ['Esc', '選択解除、または配線の始点指定を取り消し'],
@@ -114,7 +114,7 @@ function UploadVisual() {
           </div>
           <div className="flex-1" />
           <div className="flex items-center gap-1.5 rounded-md bg-koa-500 px-3 py-2 text-[10px] font-bold text-white">
-            <FileUp size={13} /> PDF / 図面を登録
+            <FileUp size={13} /> 図面を登録
           </div>
         </div>
         <div className="mt-4 overflow-hidden rounded-lg border border-slate-200">
@@ -138,8 +138,8 @@ function EditorVisual() {
     <ScreenFrame caption="編集画面では、シンボル・端子・配線を同じ図面上で登録します。">
       <div className="border-b border-slate-200 p-2">
         <div className="flex flex-wrap items-center gap-1.5 text-[9px]">
-          <span className="flex items-center gap-1 rounded-full border px-2 py-1"><MousePointer2 size={10} /> 選択・移動 V</span>
-          <span className="flex items-center gap-1 rounded-full bg-koa-500 px-2 py-1 font-bold text-white"><Square size={10} /> シンボル描画 B</span>
+          <span className="flex items-center gap-1 rounded-full border px-2 py-1"><MousePointer2 size={10} /> 選択 V</span>
+          <span className="flex items-center gap-1 rounded-full bg-koa-500 px-2 py-1 font-bold text-white"><Square size={10} /> シンボル B</span>
           <span className="flex items-center gap-1 rounded-full border px-2 py-1"><CircleDot size={10} /> 端子 T</span>
           <span className="flex items-center gap-1 rounded-full border px-2 py-1"><Cable size={10} /> 配線 C</span>
           <span className="flex-1" />
@@ -230,7 +230,7 @@ export default function GuidePage() {
       <header className="page-header">
         <div>
           <div className="eyebrow">Field guide</div>
-          <h1 className="page-title">操作<span className="title-accent">ガイド</span></h1>
+          <h1 className="page-title">操作<span className="title-accent">ヘルプ</span></h1>
           <p className="page-description">
             PDF登録からZIP出力まで、アノテーション作業の流れを順番に確認できます。
           </p>

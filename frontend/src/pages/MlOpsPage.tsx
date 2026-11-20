@@ -354,14 +354,14 @@ export default function MlOpsPage() {
       <header className="page-header">
         <div>
           <div className="eyebrow">AI improvement cycle</div>
-          <h1 className="page-title">AI <span className="title-accent">改善サイクル</span></h1>
+          <h1 className="page-title">AI <span className="title-accent">学習</span></h1>
           <p className="page-description">
             推論 → 結果確認 → エディタで修正 → データ蓄積 → YOLO 学習 → 精度比較・採用判定 のサイクルをまわします
           </p>
         </div>
       </header>
 
-      <section className="mb-5 rounded-2xl border border-slate-200 bg-slate-100/70 p-4 sm:p-6" aria-label="AI 改善サイクルの流れ">
+      <section className="mb-5 rounded-2xl border border-slate-200 bg-slate-100/70 p-4 sm:p-6" aria-label="AI 学習の流れ">
         <ol className="grid gap-5 md:grid-cols-5 md:gap-0">
           {CYCLE_STEPS.map((step, index) => (
             <li key={step.label} className="relative flex gap-3 md:flex-col md:items-center md:px-2 md:text-center">
@@ -394,7 +394,7 @@ export default function MlOpsPage() {
             <div className="font-black text-slate-900">この環境では ultralytics が入っていません（外部実行モード）</div>
             <p>
               学習や推論は外部の GPU 環境で実行してください。
-              ① データ受け渡しで ZIP をエクスポート → ② 外部で <code className="rounded bg-amber-100 px-1">yolo predict --save-txt --save-conf</code> を実行 →
+              ① 入出力で ZIP をエクスポート → ② 外部で <code className="rounded bg-amber-100 px-1">yolo predict --save-txt --save-conf</code> を実行 →
               ③ 出力した labels フォルダを ZIP にして下の「推論結果を取り込む」で読み込みます。
               学習後は作成された <code className="rounded bg-amber-100 px-1">best.pt</code> を「モデル登録」からアップロードしてください。
               （ツール内で直接実行するには <code className="rounded bg-amber-100 px-1">pip install -r requirements-ml.txt</code> が必要です）

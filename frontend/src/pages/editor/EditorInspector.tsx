@@ -202,7 +202,7 @@ export function EditorInspector({
             <div ref={symbolListRef} className="thin-scroll min-h-0 flex-1 overflow-auto">
               {symbols.length === 0 && (
                 <p className="p-6 text-center text-xs leading-relaxed text-slate-400">
-                  <span className="kbd">B</span> でシンボル描画モードにして
+                  <span className="kbd">B</span> でシンボルモードにして
                   <br />
                   図面上をドラッグしてください
                 </p>

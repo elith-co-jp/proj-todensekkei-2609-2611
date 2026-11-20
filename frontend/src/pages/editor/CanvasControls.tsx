@@ -1,4 +1,4 @@
-import { Eye, EyeOff, Maximize2, PanelRightOpen, ZoomIn, ZoomOut } from 'lucide-react'
+import { Eye, EyeOff, Scan, PanelRightOpen, ZoomIn, ZoomOut } from 'lucide-react'
 
 import { MODES } from './model'
 import type { Mode } from './model'
@@ -52,8 +52,8 @@ export function CanvasControls({
           type="button"
           className="icon-button h-9 w-9 hover:bg-slate-100"
           onClick={() => zoomAt(1 / 1.3, window.innerWidth / 2, window.innerHeight / 2)}
-          aria-label="図面を縮小"
-          title="図面を縮小"
+          aria-label="縮小"
+          title="縮小（ホイール）"
         >
           <ZoomOut size={17} />
         </button>
@@ -61,17 +61,17 @@ export function CanvasControls({
           type="button"
           className="flex min-h-9 items-center gap-1.5 rounded-xl px-2.5 text-xs font-bold hover:bg-slate-100"
           onClick={() => fit(false)}
-          title="図面全体を表示"
+          title="全体表示"
         >
-          <Maximize2 size={15} />
-          <span className="hidden sm:inline">全体</span>
+          <Scan size={15} />
+          <span className="hidden sm:inline">全体表示</span>
         </button>
         <button
           type="button"
           className="icon-button h-9 w-9 hover:bg-slate-100"
           onClick={() => zoomAt(1.3, window.innerWidth / 2, window.innerHeight / 2)}
-          aria-label="図面を拡大"
-          title="図面を拡大"
+          aria-label="拡大"
+          title="拡大（ホイール）"
         >
           <ZoomIn size={17} />
         </button>

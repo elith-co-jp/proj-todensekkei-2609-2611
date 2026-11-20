@@ -3,22 +3,25 @@ import type { ReactNode } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import {
   AlertTriangle,
-  Minimize2,
-  PanelRightClose,
-  PanelRightOpen,
-  Expand,
-  ClipboardCheck,
-  Clock,
+  CircuitBoard,
   Download,
-  GitBranch,
+  Files,
   ListChecks,
   Loader2,
-  PencilRuler,
-  Power,
+  Maximize,
+  Minimize,
+  Network,
+  PanelRightClose,
+  PanelRightOpen,
+  PenLine,
+  PowerOff,
+  RefreshCw,
   Route,
-  RotateCcw,
   Search,
-  Zap,
+  ShieldCheck,
+  Timer,
+  ToggleRight,
+  X,
 } from 'lucide-react'
 
 import { api } from '../api/client'
@@ -30,7 +33,7 @@ import TracePanel from './circuit/TracePanel'
 import WhatIfPanel from './circuit/WhatIfPanel'
 import DrawingViewer from './circuit/DrawingViewer'
 
-const ENGINE_LABEL = { ngspice: 'SPICE（ngspice）で解いています', builtin: '内蔵の回路計算で解いています（ngspice 未導入）' }
+const ENGINE_LABEL = { ngspice: 'ngspice で計算', builtin: '内蔵ソルバで計算（ngspice 未導入）' }
 
 function sheetName(row: ProjectRow) {
   return row.sheet_no || row.name
@@ -54,13 +57,13 @@ type ToolTab = {
   key: string
   label: string
   caption: string
-  icon: typeof Zap
+  icon: typeof CircuitBoard
   badge?: number
   tone?: 'warn'
   render: () => ReactNode
 }
 
-const STEPS = ['図面を選ぶ', '回路を組む', '動かして確かめる'] as const
+const STEPS = ['図面選択', '回路作成', '動作確認'] as const
 
 /** 道具のパネルを図面の上に重ねる幅（xl 以上）かどうか */
 function useWideScreen() {
@@ -183,18 +186,18 @@ export default function CircuitPage() {
     ? [
         {
           key: 'operate',
-          label: '動かす',
-          caption: '入力を ON / OFF して、どのリレーが動くかを図面で確かめます。',
-          icon: Power,
+          label: '操作',
+          caption: '入力を ON / OFF し、リレーの動作を見る。図面上の入力（水色）もクリックで切り替え。',
+          icon: ToggleRight,
           render: () => (
             <div className="space-y-4">
               <section className="card p-4" aria-label="外部入力">
                 <div className="flex items-baseline gap-2">
-                  <div className="text-sm font-black">外部入力</div>
+                  <div className="text-sm font-black">入力</div>
                   <span className="text-[11px] text-slate-500">{summary.inputs.length} 個 · ON {onCount}</span>
                 </div>
-                <p className="mb-2 mt-1 text-[11px] leading-5 text-slate-500">
-                  選んだ図面にコイルが無い接点です。押すと ON / OFF が切り替わり、a 接点は閉じ、b 接点は開きます。
+                <p className="mb-2 mt-1 text-[11px] leading-5 text-slate-500" title="選んだ図面にコイルが無い接点を入力として扱います">
+                  ON で a 接点は閉、b 接点は開。
                 </p>
                 {summary.inputs.length === 0 && <p className="text-[11px] text-slate-400">ありません</p>}
                 <div className="grid gap-1.5 sm:grid-cols-2">
@@ -222,11 +225,11 @@ export default function CircuitPage() {
                   })}
                 </div>
                 <div className="mt-3 flex flex-wrap gap-2">
-                  <button type="button" className="btn btn-sm" onClick={reset} disabled={busy}>
-                    <RotateCcw size={12} /> すべて OFF に戻す
+                  <button type="button" className="btn btn-sm" onClick={reset} disabled={busy} title="すべての入力を OFF にして解き直す">
+                    <PowerOff size={12} /> 全 OFF
                   </button>
-                  <button type="button" className="btn btn-sm" onClick={() => void api.downloadNetlist(projectIds, inputs)}>
-                    <Download size={12} /> ネットリスト（.cir）
+                  <button type="button" className="btn btn-sm" onClick={() => void api.downloadNetlist(projectIds, inputs)} title="SPICE ネットリスト（.cir）。LTspice・ngspice で開けます">
+                    <Download size={12} /> ネットリスト出力
                   </button>
                 </div>
               </section>
@@ -254,7 +257,7 @@ export default function CircuitPage() {
                 </div>
                 {result && (
                   <p className="mt-2 text-[10px] text-slate-400">
-                    {ENGINE_LABEL[result.engine]}。{result.steps} 回で状態が落ち着きました。
+                    {ENGINE_LABEL[result.engine]}・{result.steps} 回で収束
                   </p>
                 )}
               </section>
@@ -270,35 +273,35 @@ export default function CircuitPage() {
         },
         {
           key: 'whatif',
-          label: 'もしも・波及',
-          caption: '機器を動かした・止めたときに何が変わるか、影響がどこまで及ぶかを調べます。',
-          icon: GitBranch,
+          label: '波及',
+          caption: '機器を選び、影響範囲と、強制 ON / OFF したときの変化を見る。',
+          icon: Network,
           render: () => <WhatIfPanel projectIds={projectIds} summary={summary} inputs={inputs} energized={energizedNow()} />,
         },
         {
           key: 'timeline',
-          label: '時間の流れ',
-          caption: '入力を何秒に ON / OFF するかを並べ、タイマーを含めて時間の順に解きます。',
-          icon: Clock,
+          label: 'タイマー',
+          caption: '入力の ON / OFF を時刻順に並べ、タイマーを含めて実行する。',
+          icon: Timer,
           render: () => <TimelinePanel projectIds={projectIds} summary={summary} />,
         },
         {
           key: 'check',
-          label: '点検',
-          caption: '回路にできなかった箇所、図面間のつながり、解析結果どうしの矛盾を確かめます。',
-          icon: ClipboardCheck,
+          label: '検査',
+          caption: '回路にできなかった箇所、シート間接続、解析結果の整合性を見る。',
+          icon: ShieldCheck,
           badge: issueCount,
           tone: 'warn',
           render: () => (
             <div className="space-y-4">
               <section className="card p-4" aria-label="回路にできなかった箇所">
-                <div className="mb-1 text-sm font-black">確認が必要な箇所（{issueCount}）</div>
+                <div className="mb-1 text-sm font-black">回路にできなかった箇所（{issueCount}）</div>
                 {issueCount === 0 ? (
-                  <p className="text-[11px] text-emerald-700">すべての記号を回路に含められました。</p>
+                  <p className="text-[11px] text-emerald-700">なし</p>
                 ) : (
                   <>
                     <p className="mb-2 text-[11px] leading-5 text-slate-500">
-                      「エディタで直す」でその記号を開けます。直したら上の「組み直す」を押すと反映されます。
+                      「編集」で記号を開いて直し、「再作成」で反映。
                     </p>
                     <ul className="thin-scroll max-h-72 space-y-1 overflow-auto text-[11px] text-slate-600">
                       {summary.diagnostics.map((d, i) => (
@@ -308,7 +311,7 @@ export default function CircuitPage() {
                           {d.message}
                           {d.project_id != null && d.symbol_ref && (
                             <Link className="ml-1 font-bold text-cyan-700 underline" to={editorLink(d.project_id, d.symbol_ref)}>
-                              エディタで直す
+                              編集
                             </Link>
                           )}
                         </li>
@@ -320,9 +323,9 @@ export default function CircuitPage() {
 
               {(summary.sheet_links?.length ?? 0) > 0 && (
                 <section className="card p-4" aria-label="図面間のつながり">
-                  <div className="mb-1 text-sm font-black">図面間のつながり（{summary.sheet_links?.length}）</div>
-                  <p className="mb-2 text-[11px] leading-5 text-slate-500">
-                    行先札・来先札を組にして、図面をまたいで配線をつなぎました。「推定」は向かい合う札が 1 組だけだったものです。
+                  <div className="mb-1 text-sm font-black">シート間接続（{summary.sheet_links?.length}）</div>
+                  <p className="mb-2 text-[11px] leading-5 text-slate-500" title="行先札・来先札を組にして、図面をまたいで配線をつなぎました">
+                    行先札・来先札の組。「推定」は候補が 1 組だけのもの。
                   </p>
                   <ul className="thin-scroll max-h-48 space-y-1 overflow-auto text-[11px] text-slate-600">
                     {summary.sheet_links?.map((link, i) => (
@@ -347,9 +350,9 @@ export default function CircuitPage() {
         },
         {
           key: 'edit',
-          label: '図面の変更',
-          caption: '部品の追加・削除やつなぎ替えを試し、差分を確かめてから適用します。',
-          icon: PencilRuler,
+          label: '変更',
+          caption: '部品の追加・削除・つなぎ替えを試行し、差分を見てから適用する。',
+          icon: PenLine,
           render: () => <EditPanel projectIds={projectIds} onApplied={rebuild} />,
         },
       ]
@@ -358,11 +361,13 @@ export default function CircuitPage() {
   const overlayPanel = wide || fullscreen
   const inputDevices = useMemo(() => new Set(summary?.inputs.map((i) => i.device) ?? []), [summary])
 
-  // 全画面は Esc で戻す
+  // 全画面は Esc で戻す。P でパネルを開閉
   useEffect(() => {
-    if (!fullscreen) return
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setFullscreen(false)
+      const target = event.target
+      if (event.key === 'Escape' && fullscreen) setFullscreen(false)
+      if ((event.key === 'p' || event.key === 'P') && !event.ctrlKey && !event.metaKey && !event.altKey
+        && !(target instanceof Element && target.closest('input, textarea, select, [contenteditable="true"]'))) setPanelOpen((v) => !v)
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -378,7 +383,7 @@ export default function CircuitPage() {
       className={vertical ? 'flex flex-col gap-1' : 'grid gap-1'}
       style={vertical ? undefined : { gridTemplateColumns: `repeat(${tabs.length}, minmax(0, 1fr))` }}
       role="tablist"
-      aria-label="確かめる道具"
+      aria-label="ツール"
     >
       {tabs.map((t) => {
         const Icon = t.icon
@@ -423,9 +428,9 @@ export default function CircuitPage() {
     <section className="card mb-4 p-4 sm:p-5" aria-label="図面を選ぶ">
       <div className="flex flex-wrap items-center gap-2">
         <div className="mr-auto min-w-0">
-          <div className="text-sm font-black text-slate-900">図面を選ぶ</div>
+          <div className="text-sm font-black text-slate-900">図面選択</div>
           <p className="mt-0.5 text-[11px] text-slate-500">
-            複数選ぶと、母線・行先札と同じ器具番号のリレーを図面をまたいでつなぎます。
+            複数選ぶと、母線・行先札・器具番号で図面をつなぎます。
           </p>
         </div>
         <label className="relative">
@@ -433,7 +438,7 @@ export default function CircuitPage() {
           <Search size={13} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
           <input
             className="field h-9 min-h-9 w-48 py-0 pl-7 text-xs"
-            placeholder="シート番号・名前"
+            placeholder="図面を検索"
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
           />
@@ -444,16 +449,16 @@ export default function CircuitPage() {
           onClick={() => setIds((prev) => new Set([...prev, ...visibleRows.map((r) => r.id)]))}
           disabled={visibleRows.length === 0}
         >
-          <ListChecks size={12} /> {filter ? '表示中を選ぶ' : 'すべて選ぶ'}
+          <ListChecks size={12} /> {filter ? '表示中を全選択' : '全選択'}
         </button>
         <button type="button" className="btn btn-sm" onClick={() => setIds(new Set())} disabled={ids.size === 0}>
-          選択を外す
+          <X size={12} /> 選択解除
         </button>
       </div>
       <div className="thin-scroll my-3 flex max-h-44 flex-wrap gap-2 overflow-auto">
         {rows.length === 0 && (
           <p className="text-xs text-slate-500">
-            まだ図面がありません。<Link className="font-bold text-blue-700 underline" to="/">図面ワークスペース</Link>で登録してください。
+            まだ図面がありません。<Link className="font-bold text-blue-700 underline" to="/">図面一覧</Link>で登録してください。
           </p>
         )}
         {visibleRows.map((r) => {
@@ -474,15 +479,15 @@ export default function CircuitPage() {
       </div>
       <div className="flex flex-wrap items-center gap-2">
         <button type="button" className="btn btn-accent" onClick={() => void build()} disabled={busy || selected.length === 0}>
-          {busy ? <Loader2 size={14} className="animate-spin" /> : <Zap size={14} />}
-          回路を組んでシミュレーションする
+          {busy ? <Loader2 size={14} className="animate-spin" /> : <CircuitBoard size={14} />}
+          回路を作成
         </button>
         <span className="text-[11px] text-slate-500">
-          {selected.length ? `${selected.length} 枚を選択中` : '図面を 1 枚以上選んでください'}
+          {selected.length ? `${selected.length} 枚選択` : '図面を選んでください'}
         </span>
         {summary && (
           <button type="button" className="btn btn-sm ml-auto" onClick={() => setChoosing(false)}>
-            {selectionChanged ? '選び直さずに戻る' : '閉じる'}
+            {selectionChanged ? 'キャンセル' : '閉じる'}
           </button>
         )}
       </div>
@@ -495,10 +500,9 @@ export default function CircuitPage() {
         <header className="page-header">
           <div>
             <div className="eyebrow">Circuit simulation</div>
-            <h1 className="page-title">回路の <span className="title-accent">確認・もしも</span></h1>
+            <h1 className="page-title">回路 <span className="title-accent">検証</span></h1>
             <p className="page-description">
-              図面のアノテーション（記号・端子・配線）から回路を組み、入力の On/Off でどのリレーが動くか、
-              機器を変えたらどこまで影響するかを図面の上で確かめます。
+              アノテーションから回路を作り、入力の ON / OFF でリレーの動作と影響範囲を図面上で確かめます。
             </p>
           </div>
           <ol className="flex flex-wrap items-center gap-1.5 text-xs" aria-label="進め方">
@@ -533,10 +537,10 @@ export default function CircuitPage() {
     <div className={`flex flex-col gap-3 p-3 sm:p-4 ${wide ? 'h-dvh' : ''}`}>
       <section className="card flex flex-wrap items-center gap-2 px-3 py-2" aria-label="対象の図面">
         <h1 className="mr-1 flex items-center gap-1.5 text-sm font-black text-slate-900">
-          <Zap size={15} className="text-rose-600" /> 回路の確認・もしも
+          <CircuitBoard size={15} className="text-rose-600" /> 回路検証
         </h1>
         <span className="hidden h-5 w-px bg-slate-200 sm:block" />
-        <span className="text-[11px] font-bold text-slate-500">対象の図面</span>
+        <span className="text-[11px] font-bold text-slate-500">図面</span>
         <div className="flex min-w-0 flex-1 flex-wrap gap-1.5">
           {summary.pages.map((p) => (
             <span key={p.id} className="rounded-lg bg-slate-100 px-2 py-0.5 text-xs font-bold text-slate-700">{p.name}</span>
@@ -548,16 +552,16 @@ export default function CircuitPage() {
             type="button"
             className="inline-flex items-center gap-1 rounded-full border border-amber-300 bg-amber-50 px-2.5 py-1 text-[11px] font-bold text-amber-800 hover:bg-amber-100"
             onClick={() => openTab('check')}
-            title="回路にできなかった箇所があります。結果に影響することがあります。"
+            title={`回路にできなかった箇所が ${issueCount} 件あります。結果に影響することがあります`}
           >
-            <AlertTriangle size={12} /> 回路にできなかった箇所 {issueCount} 件
+            <AlertTriangle size={12} /> 警告 {issueCount}
           </button>
         )}
-        <button type="button" className="btn btn-sm" onClick={() => setChoosing((v) => !v)}>
-          図面を選び直す
+        <button type="button" className="btn btn-sm" onClick={() => setChoosing((v) => !v)} title="対象の図面を選び直す">
+          <Files size={12} /> 図面選択
         </button>
-        <button type="button" className="btn btn-sm" onClick={rebuild} disabled={busy} title="エディタで直した内容を読み込み直します">
-          {busy ? <Loader2 size={12} className="animate-spin" /> : <RotateCcw size={12} />} 組み直す
+        <button type="button" className="btn btn-sm" onClick={rebuild} disabled={busy} title="エディタで直した内容を読み込み、回路を作り直す">
+          {busy ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />} 再作成
         </button>
       </section>
 
@@ -612,11 +616,11 @@ export default function CircuitPage() {
                 </p>
               ))}
               <div className="hidden flex-wrap items-center gap-x-3 gap-y-1 self-start rounded-xl sm:flex border border-white/70 bg-white/85 px-2.5 py-1 text-[10px] text-slate-500 shadow-sm backdrop-blur">
-                <span><span className="mr-1 inline-block h-0.5 w-4 bg-rose-500 align-middle" />電圧あり</span>
-                <span><span className="mr-1 inline-block h-2.5 w-2.5 border-2 border-emerald-500 align-middle" />閉じた接点</span>
-                <span><span className="mr-1 inline-block h-2.5 w-2.5 border-2 border-dashed border-slate-400 align-middle" />開いた接点</span>
-                <span><span className="mr-1 inline-block h-2.5 w-2.5 bg-rose-400/60 align-middle" />励磁したコイル</span>
-                {inputDevices.size > 0 && <span><span className="mr-1 inline-block h-2.5 w-2.5 border-2 border-sky-500 bg-sky-500/20 align-middle" />入力（クリックで ON / OFF）</span>}
+                <span><span className="mr-1 inline-block h-0.5 w-4 bg-rose-500 align-middle" />通電</span>
+                <span><span className="mr-1 inline-block h-2.5 w-2.5 border-2 border-emerald-500 align-middle" />接点 閉</span>
+                <span><span className="mr-1 inline-block h-2.5 w-2.5 border-2 border-dashed border-slate-400 align-middle" />接点 開</span>
+                <span><span className="mr-1 inline-block h-2.5 w-2.5 bg-rose-400/60 align-middle" />励磁</span>
+                {inputDevices.size > 0 && <span title="図面上の入力をクリックすると ON / OFF が切り替わります"><span className="mr-1 inline-block h-2.5 w-2.5 border-2 border-sky-500 bg-sky-500/20 align-middle" />入力（クリックで切替）</span>}
               </div>
             </div>
 
@@ -637,10 +641,10 @@ export default function CircuitPage() {
                   type="button"
                   className="icon-button h-11 w-11 text-slate-600 hover:bg-slate-100"
                   onClick={() => setFullscreen((v) => !v)}
-                  aria-label={fullscreen ? '全画面を終える' : '図面を全画面で見る'}
-                  title={fullscreen ? '全画面を終える（Esc）' : '図面を全画面で見る'}
+                  aria-label={fullscreen ? '全画面を終了' : '全画面'}
+                  title={fullscreen ? '全画面を終了（Esc）' : '全画面（メニューを隠す）'}
                 >
-                  {fullscreen ? <Minimize2 size={17} /> : <Expand size={17} />}
+                  {fullscreen ? <Minimize size={17} /> : <Maximize size={17} />}
                 </button>
                 {overlayPanel && (
                   <>
@@ -648,8 +652,8 @@ export default function CircuitPage() {
                       type="button"
                       className="icon-button h-11 w-11 text-slate-600 hover:bg-slate-100"
                       onClick={() => setPanelOpen((v) => !v)}
-                      aria-label={panelOpen ? '道具のパネルを閉じる' : '道具のパネルを開く'}
-                      title={panelOpen ? '道具のパネルを閉じて図面を広く見る' : '道具のパネルを開く'}
+                      aria-label={panelOpen ? 'パネルを閉じる' : 'パネルを開く'}
+                      title={panelOpen ? 'パネルを閉じる（P）' : 'パネルを開く（P）'}
                     >
                       {panelOpen ? <PanelRightClose size={17} /> : <PanelRightOpen size={17} />}
                     </button>

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { AlertTriangle, Clock, Loader2, Plus, Trash2 } from 'lucide-react'
+import { AlertTriangle, Clock, Loader2, Play, Plus, Trash2 } from 'lucide-react'
 
 import { api } from '../../api/client'
 import type { CircuitSummary, CircuitTimeline, CircuitTimelineEvent } from '../../types'
@@ -40,17 +40,16 @@ export default function TimelinePanel({ projectIds, summary }: Props) {
 
   return (
     <section className="card mt-4 p-4" aria-label="時間の流れ">
-      <div className="mb-1 text-sm font-black">時間の流れ（タイマー）</div>
-      <p className="mb-2 text-[11px] leading-5 text-slate-500">
-        入力を何秒に ON / OFF するかを並べ、タイマー（コイルの属性「タイマーの種類」「タイマーの時間」）を含めて時間の順に解きます。
-        タイマーの時間を変えたらどうなるかも試せます。
+      <div className="mb-1 text-sm font-black">タイマー</div>
+      <p className="mb-2 text-[11px] leading-5 text-slate-500" title="タイマーはコイルの属性「タイマーの種類」「タイマーの時間」から読みます">
+        時刻・入力・ON / OFF を並べて実行。タイマーの時間も変えられます。
       </p>
       <ul className="space-y-1 text-[11px]" aria-label="操作">
         {rows.map((r, i) => (
           <li key={i} className="flex items-center gap-1">
             <input aria-label="時刻（秒）" type="number" min={0} step={0.5} value={r.at}
               className="w-16 rounded-lg border border-slate-200 px-1 py-0.5" onChange={(e) => update(i, { at: Number(e.target.value) })} />
-            <span>秒に</span>
+            <span>秒</span>
             <select aria-label="入力" value={r.device} className="min-w-0 flex-1 rounded-lg border border-slate-200 px-1 py-0.5"
               onChange={(e) => update(i, { device: e.target.value })}>
               {inputs.map((d) => <option key={d} value={d}>{d}</option>)}
@@ -60,7 +59,7 @@ export default function TimelinePanel({ projectIds, summary }: Props) {
               <option value="on">ON</option>
               <option value="off">OFF</option>
             </select>
-            <button type="button" className="btn btn-sm" aria-label="操作を消す" onClick={() => setRows(rows.filter((_, k) => k !== i))}>
+            <button type="button" className="btn btn-sm" aria-label="行を削除" title="行を削除" onClick={() => setRows(rows.filter((_, k) => k !== i))}>
               <Trash2 size={11} />
             </button>
           </li>
@@ -69,10 +68,10 @@ export default function TimelinePanel({ projectIds, summary }: Props) {
       <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px]">
         <button type="button" className="btn btn-sm"
           onClick={() => setRows([...rows, { at: (rows.at(-1)?.at ?? 0) + 1, device: inputs[0], on: true }])}>
-          <Plus size={11} /> 操作を足す
+          <Plus size={11} /> 行を追加
         </button>
-        <label className="flex items-center gap-1">終わり
-          <input aria-label="終わり（秒）" type="number" min={0} value={until} className="w-16 rounded-lg border border-slate-200 px-1 py-0.5"
+        <label className="flex items-center gap-1">終了
+          <input aria-label="終了（秒）" type="number" min={0} value={until} className="w-16 rounded-lg border border-slate-200 px-1 py-0.5"
             onChange={(e) => setUntil(Number(e.target.value))} />秒
         </label>
       </div>
@@ -90,7 +89,7 @@ export default function TimelinePanel({ projectIds, summary }: Props) {
         </ul>
       )}
       <button type="button" className="btn btn-sm btn-accent mt-2" onClick={() => void run()} disabled={busy}>
-        {busy ? <Loader2 size={12} className="animate-spin" /> : <Clock size={12} />} 時間の順に解く
+        {busy ? <Loader2 size={12} className="animate-spin" /> : <Play size={12} />} 実行
       </button>
       {error && <p className="mt-2 text-[11px] font-bold text-rose-700" role="alert">{error}</p>}
       {result && (

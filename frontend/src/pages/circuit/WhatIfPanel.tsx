@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
-import { AlertTriangle, Code2, GitBranch, Loader2, Power, PowerOff } from 'lucide-react'
+import { AlertTriangle, FileCode2, Loader2, Network, Power, PowerOff } from 'lucide-react'
 
 import { api } from '../../api/client'
 import type { CircuitChange, CircuitImpact, CircuitSummary, CircuitWhatIf } from '../../types'
@@ -45,16 +45,13 @@ export default function WhatIfPanel({ projectIds, summary, inputs, energized }: 
     guard(async () => {
       const change: CircuitChange = { devices: { [device]: on } }
       const result = await api.circuitWhatIf(projectIds, inputs, energized, change)
-      setWhatIf({ title: `${device} を${on ? '動作させた' : '動かなくした'}とき`, result })
+      setWhatIf({ title: `${device} を強制 ${on ? 'ON' : 'OFF'} したとき`, result })
     })
 
   if (devices.length === 0) return null
   return (
     <section className="card p-4" aria-label="もしも・波及範囲">
-      <div className="mb-1 text-sm font-black">もしも・波及範囲</div>
-      <p className="mb-2 text-[11px] leading-5 text-slate-500">
-        機器を選び、今の状態から動作させた・動かなくなったときに何が変わるかと、回路のつながりから影響が及びうる範囲を調べます。
-      </p>
+      <div className="mb-2 text-sm font-black">波及・もしも</div>
       <select
         aria-label="機器"
         className="mb-2 w-full rounded-xl border border-slate-200 px-2 py-1.5 text-xs"
@@ -65,13 +62,15 @@ export default function WhatIfPanel({ projectIds, summary, inputs, energized }: 
       </select>
       <div className="flex flex-wrap gap-2">
         <button type="button" className="btn btn-sm" onClick={() => void showImpact()} disabled={busy || !device}>
-          <GitBranch size={12} /> 波及範囲
+          <Network size={12} /> 波及範囲
         </button>
-        <button type="button" className="btn btn-sm" onClick={() => void force(true)} disabled={busy || !device}>
-          <Power size={12} /> 動作させたら
+        <button type="button" className="btn btn-sm" onClick={() => void force(true)} disabled={busy || !device}
+          title="今の状態から、この機器を動作させたときの変化（溶着・誤動作の確認）">
+          <Power size={12} /> 強制 ON
         </button>
-        <button type="button" className="btn btn-sm" onClick={() => void force(false)} disabled={busy || !device}>
-          <PowerOff size={12} /> 動かなくなったら
+        <button type="button" className="btn btn-sm" onClick={() => void force(false)} disabled={busy || !device}
+          title="今の状態から、この機器が動かなくなったときの変化（断線・故障の確認）">
+          <PowerOff size={12} /> 強制 OFF
         </button>
         {busy && <Loader2 size={14} className="animate-spin text-slate-400" />}
       </div>
@@ -103,7 +102,7 @@ export default function WhatIfPanel({ projectIds, summary, inputs, energized }: 
       {impact && (
         <div className="mt-3 rounded-xl bg-amber-50 p-2 text-[11px]" aria-label="波及範囲">
           <div className="mb-1 font-bold text-slate-700">
-            {impact.device} から影響が及びうる範囲（リレー {impact.devices.length}・負荷 {impact.loads.length}）
+            {impact.device} の波及範囲（リレー {impact.devices.length}・負荷 {impact.loads.length}）
           </div>
           {impact.devices.length + impact.loads.length === 0 && <p className="text-slate-400">ありません</p>}
           <ul className="thin-scroll max-h-56 space-y-0.5 overflow-auto">
@@ -117,13 +116,13 @@ export default function WhatIfPanel({ projectIds, summary, inputs, energized }: 
             ))}
           </ul>
           {impact.upstream.length > 0 && (
-            <p className="mt-1 text-slate-500">{impact.device} を動かしうる機器: {impact.upstream.join('、')}</p>
+            <p className="mt-1 text-slate-500">上流の機器: {impact.upstream.join('、')}</p>
           )}
         </div>
       )}
 
-      <button type="button" className="btn btn-sm mt-3" onClick={() => void api.downloadCircuitCode(projectIds)}>
-        <Code2 size={12} /> 回路コード（.py）
+      <button type="button" className="btn btn-sm mt-3" onClick={() => void api.downloadCircuitCode(projectIds)} title="回路を Python のコード（.py）で書き出す">
+        <FileCode2 size={12} /> 回路コード出力
       </button>
     </section>
   )

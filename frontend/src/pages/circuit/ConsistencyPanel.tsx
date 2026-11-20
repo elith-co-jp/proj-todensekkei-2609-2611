@@ -54,21 +54,20 @@ export default function ConsistencyPanel({ projectIds, onApplied }: Props) {
   return (
     <section className="card mt-5 p-4 sm:p-5" aria-label="解析結果の整合性">
       <div className="flex flex-wrap items-center gap-2">
-        <div className="text-sm font-black">解析結果の整合性</div>
+        <div className="text-sm font-black">整合性チェック</div>
         <span className="flex-1" />
         {busy && <Loader2 size={14} className="animate-spin text-slate-400" />}
         <button type="button" className="btn btn-sm" onClick={() => void check()} disabled={busy || projectIds.length === 0}>
-          <ScanSearch size={12} /> {result ? 'もう一度チェック' : '矛盾をチェック'}
+          <ScanSearch size={12} /> {result ? '再チェック' : 'チェック実行'}
         </button>
         {fixable.length > 0 && (
           <button type="button" className="btn btn-sm btn-accent" onClick={() => void apply(fixable)} disabled={busy}>
-            <Wrench size={12} /> 矛盾をまとめて直す（{fixable.length}）
+            <Wrench size={12} /> 一括修正（{fixable.length}）
           </button>
         )}
       </div>
-      <p className="mt-1 text-[11px] leading-5 text-slate-500">
-        図面の記号とリレー表、配線のつながりと電線番号、回路計算どうし、波及範囲ともしも、などを突き合わせます。
-        矛盾ごとに調べたことと直し方を出し、根拠がそろうものはここで直せます（記号のメモに変更を残します）。
+      <p className="mt-1 text-[11px] leading-5 text-slate-500" title="根拠が 2 つの方法でそろう矛盾はここで直せます。直した内容は記号のメモに残します">
+        記号とリレー表、配線と電線番号、計算結果どうしを突き合わせます。
       </p>
       {error && <p className="mt-2 text-[11px] font-bold text-rose-700" role="alert">{error}</p>}
 
@@ -76,7 +75,7 @@ export default function ConsistencyPanel({ projectIds, onApplied }: Props) {
         <>
           {result.applied && result.applied.length > 0 && (
             <p className="mt-2 flex items-center gap-1 text-[11px] font-bold text-emerald-700">
-              <CheckCircle2 size={13} /> {result.applied.length} 件を直してチェックし直しました
+              <CheckCircle2 size={13} /> {result.applied.length} 件を修正し、再チェックしました
             </p>
           )}
           <table className="mt-3 w-full text-left text-[11px]" aria-label="突き合わせた組み合わせ">
@@ -110,13 +109,13 @@ export default function ConsistencyPanel({ projectIds, onApplied }: Props) {
                 </div>
                 <p className="mt-1 text-slate-700">{issue.message}</p>
                 <details className="mt-1">
-                  <summary className="cursor-pointer text-slate-500">精査の結果</summary>
+                  <summary className="cursor-pointer text-slate-500">調べた内容</summary>
                   <ol className="ml-4 mt-1 list-decimal space-y-0.5 text-slate-600">
                     {issue.review.map((r, i) => <li key={i}>{r}</li>)}
                   </ol>
                 </details>
                 <div className="mt-1 flex flex-wrap items-center gap-2">
-                  <span className="text-slate-600">直し方: <b>{issue.proposal}</b></span>
+                  <span className="text-slate-600">修正案: <b>{issue.proposal}</b></span>
                   {issue.locations.filter((l) => l.symbol_ref).map((l) => (
                     <Link key={`${l.project_id}:${l.symbol_ref}`} className="text-cyan-700 underline" to={editorLink(l.project_id, l.symbol_ref!)}>
                       {l.page} {l.symbol_ref}
@@ -124,7 +123,7 @@ export default function ConsistencyPanel({ projectIds, onApplied }: Props) {
                   ))}
                   {issue.fix && (
                     <button type="button" className="btn btn-sm" onClick={() => void apply([issue])} disabled={busy}>
-                      <Wrench size={12} /> この直し方を適用
+                      <Wrench size={12} /> 修正を適用
                     </button>
                   )}
                 </div>

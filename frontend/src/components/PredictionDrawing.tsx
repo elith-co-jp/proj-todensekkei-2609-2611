@@ -125,7 +125,7 @@ export default function PredictionDrawing({
         <button type="button" className="icon-button" aria-label="縮小" title="縮小" onClick={() => zoomCenter(1 / 1.25)}><ZoomOut size={17} /></button>
         <span className="w-14 text-center font-mono text-xs tabular-nums text-slate-600">{Math.round(view.scale * 100)}%</span>
         <button type="button" className="icon-button" aria-label="拡大" title="拡大" onClick={() => zoomCenter(1.25)}><ZoomIn size={17} /></button>
-        <button type="button" className="icon-button" aria-label="図面全体を表示" title="図面全体を表示" onClick={fit}><Maximize2 size={17} /></button>
+        <button type="button" className="icon-button" aria-label="全体表示" title="全体表示" onClick={fit}><Maximize2 size={17} /></button>
       </div>
     </div>
   )

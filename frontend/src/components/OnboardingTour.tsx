@@ -6,7 +6,7 @@ import { LogoMark } from './Logo'
 const STEPS = [
   {
     title: 'PDFをページ単位で登録',
-    body: '図面一覧の「PDF / 図面を登録」からPDFを選ぶと、全ページが自動で画像化されます。',
+    body: '図面一覧の「図面を登録」からPDFを選ぶと、全ページが自動で画像化されます。',
     note: '各ページは個別の作業行として追加されます。',
     icon: FileUp,
   },
