@@ -545,3 +545,65 @@ export type AttributeImportReport = {
   type_mismatch: string[]
   invalid: string[]
 }
+
+// ---------- 図面を読む手順（逆引き・順引き。DD-0035） ----------
+export type TraceStatus = '成立' | '不成立' | '判定不能'
+export type TraceSource = 'relay' | 'input' | 'missing_reference' | 'unresolved'
+export type TraceLocation = CircuitSymbolRef & { page: string; label: string; cx?: number; cy?: number }
+export type TraceContact = TraceLocation & {
+  device: string
+  kind: 'a' | 'b'
+  side: '電源側' | '戻り側'
+  device_state: boolean | null
+  how: string
+  conducts: boolean | null
+}
+export type TraceBranch = {
+  status: TraceStatus
+  supply: string
+  contacts: TraceContact[]
+  open: TraceContact[]
+  unknown: TraceContact[]
+  contradictory: boolean
+}
+export type TraceExplain = {
+  target: string
+  kind: string
+  formula?: string
+  text?: string
+  note?: string
+  inputs?: { device: string; source: TraceSource; source_label: string; reason?: string; ref_sheet?: string | null }[]
+  relays?: TraceExplain[]
+}
+export type TraceBackward = {
+  mode: 'backward'
+  target: string
+  kind: 'relay' | 'load'
+  status: TraceStatus
+  formula: string
+  text: string
+  branches: TraceBranch[]
+  reasons: string[]
+  devices: { device: string; state: boolean | null; how: string; source: TraceSource | null; reason: string | null }[]
+  explain: TraceExplain
+  truncated: boolean
+}
+export type TraceForward = {
+  mode: 'forward'
+  device: string
+  source: TraceSource
+  affected: {
+    target: string
+    kind: 'relay' | 'load'
+    depth: number
+    via: string
+    role: string
+    formula: string
+    contacts: (TraceLocation & { kind: 'a' | 'b'; side: string })[]
+  }[]
+  state_change?: { skipped?: string; from?: boolean; to?: boolean; targets?: { target: string; before: TraceStatus; after: TraceStatus; changed: boolean }[] }
+}
+export type TraceTargets = {
+  loads: { name: string; device?: string; project_id?: number; symbol_ref?: string }[]
+  devices: { device: string; source: TraceSource; source_label: string; reason: string; contact_count: number }[]
+}

@@ -30,6 +30,8 @@ from services.circuit_service import (
     edit_preview,
     edit_undo,
     run_simulation,
+    trace,
+    trace_targets,
 )
 from services.coil_wiring import split_through_wires
 
@@ -92,6 +94,21 @@ class TimelineRequest(WhatIfRequest):
 class ImpactRequest(BaseModel):
     project_ids: list[int] = Field(min_length=1)
     device: str
+
+
+class TraceRequest(BaseModel):
+    """図面を読む手順（DD-0035）。mode: backward（逆引き: target か symbol の成立条件と判定）/ forward（順引き: device の影響先）。
+    states: 器具番号 → 動作 true / 非動作 false / 不明 null。energized: リレーの前の状態（自己保持）。
+    external: 外部入力（I/O）と決めた器具番号。"""
+
+    project_ids: list[int] = Field(min_length=1)
+    mode: str = Field(default="backward", pattern="^(backward|forward)$")
+    target: str | None = None
+    symbol: SymbolRef | None = None
+    device: str | None = None
+    states: dict[str, bool | None] = {}
+    energized: dict[str, bool] = {}
+    external: list[str] = []
 
 
 class ConsistencyRequest(BaseModel):
@@ -224,6 +241,27 @@ def impact(payload: ImpactRequest, db: Session = Depends(get_db)):
     """機器（器具番号）が動いたら影響しうるリレー・負荷と、その機器を動かしうる機器（DD-0029）。"""
     try:
         return circuit_impact(db, payload.project_ids, payload.device)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@router.post("/trace")
+def trace_api(payload: TraceRequest, db: Session = Depends(get_db)):
+    """逆引き: 電源から戻りまでの経路から成立条件（直列 AND・並列 OR）を求め、成立・不成立・判定不能を枝ごとの根拠
+    （ページ・位置）つきで返す。順引き: 器具の接点を条件に含む出力を段数つきで返す（DD-0035）。"""
+    try:
+        return trace(db, payload.project_ids, mode=payload.mode, target=payload.target,
+                     symbol=payload.symbol.model_dump() if payload.symbol else None, device=payload.device,
+                     states=payload.states, energized=payload.energized, external=payload.external)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@router.post("/trace/targets")
+def trace_targets_api(payload: ConsistencyRequest, db: Session = Depends(get_db)):
+    """逆引きの対象（コイル・負荷）と、順引きの起点（接点の器具と出どころ: リレー・外部入力・参照先欠落・未解決）。"""
+    try:
+        return trace_targets(db, payload.project_ids)
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
 

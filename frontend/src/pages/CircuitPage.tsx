@@ -7,6 +7,7 @@ import type { CircuitResult, CircuitSummary, ProjectRow } from '../types'
 import ConsistencyPanel from './circuit/ConsistencyPanel'
 import EditPanel from './circuit/EditPanel'
 import TimelinePanel from './circuit/TimelinePanel'
+import TracePanel from './circuit/TracePanel'
 import WhatIfPanel from './circuit/WhatIfPanel'
 
 const ENGINE_LABEL = { ngspice: 'SPICE（ngspice）で解いています', builtin: '内蔵の回路計算で解いています（ngspice 未導入）' }
@@ -295,6 +296,7 @@ export default function CircuitPage() {
         </div>
       )}
 
+      {summary && <TracePanel projectIds={selected} />}
       {summary && <ConsistencyPanel projectIds={selected} onApplied={() => void build()} />}
       {summary && <EditPanel projectIds={selected} onApplied={() => void build()} />}
     </div>

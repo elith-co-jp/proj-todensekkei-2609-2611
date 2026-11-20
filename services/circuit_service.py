@@ -16,6 +16,7 @@ from services import (
     circuit_timing,
     circuit_whatif,
     consistency,
+    vector_pdf,
 )
 from services.annotation_service import WITH_ANNOTATIONS, serialize_project
 from services.circuit_model import SUPPLY_V, Circuit, build_circuit, export_netlist, simulate
@@ -29,8 +30,14 @@ def _pages(db: Session, project_ids: list[int]) -> tuple[list[dict[str, Any]], d
     if not projects:
         raise ValueError("図面を選んでください")
     pages = [serialize_project(db, p, with_image_meta=False) for p in sorted(projects, key=lambda p: p.id)]
-    texts = {p["id"]: (get_structure(db, p["id"]) or {}).get("texts") or [] for p in pages}
+    texts = {p["id"]: (get_structure(db, p["id"]) or {}).get("texts") or _vector_texts(p["id"]) for p in pages}
     return pages, texts
+
+
+def _vector_texts(project_id: int) -> list[dict[str, Any]]:
+    """構造解析の文字が無ければ、ベクター PDF の印字（DD-0035）で母線の PER/NER を決める。"""
+    result = vector_pdf.load(project_id)
+    return vector_pdf.structure_texts(result) if result and result.get("kind") != "scan" else []
 
 
 def _label_of(pages: list[dict[str, Any]]) -> dict[tuple[int, str], dict[str, Any]]:
@@ -343,3 +350,54 @@ def edit_undo(db: Session, change_set_id: int, *, force: bool = False) -> dict[s
     row.undone_at = utc_now_naive()
     db.commit()
     return _change_set_out(row)
+
+
+# ------------------------------------------------------------------ 図面を読む手順の機械化（DD-0035）
+
+
+def trace(db: Session, project_ids: list[int], *, mode: str, target: str | None = None,
+          symbol: dict[str, Any] | None = None, device: str | None = None, states: dict[str, bool | None] | None = None,
+          energized: dict[str, bool] | None = None, external: list[str] | None = None) -> dict[str, Any]:
+    """逆引き（成立条件と 3 値の判定・繰り返し辿った木）か順引き（影響先）。"""
+    from services import circuit_trace
+
+    circuit, pages = _circuit(db, project_ids)
+    tracer = circuit_trace.Tracer(circuit, pages, external=external or [])
+    if mode == "forward":
+        if not device:
+            raise ValueError("順引きの起点（器具番号）を指定してください")
+        return {"mode": mode, **tracer.effects(device, states=states, energized=energized)}
+    goal = symbol or target
+    if not goal:
+        raise ValueError("逆引きの対象（コイルの器具番号・負荷のラベル・記号）を指定してください")
+    result = tracer.evaluate(goal, states or {}, energized)
+    return {"mode": "backward", **result, "explain": tracer.explain(goal),
+            "sources": {d["device"]: d for d in result["devices"]}}
+
+
+def trace_targets(db: Session, project_ids: list[int]) -> dict[str, Any]:
+    """逆引きの対象（コイル・負荷）と、順引きの起点（接点の器具）の一覧と出どころ。"""
+    from services import circuit_trace
+
+    circuit, pages = _circuit(db, project_ids)
+    tracer = circuit_trace.Tracer(circuit, pages)
+    return {"loads": [{"name": name, **ref} for name, ref in tracer.all_loads()],
+            "devices": [{k: v for k, v in src.items() if k not in ("contacts", "coils")}
+                        | {"source_label": circuit_trace.SOURCE_LABEL[src["source"]], "contact_count": len(src.get("contacts", []))}
+                        for _, src in sorted(tracer.sources.items())]}
+
+
+def evaluate_scenarios(db: Session, project_ids: list[int], scenarios: list[dict[str, Any]],
+                       external: list[str] | None = None) -> dict[str, Any]:
+    """代表回路の正解（シナリオ）と機械の判定の照合。"""
+    from services import circuit_scenarios
+
+    circuit, pages = _circuit(db, project_ids)
+    return circuit_scenarios.evaluate(circuit, pages, scenarios, external=external or [])
+
+
+def annotation_table_rows(db: Session, project_ids: list[int], drawing_set: str = "") -> list[dict[str, str]]:
+    from services import annotation_table
+
+    circuit, pages = _circuit(db, project_ids)
+    return annotation_table.export_rows(pages, circuit, drawing_set=drawing_set)
