@@ -293,13 +293,18 @@ def store_dir() -> Path:
     return path
 
 
-def save(project_id: int, result: dict[str, Any]) -> None:
-    (store_dir() / f"{int(project_id)}.json").write_text(json.dumps(result, ensure_ascii=False), encoding="utf-8")
+def save(project_id: int, result: dict[str, Any], image_sha256: str) -> None:
+    """図面の画像のハッシュと一緒に保存する。読むときに画像が違えば（ID の使い回し・DB の作り直し）使わない。"""
+    data = {**result, "image_sha256": image_sha256}
+    (store_dir() / f"{int(project_id)}.json").write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
 
 
-def load(project_id: int) -> dict[str, Any] | None:
+def load(project_id: int, image_sha256: str | None) -> dict[str, Any] | None:
     path = store_dir() / f"{int(project_id)}.json"
-    return json.loads(path.read_text(encoding="utf-8")) if path.exists() else None
+    if not image_sha256 or not path.exists():
+        return None
+    data = json.loads(path.read_text(encoding="utf-8"))
+    return data if data.get("image_sha256") == image_sha256 else None
 
 
 def remove(project_id: int) -> None:

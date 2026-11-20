@@ -77,3 +77,11 @@ def test_upload_stores_vector_pdf_and_serves_it(client):
     assert body["kind"] == "vector" and body["stats"]["crossings"] == 1
     assert any(t["text"] == "PER2100100" for t in body["texts"])
     assert client.get("/api/projects/999999/vector-pdf").status_code == 404
+
+
+def test_stored_lines_are_ignored_for_a_different_image():
+    vector_pdf.save(424242, {"kind": "vector", "texts": []}, "aaa")
+    assert vector_pdf.load(424242, "aaa")["kind"] == "vector"
+    assert vector_pdf.load(424242, "bbb") is None and vector_pdf.load(424242, None) is None
+    vector_pdf.remove(424242)
+    assert vector_pdf.load(424242, "aaa") is None

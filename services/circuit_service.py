@@ -31,13 +31,15 @@ def _pages(db: Session, project_ids: list[int]) -> tuple[list[dict[str, Any]], d
     if not projects:
         raise ValueError("図面を選んでください")
     pages = [serialize_project(db, p, with_image_meta=False) for p in sorted(projects, key=lambda p: p.id)]
-    texts = {p["id"]: (get_structure(db, p["id"]) or {}).get("texts") or _vector_texts(p["id"]) for p in pages}
+    shas = {p.id: p.images[0].sha256 if p.images else None for p in projects}
+    texts = {p["id"]: (get_structure(db, p["id"]) or {}).get("texts") or _vector_texts(p["id"], shas.get(p["id"]))
+             for p in pages}
     return pages, texts
 
 
-def _vector_texts(project_id: int) -> list[dict[str, Any]]:
+def _vector_texts(project_id: int, image_sha256: str | None) -> list[dict[str, Any]]:
     """構造解析の文字が無ければ、ベクター PDF の印字（DD-0035）で母線の PER/NER を決める。"""
-    result = vector_pdf.load(project_id)
+    result = vector_pdf.load(project_id, image_sha256)
     return vector_pdf.structure_texts(result) if result and result.get("kind") != "scan" else []
 
 
