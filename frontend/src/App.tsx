@@ -1,17 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import {
-  BookOpen,
+  ArrowDownUp,
+  BrainCircuit,
   CircleHelp,
-  Download,
-  LayoutDashboard,
+  CircuitBoard,
+  Compass,
+  FileStack,
   Menu,
   PanelLeftClose,
   PanelLeftOpen,
   Power,
-  Sparkles,
   X,
-  Zap,
 } from 'lucide-react'
 
 import { api } from './api/client'
@@ -21,15 +21,15 @@ import { useModalFocus } from './hooks/useModalFocus'
 import { isEditorPath } from './utils/workspace'
 
 const NAVIGATION = [
-  { to: '/', label: '図面ワークスペース', caption: '登録・確認・修正', icon: LayoutDashboard, end: true, tone: 'bg-blue-100 text-blue-700', group: 'work' },
-  { to: '/circuit', label: '回路の確認・もしも', caption: '動作・波及範囲・変更', icon: Zap, end: false, tone: 'bg-rose-100 text-rose-700', group: 'work' },
-  { to: '/export', label: 'データ受け渡し', caption: '出力・取り込み', icon: Download, end: false, tone: 'bg-emerald-100 text-emerald-700', group: 'work' },
-  { to: '/ml', label: 'AI 改善サイクル', caption: '推論・学習・モデル', icon: Sparkles, end: false, tone: 'bg-violet-100 text-violet-700', group: 'admin' },
-  { to: '/guide', label: '操作ガイド', caption: '手順・ショートカット', icon: BookOpen, end: false, tone: 'bg-amber-100 text-amber-700', group: 'admin' },
+  { to: '/', label: '図面一覧', caption: '登録・編集', icon: FileStack, end: true, tone: 'bg-blue-100 text-blue-700', group: 'work' },
+  { to: '/circuit', label: '回路検証', caption: '動作・波及・変更', icon: CircuitBoard, end: false, tone: 'bg-rose-100 text-rose-700', group: 'work' },
+  { to: '/export', label: '入出力', caption: '書き出し・読み込み', icon: ArrowDownUp, end: false, tone: 'bg-emerald-100 text-emerald-700', group: 'work' },
+  { to: '/ml', label: 'AI 学習', caption: '推論・学習・モデル', icon: BrainCircuit, end: false, tone: 'bg-violet-100 text-violet-700', group: 'admin' },
+  { to: '/guide', label: 'ヘルプ', caption: '手順・ショートカット', icon: CircleHelp, end: false, tone: 'bg-amber-100 text-amber-700', group: 'admin' },
 ] as const
 
 const NAV_GROUPS = [
-  { key: 'work', label: 'WORKSPACE' },
+  { key: 'work', label: '作業' },
   { key: 'admin', label: 'AI・ヘルプ' },
 ] as const
 
@@ -293,10 +293,10 @@ export default function App() {
               sidebarCollapsed ? 'lg:justify-center lg:px-2' : ''
             }`}
             onClick={() => setTourOpen(true)}
-            title="ツアーガイドを表示"
+            title="画面の使い方を順に案内します"
           >
-            <CircleHelp size={17} className="flex-none text-slate-500" />
-            <span className={`text-xs font-semibold ${sidebarCollapsed ? 'lg:hidden' : ''}`}>ツアーガイドを表示</span>
+            <Compass size={17} className="flex-none text-slate-500" />
+            <span className={`text-xs font-semibold ${sidebarCollapsed ? 'lg:hidden' : ''}`}>ツアー</span>
           </button>
           {desktopMode && (
             <button
@@ -310,7 +310,7 @@ export default function App() {
             >
               <Power size={17} className="flex-none" />
               <span className={`text-xs font-semibold ${sidebarCollapsed ? 'lg:hidden' : ''}`}>
-                {shutdownPending ? '終了中...' : 'アプリを終了'}
+                {shutdownPending ? '終了中…' : '終了'}
               </span>
             </button>
           )}

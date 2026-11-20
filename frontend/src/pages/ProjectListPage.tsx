@@ -17,7 +17,7 @@ import {
   Trash2,
   Upload,
   X,
-  Zap,
+  CircuitBoard,
 } from 'lucide-react'
 
 import { api } from '../api/client'
@@ -50,10 +50,10 @@ type ViewMode = 'grid' | 'list'
 
 const VIEW_STORAGE_KEY = 'todenyolo.workspace.view'
 
-const WORKFLOW_STEPS = ['登録', 'AI 解析', '確認・修正', '回路で確かめる', '出力']
+const WORKFLOW_STEPS = ['登録', 'AI 解析', '確認・修正', '回路検証', '書き出し']
 
 const SAVED_MEANING = '人が確認して保存したアノテーション（学習に使う）'
-const AI_MEANING = '推論・解析の結果（未確定。エディタの「AI 推論」で取り込むまで保存件数に含まれない）'
+const AI_MEANING = '推論・解析の結果（未確定。エディタの「AI 取込」で取り込むまで保存件数に含まれない）'
 const SAVED_HINT = `保存済み = ${SAVED_MEANING}`
 const AI_HINT = `AI = ${AI_MEANING}`
 const AI_CHIP_CLASS =
@@ -266,7 +266,7 @@ export default function ProjectListPage() {
     })
     try {
       const response = await api.exportBulk({ ids: Array.from(checked) })
-      setMsg(`${response.name} を出力しました（${(response.size / 1024).toFixed(1)} KB）`)
+      setMsg(`${response.name} を書き出しました（${(response.size / 1024).toFixed(1)} KB）`)
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught))
     } finally {
@@ -363,7 +363,7 @@ export default function ProjectListPage() {
       <header className="page-header">
         <div>
           <div className="eyebrow">Annotation operations</div>
-          <h1 className="page-title">図面<span className="title-accent">ワークスペース</span></h1>
+          <h1 className="page-title">図面<span className="title-accent">一覧</span></h1>
           <p className="page-description">
             PDFをページ単位で管理し、作業状況を確認しながらアノテーションを進めます。
           </p>
@@ -373,7 +373,7 @@ export default function ProjectListPage() {
             <RefreshCw size={16} className={busy ? 'animate-spin' : ''} /> 更新
           </button>
           <button type="button" className="btn btn-accent" onClick={() => fileRef.current?.click()} disabled={busy}>
-            <Upload size={16} /> PDF / 図面を登録
+            <Upload size={16} /> 図面を登録
           </button>
           <input
             ref={fileRef}
@@ -470,7 +470,7 @@ export default function ProjectListPage() {
               onClick={() => void inferRegistered()}
               disabled={busy}
             >
-              <Sparkles size={13} /> 登録した {justRegistered.length} 件に AI 解析を実行
+              <Sparkles size={13} /> AI 解析（登録した {justRegistered.length} 件）
             </button>
           )}
         </div>
@@ -483,17 +483,17 @@ export default function ProjectListPage() {
             <p className="mt-0.5 text-[11px] text-slate-500">チェックはShiftキーで範囲選択できます</p>
           </div>
           <button type="button" className="btn btn-sm" onClick={() => void inferChecked()} disabled={busy}>
-            <Sparkles size={14} /> {checked.size ? `選択 ${checked.size} 件` : '全件'}に AI 解析
+            <Sparkles size={14} /> AI 解析（{checked.size ? `${checked.size} 件` : '全件'}）
           </button>
           <button type="button" className="btn btn-sm" onClick={() => void exportChecked()} disabled={busy}>
-            <Download size={14} /> {checked.size ? `選択 ${checked.size} 件` : '全件'}を出力
+            <Download size={14} /> 書き出し（{checked.size ? `${checked.size} 件` : '全件'}）
           </button>
           {checked.size > 0 && (
             <Link
               to={`/circuit?ids=${[...checked].join(',')}`}
               className="btn btn-sm border-rose-200 text-rose-700 hover:border-rose-300 hover:bg-rose-50 hover:text-rose-800"
             >
-              <Zap size={14} /> 選択 {checked.size} 件の回路を確かめる
+              <CircuitBoard size={14} /> 回路検証（{checked.size} 件）
             </Link>
           )}
           <button
@@ -580,7 +580,7 @@ export default function ProjectListPage() {
                 </p>
                 {!debouncedQuery && statusFilter === 'all' && (
                   <button type="button" className="btn btn-primary mt-4" onClick={() => fileRef.current?.click()} disabled={busy}>
-                    <Upload size={16} /> PDF / 図面を登録
+                    <Upload size={16} /> 図面を登録
                   </button>
                 )}
               </div>
@@ -648,10 +648,10 @@ export default function ProjectListPage() {
                           <Link
                             to={`/circuit?ids=${row.id}`}
                             className="icon-button h-9 w-9 border border-slate-200 text-rose-600 hover:border-rose-200 hover:bg-rose-50"
-                            aria-label={`${row.name}の回路を確かめる`}
-                            title="回路で確かめる"
+                            aria-label={`${row.name}の回路検証`}
+                            title="回路検証"
                           >
-                            <Zap size={15} />
+                            <CircuitBoard size={15} />
                           </Link>
                           <Link to={`/projects/${row.id}`} className="btn btn-sm btn-primary flex-1" aria-label={`${row.name}を編集`}>
                             編集 <ArrowUpRight size={14} />
@@ -681,7 +681,7 @@ export default function ProjectListPage() {
                 <th className="th w-28 text-right">シンボル</th>
                 <th className="th w-20 text-right">端子</th>
                 <th className="th w-28 text-right">配線</th>
-                <th className="th w-36"><span className="sr-only">回路・解析結果・編集</span></th>
+                <th className="th w-36"><span className="sr-only">回路検証・解析結果・編集</span></th>
               </tr>
             </thead>
             <tbody>
@@ -735,10 +735,10 @@ export default function ProjectListPage() {
                     <Link
                       to={`/circuit?ids=${row.id}`}
                       className="icon-button mr-1 h-9 w-9 border border-slate-200 text-rose-600 hover:bg-rose-50"
-                      aria-label={`${row.name}の回路を確かめる`}
-                      title="回路で確かめる"
+                      aria-label={`${row.name}の回路検証`}
+                      title="回路検証"
                     >
-                      <Zap size={16} />
+                      <CircuitBoard size={16} />
                     </Link>
                     <Link to={`/projects/${row.id}/analysis`} className="icon-button mr-1 h-9 w-9 border border-slate-200 text-blue-700 hover:bg-blue-50" aria-label={`${row.name}の解析結果`} title="解析結果">
                       <Cable size={16} />

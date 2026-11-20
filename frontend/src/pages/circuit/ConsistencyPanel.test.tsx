@@ -48,14 +48,14 @@ describe('ConsistencyPanel', () => {
   it('矛盾と精査の結果を出し、直し方を適用してチェックし直す', async () => {
     const onApplied = vi.fn()
     const view = render(<MemoryRouter><ConsistencyPanel projectIds={[7]} onApplied={onApplied} /></MemoryRouter>)
-    fireEvent.click(view.getByRole('button', { name: /矛盾をチェック/ }))
+    fireEvent.click(view.getByRole('button', { name: /チェック実行/ }))
     await waitFor(() => expect(view.getByText('接点の種類（a/b）が表と違う')).toBeTruthy())
     expect(view.getByText(/矛盾あり（1）/)).toBeTruthy()
     expect(view.getByText(/ngspice も Lcapy も入っていません/)).toBeTruthy()
     expect(view.getByRole('link', { name: /ER21216 XA/ }).getAttribute('href')).toBe('/projects/7?symbol=XA')
 
-    fireEvent.click(view.getByRole('button', { name: /この直し方を適用/ }))
-    await waitFor(() => expect(view.getByText(/1 件を直してチェックし直しました/)).toBeTruthy())
+    fireEvent.click(view.getByRole('button', { name: /修正を適用/ }))
+    await waitFor(() => expect(view.getByText(/1 件を修正し、再チェックしました/)).toBeTruthy())
     expect(api.applyConsistencyFixes).toHaveBeenCalledWith([7], ['abc'])
     expect(onApplied).toHaveBeenCalled()
     expect(view.getByText('矛盾は見つかりませんでした')).toBeTruthy()

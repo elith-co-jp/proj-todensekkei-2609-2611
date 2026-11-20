@@ -70,12 +70,12 @@ describe('WhatIfPanel', () => {
     expect(view.getByText('2 段')).toBeTruthy()
 
     fireEvent.change(view.getByRole('combobox', { name: '機器' }), { target: { value: 'X R100' } })
-    fireEvent.click(view.getByRole('button', { name: /動作させたら/ }))
-    await waitFor(() => expect(view.getByText('X R100 を動作させたとき')).toBeTruthy())
+    fireEvent.click(view.getByRole('button', { name: /強制 ON/ }))
+    await waitFor(() => expect(view.getByText('X R100 を強制 ON したとき')).toBeTruthy())
     expect(api.circuitWhatIf).toHaveBeenCalledWith([7], { PB1: false }, { 'X R100': false }, { devices: { 'X R100': true } })
     expect(view.getByLabelText('もしもの結果').textContent).toContain('RL')
 
-    fireEvent.click(view.getByRole('button', { name: /回路コード/ }))
+    fireEvent.click(view.getByRole('button', { name: /回路コード出力/ }))
     expect(api.downloadCircuitCode).toHaveBeenCalledWith([7])
   })
 })

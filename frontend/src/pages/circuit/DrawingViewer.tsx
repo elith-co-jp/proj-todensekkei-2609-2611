@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
-import { Maximize2, ZoomIn, ZoomOut } from 'lucide-react'
+import { Scan, ZoomIn, ZoomOut } from 'lucide-react'
 
 import type { CircuitResult } from '../../types'
 
@@ -96,6 +96,8 @@ export default function DrawingViewer({
     if (!stage) return
     zoomAt(factor, left + (stage.clientWidth - left - right) / 2, top + (stage.clientHeight - top - bottom) / 2)
   }
+  const zoomCenterRef = useRef(zoomCenter)
+  zoomCenterRef.current = zoomCenter
 
   // ページのスクロールを止めるため、ホイールは passive でない登録にする
   useEffect(() => {
@@ -110,6 +112,22 @@ export default function DrawingViewer({
     stage.addEventListener('wheel', onWheel, { passive: false })
     return () => stage.removeEventListener('wheel', onWheel)
   }, [zoomAt])
+
+  // CAD と同じく、F で全体表示、＋／− で拡大・縮小（入力欄で打っているときは除く）
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null
+      if (event.ctrlKey || event.metaKey || event.altKey) return
+      if (target?.closest('input, textarea, select, [contenteditable="true"]')) return
+      if (event.key === 'f' || event.key === 'F') fit()
+      else if (event.key === '+' || event.key === '=') zoomCenterRef.current(1.25)
+      else if (event.key === '-' || event.key === '_') zoomCenterRef.current(1 / 1.25)
+      else return
+      event.preventDefault()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [fit])
 
   const onPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
     if (event.button !== 0 || (event.target as Element).closest('[data-overlay-ui]')) return
@@ -213,13 +231,13 @@ export default function DrawingViewer({
         className="absolute bottom-4 flex items-center gap-1 rounded-xl border border-white/70 bg-white/90 p-1 text-slate-700 shadow-lg shadow-slate-900/10 backdrop-blur"
         style={{ left: left + 16 }}
       >
-        <button type="button" className="icon-button h-9 w-9 hover:bg-slate-100" onClick={() => zoomCenter(1 / 1.25)} aria-label="縮小" title="縮小（ホイール）">
+        <button type="button" className="icon-button h-9 w-9 hover:bg-slate-100" onClick={() => zoomCenter(1 / 1.25)} aria-label="縮小" title="縮小（−／ホイール）">
           <ZoomOut size={16} />
         </button>
-        <button type="button" className="inline-flex h-9 items-center gap-1 rounded-lg px-2 text-xs font-bold hover:bg-slate-100" onClick={fit} title="全体を表示（ダブルクリック）">
-          <Maximize2 size={14} /> 全体
+        <button type="button" className="inline-flex h-9 items-center gap-1 rounded-lg px-2 text-xs font-bold hover:bg-slate-100" onClick={fit} title="全体表示（F／ダブルクリック）">
+          <Scan size={14} /> 全体表示
         </button>
-        <button type="button" className="icon-button h-9 w-9 hover:bg-slate-100" onClick={() => zoomCenter(1.25)} aria-label="拡大" title="拡大（ホイール）">
+        <button type="button" className="icon-button h-9 w-9 hover:bg-slate-100" onClick={() => zoomCenter(1.25)} aria-label="拡大" title="拡大（＋／ホイール）">
           <ZoomIn size={16} />
         </button>
         <span className="w-12 text-center font-mono text-[11px] text-slate-500" aria-label="表示倍率">

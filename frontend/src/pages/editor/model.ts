@@ -160,7 +160,7 @@ export function aiImportNotice(result: AiImportResult) {
   if (result.source === null) {
     return regionNote
       ? `取り込める検出がありませんでした${regionNote}`
-      : 'この図面の推論結果がありません。「AI 改善サイクル」で推論を実行してください'
+      : 'この図面の推論結果がありません。「AI 学習」で推論を実行してください'
   }
   const terminalCount =
     result.terminals.length + result.symbols.reduce((n, s) => n + s.terminals.length, 0)
@@ -216,10 +216,10 @@ export function isMetaForm(value: unknown): value is MetaForm {
 }
 
 export const MODES: { id: Mode; label: string; key: string; icon: typeof Square }[] = [
-  { id: 'select', label: '選択・移動', key: 'V', icon: MousePointer2 },
-  { id: 'box', label: 'シンボル描画', key: 'B', icon: Square },
-  { id: 'terminal', label: '端子を置く', key: 'T', icon: CircleDot },
-  { id: 'connect', label: '配線 (from-to)', key: 'C', icon: Cable },
+  { id: 'select', label: '選択', key: 'V', icon: MousePointer2 },
+  { id: 'box', label: 'シンボル', key: 'B', icon: Square },
+  { id: 'terminal', label: '端子', key: 'T', icon: CircleDot },
+  { id: 'connect', label: '配線', key: 'C', icon: Cable },
 ]
 
 export const INSPECTOR_TABS = [

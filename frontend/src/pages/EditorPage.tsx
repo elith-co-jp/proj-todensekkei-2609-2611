@@ -1229,7 +1229,7 @@ export default function EditorPage() {
           style={{ cursor: mode === 'box' ? 'crosshair' : drag.kind === 'pan' ? 'grabbing' : 'default' }}
         >
           <p id="annotation-keyboard-help" className="sr-only">
-            シンボル描画モードではEnterキーで中央に矩形を作成できます。選択した矩形は矢印キーで移動し、
+            シンボルモードではEnterキーで中央に矩形を作成できます。選択した矩形は矢印キーで移動し、
             Shiftと矢印キーでサイズを変更できます。端子モードでは選択中の矩形にEnterキーで端子を追加し、
             配線モードでは始点と終点の矩形を順に選んでEnterキーで確定します。Altキーを併用すると細かく調整できます。
           </p>

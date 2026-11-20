@@ -103,11 +103,11 @@ export default function EditPanel({ projectIds, onApplied }: Props) {
 
   return (
     <section className="card mt-4 p-4" aria-label="図面の変更">
-      <div className="mb-1 text-sm font-black">図面の変更（操作で試す・適用・取り消し）</div>
-      <p className="mb-2 text-[11px] leading-5 text-slate-500">
-        部品の追加・削除、名前や種類の変更、配線のつなぎ替え、直列への差し込みを、決まった形の操作（JSON）で表します。
-        「試す」で図面を変えずに、差分・動作の違い・波及範囲・検査結果を出し、よければ「適用」します。適用した変更は履歴から取り消せます。
-        LLM に渡す道具の定義は <a className="underline" href={`${BASE}/api/circuit/edit/tools`} target="_blank" rel="noreferrer">こちら（JSON Schema）</a>。
+      <div className="mb-1 text-sm font-black">図面の変更</div>
+      <p className="mb-2 text-[11px] leading-5 text-slate-500"
+        title="部品の追加・削除、名前や種類の変更、配線のつなぎ替え、直列への差し込みを JSON の操作で表します。試行では図面を変えずに差分・動作の違い・波及範囲・検査結果を出します">
+        操作（JSON）を書いて試行 → 適用。適用後は履歴から元に戻せます。
+        <a className="ml-1 underline" href={`${BASE}/api/circuit/edit/tools`} target="_blank" rel="noreferrer">操作の定義（JSON Schema）</a>
       </p>
       <textarea aria-label="操作（JSON）" value={text} rows={7} spellCheck={false}
         placeholder={EXAMPLE}
@@ -115,9 +115,9 @@ export default function EditPanel({ projectIds, onApplied }: Props) {
         onChange={(e) => setText(e.target.value)} />
       <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px]">
         <button type="button" className="btn btn-sm" disabled={busy || !text.trim()} onClick={tryOps}>
-          {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <FlaskConical className="h-3 w-3" />} 試す
+          {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <FlaskConical className="h-3 w-3" />} 試行
         </button>
-        <input aria-label="変更の題" placeholder="変更の題" value={title} onChange={(e) => setTitle(e.target.value)}
+        <input aria-label="件名" placeholder="件名" value={title} onChange={(e) => setTitle(e.target.value)}
           className="min-w-0 flex-1 rounded-lg border border-slate-200 px-2 py-1" />
         <input aria-label="理由" placeholder="理由（任意）" value={reason} onChange={(e) => setReason(e.target.value)}
           className="min-w-0 flex-1 rounded-lg border border-slate-200 px-2 py-1" />
@@ -136,7 +136,7 @@ export default function EditPanel({ projectIds, onApplied }: Props) {
       {preview && <PreviewView preview={preview} />}
       {history.length > 0 && (
         <div className="mt-3">
-          <div className="mb-1 text-xs font-bold">変更の履歴</div>
+          <div className="mb-1 text-xs font-bold">履歴</div>
           <ul className="space-y-1 text-[11px]" aria-label="変更の履歴">
             {history.map((h) => (
               <li key={h.id} className="flex items-center gap-2">
@@ -145,9 +145,9 @@ export default function EditPanel({ projectIds, onApplied }: Props) {
                 <span className="text-slate-400">{h.author} · 操作 {h.ops.length}</span>
                 {h.status === 'applied' ? (
                   <button type="button" className="btn btn-sm" disabled={busy} onClick={() => undo(h.id)}>
-                    <Undo2 className="h-3 w-3" /> 取り消す
+                    <Undo2 className="h-3 w-3" /> 元に戻す
                   </button>
-                ) : <span className="text-slate-400">取り消し済み</span>}
+                ) : <span className="text-slate-400">戻し済み</span>}
               </li>
             ))}
           </ul>

@@ -46,7 +46,7 @@ describe('TimelinePanel', () => {
     expect(view.getByText('オンディレー')).toBeTruthy()
     fireEvent.change(view.getByLabelText('2T TM1 の時間（秒）'), { target: { value: '8' } })
     expect(view.getByText('（図面は 5 秒）')).toBeTruthy()
-    fireEvent.click(view.getByText('時間の順に解く'))
+    fireEvent.click(view.getByRole('button', { name: /実行/ }))
     await waitFor(() => expect(view.getByText('2T TM1 の時間が経過')).toBeTruthy())
     expect(api.circuitTimeline).toHaveBeenCalledWith([7], [{ at: 1, inputs: { PB1: true } }], { '2T TM1': 8 }, 20)
     expect(view.getByText('2T TM1 は 9 秒に動く予定')).toBeTruthy()
@@ -55,9 +55,9 @@ describe('TimelinePanel', () => {
 
   it('adds and removes operations', () => {
     const view = render(<TimelinePanel projectIds={[7]} summary={summary} />)
-    fireEvent.click(view.getByText('操作を足す'))
+    fireEvent.click(view.getByRole('button', { name: /行を追加/ }))
     expect(view.getAllByLabelText('時刻（秒）')).toHaveLength(2)
-    fireEvent.click(view.getAllByLabelText('操作を消す')[0])
+    fireEvent.click(view.getAllByLabelText('行を削除')[0])
     expect(view.getAllByLabelText('時刻（秒）')).toHaveLength(1)
   })
 })

@@ -67,11 +67,11 @@ describe('CircuitPage', () => {
   it('入力を切り替えると前の励磁状態から解き、図面に結果を重ねる', async () => {
     const view = render(<MemoryRouter><CircuitPage /></MemoryRouter>)
     fireEvent.click(await view.findByRole('checkbox'))
-    fireEvent.click(view.getByRole('button', { name: /回路を組んで/ }))
+    fireEvent.click(view.getByRole('button', { name: /回路を作成/ }))
     await waitFor(() => expect(api.simulateCircuit).toHaveBeenCalledWith([7], {}, {}))
     expect(view.getByText('無励磁')).toBeTruthy()
-    // 回路にできなかった箇所は図面の上に知らせ、「点検」でまとめて見る
-    expect(view.getByRole('button', { name: /回路にできなかった箇所 1 件/ })).toBeTruthy()
+    // 回路にできなかった箇所は図面の上に知らせ、「検査」でまとめて見る
+    expect(view.getByRole('button', { name: /警告 1/ })).toBeTruthy()
 
     fireEvent.click(view.getByRole('button', { name: /^PB1(?! を)/ }))
     await waitFor(() => expect(view.getByText('励磁')).toBeTruthy())
@@ -82,8 +82,8 @@ describe('CircuitPage', () => {
     fireEvent.click(view.getByRole('button', { name: /^PB1(?! を)/ }))
     await waitFor(() => expect(api.simulateCircuit).toHaveBeenLastCalledWith([7], { PB1: false }, { 'X R100': true }))
 
-    fireEvent.click(view.getByRole('button', { name: /回路にできなかった箇所 1 件/ }))
-    expect(view.getByRole('tab', { name: /点検/ }).getAttribute('aria-selected')).toBe('true')
+    fireEvent.click(view.getByRole('button', { name: /警告 1/ }))
+    expect(view.getByRole('tab', { name: /検査/ }).getAttribute('aria-selected')).toBe('true')
     expect(view.getByText(/端子が 1 個のため/)).toBeTruthy()
     expect(view.getByLabelText('図面間のつながり').textContent).toContain('ER21217へ')
     expect(view.getByText('推定')).toBeTruthy()
@@ -94,9 +94,9 @@ describe('CircuitPage', () => {
     await waitFor(() => expect(api.buildCircuit).toHaveBeenCalledWith([7]))
     await waitFor(() => expect(api.simulateCircuit).toHaveBeenCalledWith([7], {}, {}))
     expect(view.getByLabelText('対象の図面').textContent).toContain('ER21216')
-    expect(view.queryByRole('button', { name: /回路を組んで/ })).toBeNull()
+    expect(view.queryByRole('button', { name: /回路を作成/ })).toBeNull()
 
-    fireEvent.click(view.getByRole('button', { name: '図面を選び直す' }))
+    fireEvent.click(view.getByRole('button', { name: /図面選択/ }))
     expect(view.getByRole('checkbox')).toHaveProperty('checked', true)
   })
 
@@ -106,7 +106,7 @@ describe('CircuitPage', () => {
     fireEvent.click(await view.findByRole('button', { name: 'PB1 を ON にする' }))
     await waitFor(() => expect(api.simulateCircuit).toHaveBeenLastCalledWith([7], { PB1: true }, { 'X R100': false }))
 
-    fireEvent.click(view.getByRole('button', { name: '図面を全画面で見る' }))
+    fireEvent.click(view.getByRole('button', { name: '全画面' }))
     expect(view.getByLabelText('図面上の結果').className).toContain('fixed')
     fireEvent.keyDown(window, { key: 'Escape' })
     expect(view.getByLabelText('図面上の結果').className).not.toContain('fixed')
