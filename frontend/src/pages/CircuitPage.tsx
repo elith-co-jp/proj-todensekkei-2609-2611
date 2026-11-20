@@ -15,6 +15,7 @@ import {
   Loader2,
   PencilRuler,
   Power,
+  Route,
   RotateCcw,
   Search,
   Zap,
@@ -25,6 +26,7 @@ import type { CircuitResult, CircuitSummary, ProjectRow } from '../types'
 import ConsistencyPanel from './circuit/ConsistencyPanel'
 import EditPanel from './circuit/EditPanel'
 import TimelinePanel from './circuit/TimelinePanel'
+import TracePanel from './circuit/TracePanel'
 import WhatIfPanel from './circuit/WhatIfPanel'
 import DrawingViewer from './circuit/DrawingViewer'
 
@@ -258,6 +260,13 @@ export default function CircuitPage() {
               </section>
             </div>
           ),
+        },
+        {
+          key: 'trace',
+          label: '条件',
+          caption: '成立条件の逆引きと、影響の順引き。',
+          icon: Route,
+          render: () => <TracePanel projectIds={projectIds} />,
         },
         {
           key: 'whatif',

@@ -28,6 +28,7 @@ from schemas import (
     SymbolClassPayload,
     YoloExportRequest,
 )
+from services import vector_pdf
 from services.annotation_service import (
     WITH_ANNOTATIONS,
     classes_ordered,
@@ -105,6 +106,38 @@ def update_class(class_id: int, payload: SymbolClassPayload, db: Session = Depen
 
 
 # ---------------------------------------------------------------- プロジェクト
+def _vector_pages(raw: bytes) -> list:
+    """ベクター PDF の線・文字（DD-0035）。読めなくても登録は止めない。"""
+    try:
+        import pymupdf
+
+        doc = pymupdf.open(stream=raw, filetype="pdf")
+        return [(doc, i) for i in range(doc.page_count)]
+    except Exception:
+        logging.getLogger(__name__).exception("vector PDF extraction failed")
+        return []
+
+
+def _save_vector(project_id: int, item, turn: int, image_sha256: str) -> None:
+    try:
+        doc, index = item
+        vector_pdf.save(project_id, vector_pdf.extract_page(doc[index], turn=turn), image_sha256)
+    except Exception:
+        logging.getLogger(__name__).exception("vector PDF extraction failed")
+
+
+@router.get("/projects/{project_id}/vector-pdf")
+def get_vector_pdf(project_id: int, db: Session = Depends(get_db)):
+    """PDF で登録した図面の線・黒丸・文字と、接続の候補（交差と接続を分けたもの。DD-0035）。"""
+    project = db.get(AnnotationProject, project_id)
+    if project is None:
+        raise HTTPException(404, "図面がありません")
+    result = vector_pdf.load(project_id, project.images[0].sha256 if project.images else None)
+    if result is None:
+        raise HTTPException(404, "この図面にはベクター PDF の情報がありません（画像で登録したか、登録が DD-0035 より前）")
+    return result
+
+
 @router.post("/projects")
 async def create_project(
     files: list[UploadFile] = File(...),
@@ -125,6 +158,7 @@ async def create_project(
         )
         try:
             pages = render_pdf_pages(raw) if is_pdf else [raw]
+            vectors = _vector_pages(raw) if is_pdf else []
             stem = name.rsplit(".", 1)[0] or "図面"
             for index, page in enumerate(pages, start=1):
                 # 横書き（ページ全体を 90° 回して描いた）図面は縦向きに直して保存する（#42）。
@@ -145,6 +179,8 @@ async def create_project(
                 db.flush()
                 if turn:
                     turned.append({"project_id": p.id, "degrees": turn})
+                if index - 1 < len(vectors):
+                    _save_vector(p.id, vectors[index - 1], turn, digest)
                 db.add(
                     AnnotationImage(
                         project_id=p.id,
@@ -273,6 +309,7 @@ def delete_project(project_id: int, db: Session = Depends(get_db)):
     p = get_project_or_404(db, project_id)
     db.delete(p)
     db.commit()
+    vector_pdf.remove(project_id)
     return {"deleted": project_id}
 
 
@@ -284,6 +321,8 @@ def bulk_delete(payload: BulkIdsRequest, db: Session = Depends(get_db)):
     for p in targets:
         db.delete(p)
     db.commit()
+    for p in targets:
+        vector_pdf.remove(p.id)
     return {"deleted": [p.id for p in targets]}
 
 
