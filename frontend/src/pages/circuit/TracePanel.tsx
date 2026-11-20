@@ -86,30 +86,30 @@ export default function TracePanel({ projectIds }: Props) {
   const inputDevices = (targets?.devices ?? []).filter((d) => d.source !== 'relay')
 
   return (
-    <section className="card mt-5 p-4 sm:p-5" aria-label="図面を読む手順">
+    <section className="card mt-5 p-4 sm:p-5" aria-label="条件">
       <div className="flex flex-wrap items-center gap-2">
-        <div className="text-sm font-black">図面を読む手順（逆引き・順引き）</div>
+        <div className="text-sm font-black">条件</div>
         <span className="flex-1" />
         {busy && <Loader2 size={14} className="animate-spin text-slate-400" />}
         <button type="button" className="btn btn-sm" onClick={() => void run(async () => void (await api.downloadAnnotationTable(projectIds)))}
           disabled={busy || projectIds.length === 0}>
-          <FileSpreadsheet size={12} /> 対応表（Excel）
+          <FileSpreadsheet size={12} /> 対応表
         </button>
         <button type="button" className="btn btn-sm" onClick={() => void run(async () => void (await api.downloadCvat(projectIds)))}
           disabled={busy || projectIds.length === 0}>
           <Download size={12} /> CVAT
         </button>
       </div>
-      <p className="mt-1 text-[11px] leading-5 text-slate-500">
-        電源から戻りまでの経路を全部たどり、直列は AND・並列は OR で成立条件を出します。コイルより下（戻り側）の接点も含めます。
-        入力の状態を「不明」にした接点や、参照先のシートが無い接点があると「判定不能」になり、理由と場所を示します。
+      <p className="mt-1 text-[11px] text-slate-500"
+        title="電源から戻りまでの経路を全部たどり、直列は AND・並列は OR で成立条件を出します。コイルより下（戻り側）の接点も含めます。入力が不明・参照先のシートが無い接点があると判定不能になり、理由と場所を示します。">
+        経路から成立条件を出し、成立・不成立・判定不能で判定。
       </p>
       <div className="mt-3 flex flex-wrap items-center gap-2 text-[12px]" role="radiogroup" aria-label="問い">
         <label className="flex items-center gap-1">
-          <input type="radio" checked={mode === 'backward'} onChange={() => setMode('backward')} /> 起動条件を知る（逆引き）
+          <input type="radio" checked={mode === 'backward'} onChange={() => setMode('backward')} /> 逆引き
         </label>
         <label className="flex items-center gap-1">
-          <input type="radio" checked={mode === 'forward'} onChange={() => setMode('forward')} /> 影響を知る（順引き）
+          <input type="radio" checked={mode === 'forward'} onChange={() => setMode('forward')} /> 順引き
         </label>
       </div>
       {mode === 'backward' ? (
@@ -119,7 +119,7 @@ export default function TracePanel({ projectIds }: Props) {
             {(targets?.loads ?? []).map((l) => <option key={l.name} value={l.name}>{l.name}</option>)}
           </select>
           <button type="button" className="btn btn-sm btn-accent" onClick={() => void traceBack()} disabled={busy || !target}>
-            <Search size={12} /> 条件を求める
+            <Search size={12} /> 条件算出
           </button>
         </div>
       ) : (
@@ -129,7 +129,7 @@ export default function TracePanel({ projectIds }: Props) {
             {(targets?.devices ?? []).map((d) => <option key={d.device} value={d.device}>{d.device}（{d.source_label}）</option>)}
           </select>
           <button type="button" className="btn btn-sm btn-accent" onClick={() => void traceForward()} disabled={busy || !device}>
-            <ArrowLeftRight size={12} /> 影響を辿る
+            <ArrowLeftRight size={12} /> 影響追跡
           </button>
         </div>
       )}

@@ -263,8 +263,8 @@ export default function CircuitPage() {
         },
         {
           key: 'trace',
-          label: '逆引き・順引き',
-          caption: 'リレーが動く条件を逆にたどり、機器を変えたときに影響する先を順にたどります。',
+          label: '条件',
+          caption: '成立条件の逆引きと、影響の順引き。',
           icon: Route,
           render: () => <TracePanel projectIds={projectIds} />,
         },
