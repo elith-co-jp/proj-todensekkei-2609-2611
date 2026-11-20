@@ -16,6 +16,7 @@ import {
   PenLine,
   PowerOff,
   RefreshCw,
+  Route,
   Search,
   ShieldCheck,
   Timer,
@@ -28,6 +29,7 @@ import type { CircuitResult, CircuitSummary, ProjectRow } from '../types'
 import ConsistencyPanel from './circuit/ConsistencyPanel'
 import EditPanel from './circuit/EditPanel'
 import TimelinePanel from './circuit/TimelinePanel'
+import TracePanel from './circuit/TracePanel'
 import WhatIfPanel from './circuit/WhatIfPanel'
 import DrawingViewer from './circuit/DrawingViewer'
 
@@ -263,6 +265,13 @@ export default function CircuitPage() {
           ),
         },
         {
+          key: 'trace',
+          label: '条件',
+          caption: '成立条件の逆引きと、影響の順引き。',
+          icon: Route,
+          render: () => <TracePanel projectIds={projectIds} />,
+        },
+        {
           key: 'whatif',
           label: '波及',
           caption: '機器を選び、影響範囲と、強制 ON / OFF したときの変化を見る。',
@@ -355,10 +364,10 @@ export default function CircuitPage() {
   // 全画面は Esc で戻す。P でパネルを開閉
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      const target = event.target as HTMLElement | null
+      const target = event.target
       if (event.key === 'Escape' && fullscreen) setFullscreen(false)
       if ((event.key === 'p' || event.key === 'P') && !event.ctrlKey && !event.metaKey && !event.altKey
-        && !target?.closest('input, textarea, select, [contenteditable="true"]')) setPanelOpen((v) => !v)
+        && !(target instanceof Element && target.closest('input, textarea, select, [contenteditable="true"]'))) setPanelOpen((v) => !v)
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)

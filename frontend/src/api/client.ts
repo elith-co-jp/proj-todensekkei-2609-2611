@@ -13,6 +13,9 @@ import type {
   CircuitTimelineEvent,
   CircuitWhatIf,
   ConsistencyResult,
+  TraceBackward,
+  TraceForward,
+  TraceTargets,
   CircuitSummary,
   CoilWiringSplitResult,
   ClassStats,
@@ -341,6 +344,34 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ project_ids: projectIds }),
     }, 'circuit_code.py'),
+
+  traceTargets: (projectIds: number[]) =>
+    req<TraceTargets>('/api/circuit/trace/targets', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ project_ids: projectIds }),
+    }),
+
+  traceBackward: (projectIds: number[], target: string, states: Record<string, boolean | null>, energized: Record<string, boolean> = {}) =>
+    req<TraceBackward>('/api/circuit/trace', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ project_ids: projectIds, mode: 'backward', target, states, energized }),
+    }),
+
+  traceForward: (projectIds: number[], device: string, states?: Record<string, boolean | null>) =>
+    req<TraceForward>('/api/circuit/trace', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ project_ids: projectIds, mode: 'forward', device, states: states ?? {} }),
+    }),
+
+  downloadAnnotationTable: (projectIds: number[], drawingSet = '') =>
+    download(`/api/exchange/table?project_ids=${projectIds.join(',')}&drawing_set=${encodeURIComponent(drawingSet)}`,
+      { method: 'GET' }, 'annotation_table.xlsx'),
+
+  downloadCvat: (projectIds: number[]) =>
+    download(`/api/exchange/cvat?project_ids=${projectIds.join(',')}`, { method: 'GET' }, 'annotations.xml'),
 
   checkConsistency: (projectIds: number[]) =>
     req<ConsistencyResult>('/api/circuit/consistency', {

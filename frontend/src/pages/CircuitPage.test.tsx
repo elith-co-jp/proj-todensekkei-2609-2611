@@ -14,6 +14,7 @@ const api = vi.hoisted(() => ({
   downloadNetlist: vi.fn(),
   imageUrl: (id: number) => `/img/${id}`,
   circuitEditHistory: vi.fn(async () => ({ change_sets: [] })),
+  traceTargets: vi.fn(async () => ({ loads: [], devices: [] })),
 }))
 vi.mock('../api/client', () => ({ api, BASE: '' }))
 

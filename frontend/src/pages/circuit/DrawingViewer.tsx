@@ -116,9 +116,9 @@ export default function DrawingViewer({
   // CAD と同じく、F で全体表示、＋／− で拡大・縮小（入力欄で打っているときは除く）
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      const target = event.target as HTMLElement | null
+      const target = event.target
       if (event.ctrlKey || event.metaKey || event.altKey) return
-      if (target?.closest('input, textarea, select, [contenteditable="true"]')) return
+      if (target instanceof Element && target.closest('input, textarea, select, [contenteditable="true"]')) return
       if (event.key === 'f' || event.key === 'F') fit()
       else if (event.key === '+' || event.key === '=') zoomCenterRef.current(1.25)
       else if (event.key === '-' || event.key === '_') zoomCenterRef.current(1 / 1.25)
