@@ -23,7 +23,6 @@ import io
 import json
 import re
 import zipfile
-from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 
 import yaml
@@ -48,6 +47,7 @@ from services.annotation_service import (
     store_image_bytes,
 )
 from services.geometry import sanitize_box
+from services.jst import now_iso_jst
 from symbol_class_policy import canonical_symbol_class_key
 
 BUNDLE_FILENAME = "bundle.json"
@@ -235,7 +235,7 @@ def build_bundle(db: Session, projects: list[AnnotationProject]) -> dict:
     return {
         "schema_version": SCHEMA_VERSION,
         "tool": TOOL_NAME,
-        "exported_at": datetime.now(UTC).replace(microsecond=0).isoformat(),
+        "exported_at": now_iso_jst(),
         "classes": [
             {
                 "key": c.key,

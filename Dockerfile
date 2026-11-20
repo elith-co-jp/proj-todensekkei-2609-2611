@@ -1,7 +1,10 @@
 FROM python:3.13-slim
 
+# TZ: ZIP 内のファイル日時やログなど、OS の時計を使う所も日本時間にする（DD-0036）。
+# JST-9 は POSIX 形式なので tzdata が入っていない slim イメージでも効く。
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
+    TZ=JST-9 \
     DEBIAN_FRONTEND=noninteractive
 
 WORKDIR /app

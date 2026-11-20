@@ -29,6 +29,7 @@ from runtime import is_frozen, resource_base
 from services.annotation_service import classes_ordered, image_path
 from services.export_service import build_label_content, project_image_stem
 from services.inference_service import ultralytics_available
+from services.jst import iso_jst
 from services.model_service import (
     activate,
     model_path,
@@ -486,6 +487,6 @@ def serialize_run(run: TrainingRun) -> dict:
         "eval_scope": eval_scope,
         "decision": run.decision or None,
         "log_tail": run.log_tail,
-        "started_at": run.started_at.isoformat() if run.started_at else None,
-        "finished_at": run.finished_at.isoformat() if run.finished_at else None,
+        "started_at": iso_jst(run.started_at),
+        "finished_at": iso_jst(run.finished_at),
     }

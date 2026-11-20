@@ -32,6 +32,7 @@ import type {
   ProjectRow,
   TrainingRun,
 } from '../types'
+import { formatJstShort } from '../utils/jst'
 
 type Notice = { kind: 'success' | 'error'; title: string; body: string }
 
@@ -75,9 +76,7 @@ function fmtBytes(n: number) {
   return `${(n / 1024).toFixed(1)} KB`
 }
 
-function fmtTime(iso: string | null) {
-  return iso ? iso.replace('T', ' ').slice(5, 19) : '—'
-}
+const fmtTime = formatJstShort
 
 function EvalScopeNote({ scope }: { scope: EvalScope }) {
   if (scope.mode === 'holdout') {

@@ -5,6 +5,7 @@ import { api } from '../api/client'
 import { AttributeJsonPanel } from '../components/AttributeJsonPanel'
 import { LoadingOverlay } from '../components/LoadingOverlay'
 import type { ProjectRow } from '../types'
+import { formatJstClock } from '../utils/jst'
 
 type ImportNotice = {
   kind: 'success' | 'error'
@@ -24,7 +25,7 @@ export default function ExportPage() {
   const [log, setLog] = useState<string[]>([])
   const fileRef = useRef<HTMLInputElement | null>(null)
 
-  const push = (s: string) => setLog((prev) => [`${new Date().toTimeString().slice(0, 8)}  ${s}`, ...prev])
+  const push = (s: string) => setLog((prev) => [`${formatJstClock()}  ${s}`, ...prev])
   const notifyImport = (notice: ImportNotice) => setImportNotice(notice)
 
   const reload = async () => {

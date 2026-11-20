@@ -26,6 +26,7 @@ from models import (
 )
 from services.blob_store import store_blob
 from services.geometry import sanitize_box
+from services.jst import iso_jst
 from symbol_class_policy import canonical_symbol_class_key
 
 MAX_IMAGE_BYTES = 64 * 1024 * 1024
@@ -324,8 +325,8 @@ def serialize_project(db: Session, project: AnnotationProject, with_image_meta: 
         "status": project.status,
         "assignee": project.assignee,
         "note": project.note,
-        "created_at": project.created_at.isoformat() if project.created_at else None,
-        "updated_at": project.updated_at.isoformat() if project.updated_at else None,
+        "created_at": iso_jst(project.created_at),
+        "updated_at": iso_jst(project.updated_at),
         "symbols": out_symbols,
         "connections": out_connections,
     }

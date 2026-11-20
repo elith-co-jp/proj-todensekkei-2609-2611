@@ -19,6 +19,7 @@ from services import (
 )
 from services.annotation_service import WITH_ANNOTATIONS, serialize_project
 from services.circuit_model import SUPPLY_V, Circuit, build_circuit, export_netlist, simulate
+from services.jst import iso_jst
 from services.structure_service import get_structure
 
 LIVE_RATIO = 0.5
@@ -278,8 +279,8 @@ def _change_set_out(row: Any) -> dict[str, Any]:
     return {"id": row.id, "title": row.title, "reason": row.reason, "author": row.author, "status": row.status,
             "project_ids": json.loads(row.project_ids_json), "ops": json.loads(row.ops_json),
             "notes": json.loads(row.notes_json or "[]"), "summary": json.loads(row.summary_json or "{}"),
-            "created_at": row.created_at.isoformat() if row.created_at else None,
-            "undone_at": row.undone_at.isoformat() if row.undone_at else None}
+            "created_at": iso_jst(row.created_at),
+            "undone_at": iso_jst(row.undone_at)}
 
 
 def edit_apply(db: Session, project_ids: list[int], ops: list[dict[str, Any]], *, title: str, reason: str | None,
