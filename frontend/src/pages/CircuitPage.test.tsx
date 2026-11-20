@@ -67,9 +67,8 @@ describe('CircuitPage', () => {
     fireEvent.click(view.getByRole('button', { name: /回路を組んで/ }))
     await waitFor(() => expect(api.simulateCircuit).toHaveBeenCalledWith([7], {}, {}))
     expect(view.getByText('無励磁')).toBeTruthy()
-    expect(view.getByText(/端子が 1 個のため/)).toBeTruthy()
-    expect(view.getByLabelText('図面間のつながり').textContent).toContain('ER21217へ')
-    expect(view.getByText('推定')).toBeTruthy()
+    // 回路にできなかった箇所は図面の上に知らせ、「点検」でまとめて見る
+    expect(view.getByText(/回路にできなかった箇所が/)).toBeTruthy()
 
     fireEvent.click(view.getByRole('button', { name: /PB1/ }))
     await waitFor(() => expect(view.getByText('励磁')).toBeTruthy())
@@ -79,5 +78,22 @@ describe('CircuitPage', () => {
     // 押しボタンを離すときは、励磁している状態を渡す（自己保持の回路はそのまま保持される）。
     fireEvent.click(view.getByRole('button', { name: /PB1/ }))
     await waitFor(() => expect(api.simulateCircuit).toHaveBeenLastCalledWith([7], { PB1: false }, { 'X R100': true }))
+
+    fireEvent.click(view.getByRole('button', { name: '点検で見る' }))
+    expect(view.getByRole('tab', { name: /点検/ }).getAttribute('aria-selected')).toBe('true')
+    expect(view.getByText(/端子が 1 個のため/)).toBeTruthy()
+    expect(view.getByLabelText('図面間のつながり').textContent).toContain('ER21217へ')
+    expect(view.getByText('推定')).toBeTruthy()
+  })
+
+  it('一覧から ids を付けて開くと、その図面で回路を組み、選択欄を畳む', async () => {
+    const view = render(<MemoryRouter initialEntries={['/circuit?ids=7']}><CircuitPage /></MemoryRouter>)
+    await waitFor(() => expect(api.buildCircuit).toHaveBeenCalledWith([7]))
+    await waitFor(() => expect(api.simulateCircuit).toHaveBeenCalledWith([7], {}, {}))
+    expect(view.getByLabelText('対象の図面').textContent).toContain('ER21216')
+    expect(view.queryByRole('button', { name: /回路を組んで/ })).toBeNull()
+
+    fireEvent.click(view.getByRole('button', { name: '図面を選び直す' }))
+    expect(view.getByRole('checkbox')).toHaveProperty('checked', true)
   })
 })
