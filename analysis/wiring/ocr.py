@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import sys
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -17,13 +18,22 @@ def load_symbol_ocr_reader(engine: str, language: str) -> tuple[Any | None, str,
 
             return easyocr.Reader([language], gpu=False, verbose=False), engine, None
         if engine == "rapidocr":
-            from rapidocr_onnxruntime import RapidOCR
-
-            return RapidOCR(), engine, None
+            return _rapidocr(), engine, None
     except (ImportError, ModuleNotFoundError) as caught:
         warning = f"symbol label OCR '{engine}' is unavailable ({caught}); continuing without symbol label OCR"
         return None, "none", warning
     raise ValueError(f"unsupported symbol OCR engine: {engine}")
+
+
+@lru_cache(maxsize=1)
+def _rapidocr() -> Any:
+    """RapidOCR はモデルの読み込みに時間がかかるので、図面ごとに作らず 1 つを使い回す（高速化）。
+
+    読み取りは状態を持たない（ページの OCR も 1 つの reader を複数のスレッドで並べて呼んでいる。analysis.parallel）。
+    """
+    from rapidocr_onnxruntime import RapidOCR
+
+    return RapidOCR()
 
 
 def load_crop_ocr_reader(page_reader: Any) -> Any:

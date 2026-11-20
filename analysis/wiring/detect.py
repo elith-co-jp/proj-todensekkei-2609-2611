@@ -138,36 +138,31 @@ def _merge_parallel_boxes(
     return result
 
 
+def _runs(lines: np.ndarray, min_length: int) -> list[tuple[int, int, int]]:
+    """各行の 0 でない画素の連なり（行番号, 始まり, 終わりの次）を、行の順・行の中は左からの順で返す。
+
+    1 画素ずつ Python で走査していたのを numpy にした（高速化）。長さ min_length 以上の連なりだけを返し、
+    返す連なりとその順は走査した場合と同じ。
+    """
+    rows, length = lines.shape
+    padded = np.zeros((rows, length + 2), dtype=np.int8)
+    padded[:, 1:-1] = lines != 0
+    edges = np.diff(padded, axis=1)
+    start_rows, starts = np.nonzero(edges == 1)
+    _, ends = np.nonzero(edges == -1)
+    keep = ends - starts >= min_length
+    return list(zip(start_rows[keep].tolist(), starts[keep].tolist(), ends[keep].tolist(), strict=True))
+
+
 def scan_line_segments(
     mask: np.ndarray, orientation: str, min_length: int, *, isolate_components: bool = False
 ) -> list[LineSegment]:
-    height, width = mask.shape
-    candidates: list[Box] = []
-    if orientation == "h":
-        for y in range(height):
-            row = mask[y]
-            x = 0
-            while x < width:
-                while x < width and row[x] == 0:
-                    x += 1
-                start = x
-                while x < width and row[x] != 0:
-                    x += 1
-                if x - start >= min_length:
-                    candidates.append(Box(start, y, x, y + 1))
-    elif orientation == "v":
-        for x in range(width):
-            y = 0
-            while y < height:
-                while y < height and mask[y, x] == 0:
-                    y += 1
-                start = y
-                while y < height and mask[y, x] != 0:
-                    y += 1
-                if y - start >= min_length:
-                    candidates.append(Box(x, start, x + 1, y))
-    else:
+    if orientation not in ("h", "v"):
         raise ValueError("orientation must be 'h' or 'v'")
+    candidates = [
+        Box(start, line, end, line + 1) if orientation == "h" else Box(line, start, line + 1, end)
+        for line, start, end in _runs(mask if orientation == "h" else mask.T, min_length)
+    ]
 
     component_labels = None
     if isolate_components:

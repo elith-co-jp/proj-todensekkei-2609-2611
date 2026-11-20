@@ -17,6 +17,7 @@ import subprocess
 import tempfile
 from collections import defaultdict
 from dataclasses import dataclass, field
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -106,8 +107,13 @@ def _bus_side(text: str | None) -> str | None:
     return None
 
 
+_SPICE_UNSAFE = re.compile(r"[^0-9A-Za-z_]")
+
+
+@lru_cache(maxsize=65536)
 def _spice_name(name: str) -> str:
-    return re.sub(r"[^0-9A-Za-z_]", "_", name)
+    # シミュレーションの 1 歩ごとに全ノード分呼ばれるので、正規表現の置換を覚えておく（高速化。結果は同じ）。
+    return _SPICE_UNSAFE.sub("_", name)
 
 
 TIMER_MODES = {
@@ -416,8 +422,14 @@ def _solve_mna(text: str) -> tuple[dict[str, float], float]:
     return {n: float(solution[i]) for n, i in index.items()} | {GROUND: 0.0}, current
 
 
+@lru_cache(maxsize=8)
+def _which_ngspice(path_env: str | None) -> str | None:
+    return shutil.which("ngspice", path=path_env)
+
+
 def ngspice_path() -> str | None:
-    return os.environ.get("SEQANNO_NGSPICE") or shutil.which("ngspice")
+    # PATH を毎回探すと遅いので、PATH の値ごとに結果を覚えておく（PATH が変われば探し直す）。
+    return os.environ.get("SEQANNO_NGSPICE") or _which_ngspice(os.environ.get("PATH"))
 
 
 def _solve_ngspice(text: str, binary: str) -> tuple[dict[str, float], float]:
@@ -449,6 +461,88 @@ def solve(text: str) -> tuple[dict[str, float], float, str]:
             return values, current, "ngspice"
     values, current = _solve_mna(text)
     return {k.lower(): v for k, v in values.items()}, current, "builtin"
+
+
+# str.splitlines が行の区切りとみなす字。ラベルなどに入っているとネットリストの行の分かれ方が変わる。
+_LINE_BREAKS = frozenset("\n\r\v\f\x1c\x1d\x1e\x85\u2028\u2029")
+
+
+class _MnaPlan:
+    """netlist() の文字を _solve_mna() で解くのと同じ計算を、文字を作らずに行う（高速化。DD-0009）。
+
+    シミュレーションは 1 回で何度も回路を解く。接点の開閉以外は毎回同じなので、ノードの番号と抵抗の並びを
+    1 回だけ作り、接点の抵抗だけ差し替える。行列への足し込みの順と値（:g で丸めた値）は文字を経由した場合と
+    同じにしてあるので、結果は浮動小数点の 1 ビットまで同じ。文字と同じ解釈にならない回路（素子名が V で始まる、
+    名前に空白や改行がある、ノード名が空）は作らず、従来どおり文字を経由する（build が None を返す）。
+    """
+
+    __slots__ = ("index", "names", "resistors", "sources")
+
+    @classmethod
+    def build(cls, circuit: Circuit) -> _MnaPlan | None:
+        supplies = [n for n in circuit.nodes if n == SUPPLY or n.startswith(f"{SUPPLY}_")] or [SUPPLY]
+        sources = [(_spice_name(n), GROUND, float(f"{SUPPLY_V:g}")) for n in supplies]
+        resistors: list[tuple[str, str, float | str]] = []
+        for e in circuit.elements:
+            if not _LINE_BREAKS.isdisjoint(f"{e.label}{e.project_id}{e.symbol_ref}"):
+                return None
+            a, b = _spice_name(e.a), _spice_name(e.b)
+            if not a or not b:
+                return None
+            if e.kind in ("a", "b"):
+                token = f"R{e.name}"
+                value: float | str = e.name  # 開閉で決まる。solve で R_ON / R_OFF にする
+            else:
+                token = e.name
+                value = float(f"{e.resistance:g}")
+            if not token or token.split() != [token] or token.upper().startswith("V") or token.startswith(("*", ".")):
+                return None
+            resistors.append((a, b, value))
+        for n in circuit.nodes:
+            if n != GROUND:
+                name = _spice_name(n)
+                if not name:
+                    return None
+                resistors.append((name, "0", float(f"{R_LEAK:g}")))
+        names = sorted(({n for r in resistors for n in r[:2]} | {n for s in sources for n in s[:2]}) - {GROUND})
+        plan = cls()
+        plan.names = names
+        plan.index = {n: i for i, n in enumerate(names)}
+        plan.resistors = [(plan.index.get(a), plan.index.get(b), r) for a, b, r in resistors]
+        plan.sources = [(plan.index.get(p), plan.index.get(m), v) for p, m, v in sources]
+        return plan
+
+    def solve(self, closed: dict[str, bool]) -> tuple[dict[str, float], float]:
+        n = len(self.names)
+        size = n + len(self.sources)
+        # 行列の要素ごとに、文字を経由した場合と同じ順で足し込む（足す順が同じなら浮動小数点の結果も同じ）。
+        cells: dict[tuple[int, int], float] = {}
+        get = cells.get
+        r_on, r_off = float(f"{R_ON:g}"), float(f"{R_OFF:g}")
+        for ia, ib, r in self.resistors:
+            if isinstance(r, str):
+                r = r_on if closed.get(r) else r_off
+            for x, y in ((ia, ib), (ib, ia)):
+                if x is not None:
+                    cells[x, x] = get((x, x), 0.0) + 1 / r
+                    if y is not None:
+                        cells[x, y] = get((x, y), 0.0) - 1 / r
+        rhs = np.zeros(size)
+        for j, (plus, minus, volts) in enumerate(self.sources):
+            k = n + j
+            for node, sign in ((plus, 1), (minus, -1)):
+                if node is not None:
+                    cells[node, k] = get((node, k), 0.0) + sign
+                    cells[k, node] = get((k, node), 0.0) + sign
+            rhs[k] = volts
+        g = np.zeros((size, size))
+        if cells:
+            rows, cols = zip(*cells, strict=True)
+            g[list(rows), list(cols)] = list(cells.values())
+        solution = np.linalg.solve(g, rhs)
+        current = float(sum(abs(solution[n + j]) for j in range(len(self.sources))))
+        values = dict(zip(self.names, solution.tolist()[:n], strict=True)) | {GROUND: 0.0}
+        return {k.lower(): v for k, v in values.items()}, current
 
 
 def _volt(volts: dict[str, float], node: str) -> float:
@@ -483,11 +577,17 @@ def simulate(circuit: Circuit, inputs: dict[str, bool], energized: dict[str, boo
             return bool(forced_devices[dev])
         return state[dev] if dev in circuit.coils else bool(inputs.get(dev))
 
+    # ngspice が無ければ、ネットリストの文字を作らずに同じ計算で解く（_MnaPlan）。
+    plan = None if ngspice_path() else _MnaPlan.build(circuit)
     steps = 0
     for steps in range(1, MAX_STEPS + 1):  # noqa: B007  回数を結果に出す
         closed = {e.name: forced_contacts.get(e.name, contact_on(e) == (e.kind == "a"))
                   for e in circuit.elements if e.kind in ("a", "b")}
-        volts, current, engine = solve(netlist(circuit, closed))
+        if plan is not None:
+            volts, current = plan.solve(closed)
+            engine = "builtin"
+        else:
+            volts, current, engine = solve(netlist(circuit, closed))
         coil_v = {dev: max(abs(_volt(volts, e.a) - _volt(volts, e.b)) for e in es) for dev, es in circuit.coils.items()}
         new = {dev: bool(forced_devices[dev]) if dev in forced_devices else coil_v[dev] >= PICKUP_RATIO * SUPPLY_V
                for dev in circuit.coils}
