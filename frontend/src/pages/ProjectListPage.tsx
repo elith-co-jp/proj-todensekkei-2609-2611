@@ -17,6 +17,7 @@ import {
   Trash2,
   Upload,
   X,
+  Zap,
 } from 'lucide-react'
 
 import { api } from '../api/client'
@@ -49,7 +50,7 @@ type ViewMode = 'grid' | 'list'
 
 const VIEW_STORAGE_KEY = 'todenyolo.workspace.view'
 
-const WORKFLOW_STEPS = ['登録', 'AI 解析', '確認・修正', '出力']
+const WORKFLOW_STEPS = ['登録', 'AI 解析', '確認・修正', '回路で確かめる', '出力']
 
 const SAVED_MEANING = '人が確認して保存したアノテーション（学習に使う）'
 const AI_MEANING = '推論・解析の結果（未確定。エディタの「AI 推論」で取り込むまで保存件数に含まれない）'
@@ -487,6 +488,14 @@ export default function ProjectListPage() {
           <button type="button" className="btn btn-sm" onClick={() => void exportChecked()} disabled={busy}>
             <Download size={14} /> {checked.size ? `選択 ${checked.size} 件` : '全件'}を出力
           </button>
+          {checked.size > 0 && (
+            <Link
+              to={`/circuit?ids=${[...checked].join(',')}`}
+              className="btn btn-sm border-rose-200 text-rose-700 hover:border-rose-300 hover:bg-rose-50 hover:text-rose-800"
+            >
+              <Zap size={14} /> 選択 {checked.size} 件の回路を確かめる
+            </Link>
+          )}
           <button
             type="button"
             className="btn btn-sm btn-danger"
@@ -636,6 +645,14 @@ export default function ProjectListPage() {
                           <Link to={`/projects/${row.id}/analysis`} className="btn btn-sm flex-1" aria-label={`${row.name}の解析結果`}>
                             <Cable size={14} /> 解析結果
                           </Link>
+                          <Link
+                            to={`/circuit?ids=${row.id}`}
+                            className="icon-button h-9 w-9 border border-slate-200 text-rose-600 hover:border-rose-200 hover:bg-rose-50"
+                            aria-label={`${row.name}の回路を確かめる`}
+                            title="回路で確かめる"
+                          >
+                            <Zap size={15} />
+                          </Link>
                           <Link to={`/projects/${row.id}`} className="btn btn-sm btn-primary flex-1" aria-label={`${row.name}を編集`}>
                             編集 <ArrowUpRight size={14} />
                           </Link>
@@ -664,7 +681,7 @@ export default function ProjectListPage() {
                 <th className="th w-28 text-right">シンボル</th>
                 <th className="th w-20 text-right">端子</th>
                 <th className="th w-28 text-right">配線</th>
-                <th className="th w-28"><span className="sr-only">解析結果・編集</span></th>
+                <th className="th w-36"><span className="sr-only">回路・解析結果・編集</span></th>
               </tr>
             </thead>
             <tbody>
@@ -714,7 +731,15 @@ export default function ProjectListPage() {
                       <AiWireChip row={row} />
                     </div>
                   </td>
-                  <td className="td text-right">
+                  <td className="td whitespace-nowrap text-right">
+                    <Link
+                      to={`/circuit?ids=${row.id}`}
+                      className="icon-button mr-1 h-9 w-9 border border-slate-200 text-rose-600 hover:bg-rose-50"
+                      aria-label={`${row.name}の回路を確かめる`}
+                      title="回路で確かめる"
+                    >
+                      <Zap size={16} />
+                    </Link>
                     <Link to={`/projects/${row.id}/analysis`} className="icon-button mr-1 h-9 w-9 border border-slate-200 text-blue-700 hover:bg-blue-50" aria-label={`${row.name}の解析結果`} title="解析結果">
                       <Cable size={16} />
                     </Link>

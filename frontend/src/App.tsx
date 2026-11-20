@@ -21,12 +21,17 @@ import { useModalFocus } from './hooks/useModalFocus'
 import { isEditorPath } from './utils/workspace'
 
 const NAVIGATION = [
-  { to: '/', label: '図面ワークスペース', caption: '登録・進捗・編集', icon: LayoutDashboard, end: true, tone: 'bg-blue-100 text-blue-700' },
-  { to: '/ml', label: 'AI 改善サイクル', caption: '推論・学習・モデル', icon: Sparkles, end: false, tone: 'bg-violet-100 text-violet-700' },
-  { to: '/circuit', label: '回路シミュレーション', caption: 'On/Off の動作確認', icon: Zap, end: false, tone: 'bg-rose-100 text-rose-700' },
-  { to: '/export', label: 'データ受け渡し', caption: '出力・取り込み', icon: Download, end: false, tone: 'bg-emerald-100 text-emerald-700' },
-  { to: '/guide', label: '操作ガイド', caption: '手順・ショートカット', icon: BookOpen, end: false, tone: 'bg-amber-100 text-amber-700' },
-]
+  { to: '/', label: '図面ワークスペース', caption: '登録・確認・修正', icon: LayoutDashboard, end: true, tone: 'bg-blue-100 text-blue-700', group: 'work' },
+  { to: '/circuit', label: '回路の確認・もしも', caption: '動作・波及範囲・変更', icon: Zap, end: false, tone: 'bg-rose-100 text-rose-700', group: 'work' },
+  { to: '/export', label: 'データ受け渡し', caption: '出力・取り込み', icon: Download, end: false, tone: 'bg-emerald-100 text-emerald-700', group: 'work' },
+  { to: '/ml', label: 'AI 改善サイクル', caption: '推論・学習・モデル', icon: Sparkles, end: false, tone: 'bg-violet-100 text-violet-700', group: 'admin' },
+  { to: '/guide', label: '操作ガイド', caption: '手順・ショートカット', icon: BookOpen, end: false, tone: 'bg-amber-100 text-amber-700', group: 'admin' },
+] as const
+
+const NAV_GROUPS = [
+  { key: 'work', label: 'WORKSPACE' },
+  { key: 'admin', label: 'AI・ヘルプ' },
+] as const
 
 export default function App() {
   const location = useLocation()
@@ -233,42 +238,51 @@ export default function App() {
 
         <div className="mx-5 h-px bg-slate-200" />
 
-        <div className={`px-6 pt-7 text-[10px] font-semibold tracking-[0.12em] text-slate-600 ${sidebarCollapsed ? 'lg:hidden' : ''}`}>WORKSPACE</div>
-        <nav className="flex-1 space-y-1 px-3 py-3" aria-label="メインナビゲーション">
-          {NAVIGATION.map(({ to, label, caption, icon: Icon, end, tone }) => (
-            <NavLink
-              key={to}
-              to={to}
-              end={end}
-              title={sidebarCollapsed ? label : undefined}
-              className={({ isActive }) =>
-                `group relative flex min-h-12 items-center gap-3 overflow-hidden rounded-xl px-3 py-2 transition ${
-                  sidebarCollapsed ? 'lg:justify-center lg:px-2' : ''
-                } ${
-                  isActive
-                    ? 'bg-blue-50 text-blue-700'
-                    : 'text-slate-600 hover:bg-slate-50 hover:text-blue-700'
-                }`
-              }
-            >
-              {({ isActive }) => (
-                <>
-                  <span
-                    className={`flex h-8 w-8 flex-none items-center justify-center rounded-lg transition ${tone} ${
-                      isActive ? 'shadow-sm ring-2 ring-white' : 'opacity-90 group-hover:opacity-100'
-                    }`}
+        <nav className="flex-1 overflow-y-auto px-3 pb-3" aria-label="メインナビゲーション">
+          {NAV_GROUPS.map((group) => (
+            <div key={group.key} className="pt-5">
+              <div className={`px-3 pb-2 text-[10px] font-semibold tracking-[0.12em] text-slate-600 ${sidebarCollapsed ? 'lg:hidden' : ''}`}>
+                {group.label}
+              </div>
+              {sidebarCollapsed && group.key !== 'work' && <div className="mx-3 mb-2 hidden h-px bg-slate-200 lg:block" />}
+              <div className="space-y-1">
+                {NAVIGATION.filter((item) => item.group === group.key).map(({ to, label, caption, icon: Icon, end, tone }) => (
+                  <NavLink
+                    key={to}
+                    to={to}
+                    end={end}
+                    title={sidebarCollapsed ? label : undefined}
+                    className={({ isActive }) =>
+                      `group relative flex min-h-12 items-center gap-3 overflow-hidden rounded-xl px-3 py-2 transition ${
+                        sidebarCollapsed ? 'lg:justify-center lg:px-2' : ''
+                      } ${
+                        isActive
+                          ? 'bg-blue-50 text-blue-700'
+                          : 'text-slate-600 hover:bg-slate-50 hover:text-blue-700'
+                      }`
+                    }
                   >
-                    <Icon size={17} />
-                  </span>
-                  <span className={`min-w-0 ${sidebarCollapsed ? 'lg:hidden' : ''}`}>
-                    <span className="block truncate text-[13px] font-semibold">{label}</span>
-                    <span className="mt-0.5 block truncate text-[10px] text-slate-600">
-                      {caption}
-                    </span>
-                  </span>
-                </>
-              )}
-            </NavLink>
+                    {({ isActive }) => (
+                      <>
+                        <span
+                          className={`flex h-8 w-8 flex-none items-center justify-center rounded-lg transition ${tone} ${
+                            isActive ? 'shadow-sm ring-2 ring-white' : 'opacity-90 group-hover:opacity-100'
+                          }`}
+                        >
+                          <Icon size={17} />
+                        </span>
+                        <span className={`min-w-0 ${sidebarCollapsed ? 'lg:hidden' : ''}`}>
+                          <span className="block truncate text-[13px] font-semibold">{label}</span>
+                          <span className="mt-0.5 block truncate text-[10px] text-slate-600">
+                            {caption}
+                          </span>
+                        </span>
+                      </>
+                    )}
+                  </NavLink>
+                ))}
+              </div>
+            </div>
           ))}
         </nav>
 
