@@ -44,7 +44,10 @@ function result(energized: boolean): CircuitResult {
     overlay: [{
       project_id: 7,
       wires: [{ x1: 0.1, y1: 0.1, x2: 0.1, y2: 0.5, live: energized }],
-      contacts: [{ project_id: 7, symbol_ref: 'XA', device: 'X R100', kind: 'a', closed: energized, label: 'X R100', cx: 0.2, cy: 0.3, w: 0.02, h: 0.02 }],
+      contacts: [
+        { project_id: 7, symbol_ref: 'XA', device: 'X R100', kind: 'a', closed: energized, label: 'X R100', cx: 0.2, cy: 0.3, w: 0.02, h: 0.02 },
+        { project_id: 7, symbol_ref: 'PB1', device: 'PB1', kind: 'a', closed: false, label: 'PB1', cx: 0.4, cy: 0.3, w: 0.02, h: 0.02 },
+      ],
       coils: [{ device: 'X R100', symbol_ref: 'XC', energized, cx: 0.2, cy: 0.6, w: 0.02, h: 0.02 }],
     }],
   }
@@ -68,18 +71,18 @@ describe('CircuitPage', () => {
     await waitFor(() => expect(api.simulateCircuit).toHaveBeenCalledWith([7], {}, {}))
     expect(view.getByText('無励磁')).toBeTruthy()
     // 回路にできなかった箇所は図面の上に知らせ、「点検」でまとめて見る
-    expect(view.getByText(/回路にできなかった箇所が/)).toBeTruthy()
+    expect(view.getByRole('button', { name: /回路にできなかった箇所 1 件/ })).toBeTruthy()
 
-    fireEvent.click(view.getByRole('button', { name: /PB1/ }))
+    fireEvent.click(view.getByRole('button', { name: /^PB1(?! を)/ }))
     await waitFor(() => expect(view.getByText('励磁')).toBeTruthy())
     expect(api.simulateCircuit).toHaveBeenLastCalledWith([7], { PB1: true }, { 'X R100': false })
     expect(view.container.querySelector('line')?.getAttribute('stroke')).toBe('#e11d48')
 
     // 押しボタンを離すときは、励磁している状態を渡す（自己保持の回路はそのまま保持される）。
-    fireEvent.click(view.getByRole('button', { name: /PB1/ }))
+    fireEvent.click(view.getByRole('button', { name: /^PB1(?! を)/ }))
     await waitFor(() => expect(api.simulateCircuit).toHaveBeenLastCalledWith([7], { PB1: false }, { 'X R100': true }))
 
-    fireEvent.click(view.getByRole('button', { name: '点検で見る' }))
+    fireEvent.click(view.getByRole('button', { name: /回路にできなかった箇所 1 件/ }))
     expect(view.getByRole('tab', { name: /点検/ }).getAttribute('aria-selected')).toBe('true')
     expect(view.getByText(/端子が 1 個のため/)).toBeTruthy()
     expect(view.getByLabelText('図面間のつながり').textContent).toContain('ER21217へ')
@@ -95,5 +98,17 @@ describe('CircuitPage', () => {
 
     fireEvent.click(view.getByRole('button', { name: '図面を選び直す' }))
     expect(view.getByRole('checkbox')).toHaveProperty('checked', true)
+  })
+
+  it('図面の上の入力の接点をクリックすると ON / OFF が切り替わり、全画面で見られる', async () => {
+    const view = render(<MemoryRouter initialEntries={['/circuit?ids=7']}><CircuitPage /></MemoryRouter>)
+    await waitFor(() => expect(api.simulateCircuit).toHaveBeenCalledWith([7], {}, {}))
+    fireEvent.click(await view.findByRole('button', { name: 'PB1 を ON にする' }))
+    await waitFor(() => expect(api.simulateCircuit).toHaveBeenLastCalledWith([7], { PB1: true }, { 'X R100': false }))
+
+    fireEvent.click(view.getByRole('button', { name: '図面を全画面で見る' }))
+    expect(view.getByLabelText('図面上の結果').className).toContain('fixed')
+    fireEvent.keyDown(window, { key: 'Escape' })
+    expect(view.getByLabelText('図面上の結果').className).not.toContain('fixed')
   })
 })

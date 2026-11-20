@@ -3,6 +3,10 @@ import type { ReactNode } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import {
   AlertTriangle,
+  Minimize2,
+  PanelRightClose,
+  PanelRightOpen,
+  Expand,
   ClipboardCheck,
   Clock,
   Download,
@@ -22,6 +26,7 @@ import ConsistencyPanel from './circuit/ConsistencyPanel'
 import EditPanel from './circuit/EditPanel'
 import TimelinePanel from './circuit/TimelinePanel'
 import WhatIfPanel from './circuit/WhatIfPanel'
+import DrawingViewer from './circuit/DrawingViewer'
 
 const ENGINE_LABEL = { ngspice: 'SPICE（ngspice）で解いています', builtin: '内蔵の回路計算で解いています（ngspice 未導入）' }
 
@@ -55,6 +60,24 @@ type ToolTab = {
 
 const STEPS = ['図面を選ぶ', '回路を組む', '動かして確かめる'] as const
 
+/** 道具のパネルを図面の上に重ねる幅（xl 以上）かどうか */
+function useWideScreen() {
+  const query = '(min-width: 1280px)'
+  const [wide, setWide] = useState(() => typeof window !== 'undefined' && typeof window.matchMedia === 'function' && window.matchMedia(query).matches)
+  useEffect(() => {
+    if (typeof window.matchMedia !== 'function') return
+    const media = window.matchMedia(query)
+    const update = () => setWide(media.matches)
+    update()
+    media.addEventListener('change', update)
+    return () => media.removeEventListener('change', update)
+  }, [])
+  return wide
+}
+
+/** 重ねた道具のパネルの幅（px）。全体表示はこの分を除いて合わせる */
+const PANEL_WIDTH = 384
+
 export default function CircuitPage() {
   const [params] = useSearchParams()
   const idsParam = params.get('ids')
@@ -68,6 +91,9 @@ export default function CircuitPage() {
   const [inputs, setInputs] = useState<Record<string, boolean>>({})
   const [page, setPage] = useState<number | null>(null)
   const [tab, setTab] = useState('operate')
+  const [panelOpen, setPanelOpen] = useState(true)
+  const [fullscreen, setFullscreen] = useState(false)
+  const wide = useWideScreen()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const handledParam = useRef<string | null>(null)
@@ -320,264 +346,324 @@ export default function CircuitPage() {
       ]
     : []
   const activeTab = tabs.find((t) => t.key === tab) ?? tabs[0]
+  const overlayPanel = wide || fullscreen
+  const inputDevices = useMemo(() => new Set(summary?.inputs.map((i) => i.device) ?? []), [summary])
 
-  return (
-    <div className="page-shell enter-up">
-      <header className="page-header">
-        <div>
-          <div className="eyebrow">Circuit simulation</div>
-          <h1 className="page-title">回路の <span className="title-accent">確認・もしも</span></h1>
-          <p className="page-description">
-            図面のアノテーション（記号・端子・配線）から回路を組み、入力の On/Off でどのリレーが動くか、
-            機器を変えたらどこまで影響するかを図面の上で確かめます。
+  // 全画面は Esc で戻す
+  useEffect(() => {
+    if (!fullscreen) return
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setFullscreen(false)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [fullscreen])
+
+  const openTab = (key: string) => {
+    setTab(key)
+    setPanelOpen(true)
+  }
+
+  const tabBar = (vertical: boolean) => (
+    <div
+      className={vertical ? 'flex flex-col gap-1' : 'grid gap-1'}
+      style={vertical ? undefined : { gridTemplateColumns: `repeat(${tabs.length}, minmax(0, 1fr))` }}
+      role="tablist"
+      aria-label="確かめる道具"
+    >
+      {tabs.map((t) => {
+        const Icon = t.icon
+        const active = t.key === activeTab?.key && (panelOpen || !overlayPanel)
+        return (
+          <button
+            key={t.key}
+            type="button"
+            role="tab"
+            id={`circuit-tab-${t.key}`}
+            aria-selected={active}
+            aria-controls="circuit-tool-panel"
+            title={vertical ? t.label : undefined}
+            className={`relative flex flex-col items-center justify-center gap-1 rounded-xl px-1 text-[11px] font-bold leading-tight transition ${
+              vertical ? 'h-11 w-11' : 'min-h-14'
+            } ${active ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-600 hover:bg-slate-100'}`}
+            onClick={() => openTab(t.key)}
+          >
+            <Icon size={16} />
+            <span className={vertical ? 'sr-only' : 'text-center'}>{t.label}</span>
+            {t.badge ? (
+              <span className={`absolute right-0.5 top-0.5 min-w-4 rounded-full px-1 text-[9px] leading-4 ${
+                active ? 'bg-white text-blue-700' : t.tone === 'warn' ? 'bg-amber-500 text-white' : 'bg-slate-500 text-white'
+              }`}>
+                {t.badge}
+              </span>
+            ) : null}
+          </button>
+        )
+      })}
+    </div>
+  )
+
+  const toolContent = activeTab && (
+    <div id="circuit-tool-panel" role="tabpanel" aria-labelledby={`circuit-tab-${activeTab.key}`} className="[&_section.card]:mt-0">
+      <p className="mb-3 px-1 text-[11px] leading-5 text-slate-500">{activeTab.caption}</p>
+      {activeTab.render()}
+    </div>
+  )
+
+  const selector = (
+    <section className="card mb-4 p-4 sm:p-5" aria-label="図面を選ぶ">
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="mr-auto min-w-0">
+          <div className="text-sm font-black text-slate-900">図面を選ぶ</div>
+          <p className="mt-0.5 text-[11px] text-slate-500">
+            複数選ぶと、母線・行先札と同じ器具番号のリレーを図面をまたいでつなぎます。
           </p>
         </div>
-        <ol className="flex flex-wrap items-center gap-1.5 text-xs" aria-label="進め方">
-          {STEPS.map((label, i) => (
-            <li
-              key={label}
-              aria-current={i === step ? 'step' : undefined}
-              className={`flex items-center gap-1.5 rounded-full border py-1 pl-1 pr-2.5 font-semibold ${
-                i === step
-                  ? 'border-blue-300 bg-blue-50 text-blue-800'
-                  : i < step
-                    ? 'border-slate-200 bg-white text-slate-600'
-                    : 'border-slate-200 bg-white text-slate-400'
+        <label className="relative">
+          <span className="sr-only">図面を絞り込む</span>
+          <Search size={13} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+          <input
+            className="field h-9 min-h-9 w-48 py-0 pl-7 text-xs"
+            placeholder="シート番号・名前"
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+          />
+        </label>
+        <button
+          type="button"
+          className="btn btn-sm"
+          onClick={() => setIds((prev) => new Set([...prev, ...visibleRows.map((r) => r.id)]))}
+          disabled={visibleRows.length === 0}
+        >
+          <ListChecks size={12} /> {filter ? '表示中を選ぶ' : 'すべて選ぶ'}
+        </button>
+        <button type="button" className="btn btn-sm" onClick={() => setIds(new Set())} disabled={ids.size === 0}>
+          選択を外す
+        </button>
+      </div>
+      <div className="thin-scroll my-3 flex max-h-44 flex-wrap gap-2 overflow-auto">
+        {rows.length === 0 && (
+          <p className="text-xs text-slate-500">
+            まだ図面がありません。<Link className="font-bold text-blue-700 underline" to="/">図面ワークスペース</Link>で登録してください。
+          </p>
+        )}
+        {visibleRows.map((r) => {
+          const on = ids.has(r.id)
+          return (
+            <label
+              key={r.id}
+              className={`flex cursor-pointer items-center gap-2 rounded-xl border px-3 py-1.5 text-xs transition ${
+                on ? 'border-blue-400 bg-blue-50' : 'border-slate-200 hover:border-slate-300'
               }`}
             >
-              <span className={`flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold ${
-                i <= step ? 'bg-blue-600 text-white' : 'bg-slate-200 text-slate-500'
-              }`}>
-                {i + 1}
-              </span>
-              {label}
-            </li>
-          ))}
-        </ol>
-      </header>
-
-      {error && <div className="notice mb-5 border-rose-200 bg-rose-50 text-rose-700" role="alert">{error}</div>}
-
-      {summary && !choosing ? (
-        <section className="card mb-4 flex flex-wrap items-center gap-2 p-3 sm:px-4" aria-label="対象の図面">
-          <span className="text-[11px] font-bold text-slate-500">対象の図面</span>
-          <div className="flex min-w-0 flex-1 flex-wrap gap-1.5">
-            {summary.pages.map((p) => (
-              <span key={p.id} className="rounded-lg bg-slate-100 px-2 py-0.5 text-xs font-bold text-slate-700">{p.name}</span>
-            ))}
-          </div>
-          <span className="text-[11px] text-slate-500">
-            記号 {summary.element_count} · 節点 {summary.node_count}
-          </span>
-          <button type="button" className="btn btn-sm" onClick={() => setChoosing(true)}>
-            図面を選び直す
-          </button>
-          <button type="button" className="btn btn-sm" onClick={rebuild} disabled={busy} title="エディタで直した内容を読み込み直します">
-            {busy ? <Loader2 size={12} className="animate-spin" /> : <RotateCcw size={12} />} 組み直す
-          </button>
-        </section>
-      ) : (
-        <section className="card mb-5 p-4 sm:p-5" aria-label="図面を選ぶ">
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="mr-auto min-w-0">
-              <div className="text-sm font-black text-slate-900">図面を選ぶ</div>
-              <p className="mt-0.5 text-[11px] text-slate-500">
-                複数選ぶと、母線・行先札と同じ器具番号のリレーを図面をまたいでつなぎます。
-              </p>
-            </div>
-            <label className="relative">
-              <span className="sr-only">図面を絞り込む</span>
-              <Search size={13} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
-              <input
-                className="field h-9 min-h-9 w-48 py-0 pl-7 text-xs"
-                placeholder="シート番号・名前"
-                value={filter}
-                onChange={(e) => setFilter(e.target.value)}
-              />
+              <input type="checkbox" className="h-4 w-4" checked={on} onChange={() => toggleId(r.id)} />
+              <span className="font-bold text-slate-700">{sheetName(r)}</span>
+              <span className="font-mono text-slate-400">#{r.id} · {r.connection_count} 配線</span>
             </label>
-            <button
-              type="button"
-              className="btn btn-sm"
-              onClick={() => setIds((prev) => new Set([...prev, ...visibleRows.map((r) => r.id)]))}
-              disabled={visibleRows.length === 0}
-            >
-              <ListChecks size={12} /> {filter ? '表示中を選ぶ' : 'すべて選ぶ'}
-            </button>
-            <button type="button" className="btn btn-sm" onClick={() => setIds(new Set())} disabled={ids.size === 0}>
-              選択を外す
-            </button>
-          </div>
-          <div className="thin-scroll my-3 flex max-h-44 flex-wrap gap-2 overflow-auto">
-            {rows.length === 0 && (
-              <p className="text-xs text-slate-500">
-                まだ図面がありません。<Link className="font-bold text-blue-700 underline" to="/">図面ワークスペース</Link>で登録してください。
-              </p>
-            )}
-            {visibleRows.map((r) => {
-              const on = ids.has(r.id)
-              return (
-                <label
-                  key={r.id}
-                  className={`flex cursor-pointer items-center gap-2 rounded-xl border px-3 py-1.5 text-xs transition ${
-                    on ? 'border-blue-400 bg-blue-50' : 'border-slate-200 hover:border-slate-300'
-                  }`}
-                >
-                  <input type="checkbox" className="h-4 w-4" checked={on} onChange={() => toggleId(r.id)} />
-                  <span className="font-bold text-slate-700">{sheetName(r)}</span>
-                  <span className="font-mono text-slate-400">#{r.id} · {r.connection_count} 配線</span>
-                </label>
-              )
-            })}
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <button type="button" className="btn btn-accent" onClick={() => void build()} disabled={busy || selected.length === 0}>
-              {busy ? <Loader2 size={14} className="animate-spin" /> : <Zap size={14} />}
-              回路を組んでシミュレーションする
-            </button>
-            <span className="text-[11px] text-slate-500">
-              {selected.length ? `${selected.length} 枚を選択中` : '図面を 1 枚以上選んでください'}
-            </span>
-            {summary && (
-              <button type="button" className="btn btn-sm ml-auto" onClick={() => setChoosing(false)}>
-                {selectionChanged ? '選び直さずに戻る' : '閉じる'}
-              </button>
-            )}
-          </div>
-        </section>
-      )}
-
-      {summary && issueCount > 0 && tab !== 'check' && (
-        <div className="notice mb-4 items-center border-amber-200 bg-amber-50 text-amber-800" role="status">
-          <AlertTriangle size={16} className="flex-none" />
-          <span className="flex-1 text-xs">
-            回路にできなかった箇所が <b>{issueCount} 件</b>あります。結果に影響することがあります。
-          </span>
-          <button type="button" className="btn btn-sm border-amber-300 bg-white text-amber-800 hover:bg-amber-100" onClick={() => setTab('check')}>
-            点検で見る
+          )
+        })}
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <button type="button" className="btn btn-accent" onClick={() => void build()} disabled={busy || selected.length === 0}>
+          {busy ? <Loader2 size={14} className="animate-spin" /> : <Zap size={14} />}
+          回路を組んでシミュレーションする
+        </button>
+        <span className="text-[11px] text-slate-500">
+          {selected.length ? `${selected.length} 枚を選択中` : '図面を 1 枚以上選んでください'}
+        </span>
+        {summary && (
+          <button type="button" className="btn btn-sm ml-auto" onClick={() => setChoosing(false)}>
+            {selectionChanged ? '選び直さずに戻る' : '閉じる'}
           </button>
-        </div>
-      )}
+        )}
+      </div>
+    </section>
+  )
 
-      {summary && (
-        <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_30rem]">
-          <section className="card overflow-hidden xl:sticky xl:top-4" aria-label="図面上の結果">
-            <div className="flex flex-wrap items-center gap-2 border-b border-slate-100 p-3">
-              <div className="flex flex-wrap gap-1.5" role="tablist" aria-label="図面のページ">
-                {summary.pages.map((p) => (
-                  <button
-                    key={p.id}
-                    type="button"
-                    role="tab"
-                    aria-selected={page === p.id}
-                    className={`btn btn-sm ${page === p.id ? 'btn-accent' : ''}`}
-                    onClick={() => setPage(p.id)}
-                  >
-                    {p.name}
-                  </button>
-                ))}
-              </div>
-              <span className="flex-1" />
-              <span className="flex items-center gap-2 text-[11px] font-bold">
-                <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-emerald-700">入力 ON {onCount}</span>
-                <span className="rounded-full bg-rose-50 px-2 py-0.5 text-rose-700">励磁 {energizedCount} / {summary.coils.length}</span>
-                {busy && <Loader2 size={13} className="animate-spin text-slate-400" aria-label="計算中" />}
-              </span>
-            </div>
-            {result?.warnings.map((w) => (
-              <p key={w} className="flex gap-1.5 border-b border-rose-100 bg-rose-50 px-3 py-2 text-[11px] font-bold text-rose-700">
-                <AlertTriangle size={13} className="flex-none" /> {w}
-              </p>
-            ))}
-            {row && overlay && (
-              <div className="relative bg-white" style={{ aspectRatio: `${row.image_width} / ${row.image_height}` }}>
-                <img src={api.imageUrl(row.id)} alt={sheetName(row)} className="absolute inset-0 h-full w-full" />
-                <svg className="absolute inset-0 h-full w-full" viewBox="0 0 1 1" preserveAspectRatio="none" aria-label="シミュレーション結果">
-                  {overlay.wires.map((w, i) => (
-                    <line
-                      key={i}
-                      x1={w.x1} y1={w.y1} x2={w.x2} y2={w.y2}
-                      stroke={w.live ? '#e11d48' : '#94a3b8'}
-                      strokeOpacity={w.live ? 0.9 : 0.5}
-                      strokeWidth={w.live ? 3 : 1.5}
-                      vectorEffect="non-scaling-stroke"
-                    />
-                  ))}
-                  {overlay.coils.map((c) => (
-                    <rect
-                      key={c.symbol_ref}
-                      x={c.cx - c.w / 2} y={c.cy - c.h / 2} width={c.w} height={c.h}
-                      fill={c.energized ? '#fb7185' : 'none'} fillOpacity={0.45}
-                      stroke={c.energized ? '#e11d48' : '#94a3b8'} strokeWidth={2} vectorEffect="non-scaling-stroke"
-                    />
-                  ))}
-                  {overlay.contacts.map((c) => (
-                    <rect
-                      key={c.symbol_ref}
-                      x={c.cx - c.w / 2} y={c.cy - c.h / 2} width={c.w} height={c.h}
-                      fill="none"
-                      stroke={c.closed ? '#10b981' : '#94a3b8'}
-                      strokeDasharray={c.closed ? undefined : '4 3'}
-                      strokeWidth={2}
-                      vectorEffect="non-scaling-stroke"
-                    >
-                      <title>{`${c.device}（${c.kind} 接点）: ${c.closed ? '閉' : '開'}`}</title>
-                    </rect>
-                  ))}
-                </svg>
-              </div>
-            )}
-            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-slate-100 px-3 py-2 text-[11px] text-slate-500">
-              <span><span className="mr-1 inline-block h-0.5 w-4 bg-rose-500 align-middle" />電圧あり</span>
-              <span><span className="mr-1 inline-block h-0.5 w-4 bg-slate-400/60 align-middle" />電圧なし</span>
-              <span><span className="mr-1 inline-block h-2.5 w-2.5 border-2 border-emerald-500 align-middle" />閉じた接点</span>
-              <span><span className="mr-1 inline-block h-2.5 w-2.5 border-2 border-dashed border-slate-400 align-middle" />開いた接点</span>
-              <span><span className="mr-1 inline-block h-2.5 w-2.5 bg-rose-400/60 align-middle" />励磁したコイル</span>
-            </div>
-          </section>
-
-          <div className="min-w-0">
-            <div className="card mb-3 grid gap-1 p-1" style={{ gridTemplateColumns: `repeat(${tabs.length}, minmax(0, 1fr))` }} role="tablist" aria-label="確かめる道具">
-              {tabs.map((t) => {
-                const Icon = t.icon
-                const active = t.key === activeTab?.key
-                return (
-                  <button
-                    key={t.key}
-                    type="button"
-                    role="tab"
-                    id={`circuit-tab-${t.key}`}
-                    aria-selected={active}
-                    aria-controls="circuit-tool-panel"
-                    className={`relative flex min-h-14 flex-col items-center justify-center gap-1 rounded-xl px-1 text-[11px] font-bold leading-tight transition ${
-                      active ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-600 hover:bg-slate-100'
-                    }`}
-                    onClick={() => setTab(t.key)}
-                  >
-                    <Icon size={16} />
-                    <span className="text-center">{t.label}</span>
-                    {t.badge ? (
-                      <span className={`absolute right-1 top-1 min-w-4 rounded-full px-1 text-[9px] leading-4 ${
-                        active ? 'bg-white text-blue-700' : t.tone === 'warn' ? 'bg-amber-500 text-white' : 'bg-slate-500 text-white'
-                      }`}>
-                        {t.badge}
-                      </span>
-                    ) : null}
-                  </button>
-                )
-              })}
-            </div>
-            {activeTab && (
-              <div
-                id="circuit-tool-panel"
-                role="tabpanel"
-                aria-labelledby={`circuit-tab-${activeTab.key}`}
-                className="[&_section.card]:mt-0"
-              >
-                <p className="mb-3 px-1 text-[11px] leading-5 text-slate-500">{activeTab.caption}</p>
-                {activeTab.render()}
-              </div>
-            )}
+  if (!summary) {
+    return (
+      <div className="page-shell enter-up">
+        <header className="page-header">
+          <div>
+            <div className="eyebrow">Circuit simulation</div>
+            <h1 className="page-title">回路の <span className="title-accent">確認・もしも</span></h1>
+            <p className="page-description">
+              図面のアノテーション（記号・端子・配線）から回路を組み、入力の On/Off でどのリレーが動くか、
+              機器を変えたらどこまで影響するかを図面の上で確かめます。
+            </p>
           </div>
+          <ol className="flex flex-wrap items-center gap-1.5 text-xs" aria-label="進め方">
+            {STEPS.map((label, i) => (
+              <li
+                key={label}
+                aria-current={i === step ? 'step' : undefined}
+                className={`flex items-center gap-1.5 rounded-full border py-1 pl-1 pr-2.5 font-semibold ${
+                  i === step ? 'border-blue-300 bg-blue-50 text-blue-800' : 'border-slate-200 bg-white text-slate-400'
+                }`}
+              >
+                <span className={`flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold ${
+                  i <= step ? 'bg-blue-600 text-white' : 'bg-slate-200 text-slate-500'
+                }`}>
+                  {i + 1}
+                </span>
+                {label}
+              </li>
+            ))}
+          </ol>
+        </header>
+        {error && <div className="notice mb-5 border-rose-200 bg-rose-50 text-rose-700" role="alert">{error}</div>}
+        {selector}
+      </div>
+    )
+  }
+
+  // 右上のボタン列（約 56px）とパネルの間・外側の余白を足した幅を、全体表示から除く
+  const insets = { top: 120, right: overlayPanel ? (panelOpen ? PANEL_WIDTH + 80 : 72) : 0 }
+
+  return (
+    <div className={`flex flex-col gap-3 p-3 sm:p-4 ${wide ? 'h-dvh' : ''}`}>
+      <section className="card flex flex-wrap items-center gap-2 px-3 py-2" aria-label="対象の図面">
+        <h1 className="mr-1 flex items-center gap-1.5 text-sm font-black text-slate-900">
+          <Zap size={15} className="text-rose-600" /> 回路の確認・もしも
+        </h1>
+        <span className="hidden h-5 w-px bg-slate-200 sm:block" />
+        <span className="text-[11px] font-bold text-slate-500">対象の図面</span>
+        <div className="flex min-w-0 flex-1 flex-wrap gap-1.5">
+          {summary.pages.map((p) => (
+            <span key={p.id} className="rounded-lg bg-slate-100 px-2 py-0.5 text-xs font-bold text-slate-700">{p.name}</span>
+          ))}
+        </div>
+        <span className="text-[11px] text-slate-500">記号 {summary.element_count} · 節点 {summary.node_count}</span>
+        {issueCount > 0 && (
+          <button
+            type="button"
+            className="inline-flex items-center gap-1 rounded-full border border-amber-300 bg-amber-50 px-2.5 py-1 text-[11px] font-bold text-amber-800 hover:bg-amber-100"
+            onClick={() => openTab('check')}
+            title="回路にできなかった箇所があります。結果に影響することがあります。"
+          >
+            <AlertTriangle size={12} /> 回路にできなかった箇所 {issueCount} 件
+          </button>
+        )}
+        <button type="button" className="btn btn-sm" onClick={() => setChoosing((v) => !v)}>
+          図面を選び直す
+        </button>
+        <button type="button" className="btn btn-sm" onClick={rebuild} disabled={busy} title="エディタで直した内容を読み込み直します">
+          {busy ? <Loader2 size={12} className="animate-spin" /> : <RotateCcw size={12} />} 組み直す
+        </button>
+      </section>
+
+      {error && <div className="notice border-rose-200 bg-rose-50 text-rose-700" role="alert">{error}</div>}
+      {choosing && selector}
+
+      <section
+        aria-label="図面上の結果"
+        className={
+          fullscreen
+            ? 'fixed inset-0 z-[60] bg-slate-100'
+            : `relative overflow-hidden rounded-2xl border border-slate-200 bg-slate-100 ${wide ? 'min-h-[520px] flex-1' : 'h-[72dvh] min-h-[420px]'}`
+        }
+      >
+        {row ? (
+          <DrawingViewer
+            imageUrl={api.imageUrl(row.id)}
+            alt={sheetName(row)}
+            width={row.image_width}
+            height={row.image_height}
+            overlay={overlay}
+            inputs={inputs}
+            inputDevices={inputDevices}
+            onToggleInput={toggle}
+            disabled={busy}
+            insets={insets}
+          >
+            <div data-overlay-ui className="absolute left-3 top-3 flex flex-col gap-2" style={{ maxWidth: `calc(100% - ${Math.max(insets.right, 64) + 24}px)` }}>
+              <div className="flex flex-wrap items-center gap-1.5 rounded-xl border border-white/70 bg-white/90 p-1.5 shadow-lg shadow-slate-900/10 backdrop-blur">
+                <div className="flex flex-wrap gap-1" role="tablist" aria-label="図面のページ">
+                  {summary.pages.map((p) => (
+                    <button
+                      key={p.id}
+                      type="button"
+                      role="tab"
+                      aria-selected={page === p.id}
+                      className={`rounded-lg px-2.5 py-1.5 text-xs font-bold transition ${page === p.id ? 'bg-blue-600 text-white' : 'text-slate-600 hover:bg-slate-100'}`}
+                      onClick={() => setPage(p.id)}
+                    >
+                      {p.name}
+                    </button>
+                  ))}
+                </div>
+                <span className="mx-1 h-5 w-px bg-slate-200" />
+                <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-bold text-emerald-700">入力 ON {onCount}</span>
+                <span className="rounded-full bg-rose-50 px-2 py-0.5 text-[11px] font-bold text-rose-700">励磁 {energizedCount} / {summary.coils.length}</span>
+                {busy && <Loader2 size={13} className="animate-spin text-slate-400" aria-label="計算中" />}
+              </div>
+              {result?.warnings.map((w) => (
+                <p key={w} className="flex gap-1.5 rounded-xl border border-rose-200 bg-rose-50/95 px-3 py-1.5 text-[11px] font-bold text-rose-700 shadow-sm">
+                  <AlertTriangle size={13} className="flex-none" /> {w}
+                </p>
+              ))}
+              <div className="hidden flex-wrap items-center gap-x-3 gap-y-1 self-start rounded-xl sm:flex border border-white/70 bg-white/85 px-2.5 py-1 text-[10px] text-slate-500 shadow-sm backdrop-blur">
+                <span><span className="mr-1 inline-block h-0.5 w-4 bg-rose-500 align-middle" />電圧あり</span>
+                <span><span className="mr-1 inline-block h-2.5 w-2.5 border-2 border-emerald-500 align-middle" />閉じた接点</span>
+                <span><span className="mr-1 inline-block h-2.5 w-2.5 border-2 border-dashed border-slate-400 align-middle" />開いた接点</span>
+                <span><span className="mr-1 inline-block h-2.5 w-2.5 bg-rose-400/60 align-middle" />励磁したコイル</span>
+                {inputDevices.size > 0 && <span><span className="mr-1 inline-block h-2.5 w-2.5 border-2 border-sky-500 bg-sky-500/20 align-middle" />入力（クリックで ON / OFF）</span>}
+              </div>
+            </div>
+
+            <div data-overlay-ui className="pointer-events-none absolute bottom-3 right-3 top-3 flex items-start gap-2 [&>*]:pointer-events-auto">
+              {overlayPanel && panelOpen && activeTab && (
+                <div
+                  className="flex max-h-full flex-col overflow-hidden rounded-2xl border border-white/70 bg-white/95 shadow-2xl shadow-slate-900/20 backdrop-blur"
+                  style={{ width: PANEL_WIDTH }}
+                >
+                  <div className="flex items-center gap-2 border-b border-slate-100 p-1.5">
+                    <div className="min-w-0 flex-1">{tabBar(false)}</div>
+                  </div>
+                  <div className="thin-scroll min-h-0 flex-1 overflow-auto p-3">{toolContent}</div>
+                </div>
+              )}
+              <div className="flex flex-col gap-1 rounded-2xl border border-white/70 bg-white/90 p-1 shadow-lg shadow-slate-900/10 backdrop-blur">
+                <button
+                  type="button"
+                  className="icon-button h-11 w-11 text-slate-600 hover:bg-slate-100"
+                  onClick={() => setFullscreen((v) => !v)}
+                  aria-label={fullscreen ? '全画面を終える' : '図面を全画面で見る'}
+                  title={fullscreen ? '全画面を終える（Esc）' : '図面を全画面で見る'}
+                >
+                  {fullscreen ? <Minimize2 size={17} /> : <Expand size={17} />}
+                </button>
+                {overlayPanel && (
+                  <>
+                    <button
+                      type="button"
+                      className="icon-button h-11 w-11 text-slate-600 hover:bg-slate-100"
+                      onClick={() => setPanelOpen((v) => !v)}
+                      aria-label={panelOpen ? '道具のパネルを閉じる' : '道具のパネルを開く'}
+                      title={panelOpen ? '道具のパネルを閉じて図面を広く見る' : '道具のパネルを開く'}
+                    >
+                      {panelOpen ? <PanelRightClose size={17} /> : <PanelRightOpen size={17} />}
+                    </button>
+                    {!panelOpen && (
+                      <>
+                        <span className="mx-2 h-px bg-slate-200" />
+                        {tabBar(true)}
+                      </>
+                    )}
+                  </>
+                )}
+              </div>
+            </div>
+          </DrawingViewer>
+        ) : (
+          <div className="flex h-full items-center justify-center text-xs text-slate-500">図面を読み込んでいます…</div>
+        )}
+      </section>
+
+      {!overlayPanel && (
+        <div className="min-w-0">
+          <div className="card mb-3 p-1">{tabBar(false)}</div>
+          {toolContent}
         </div>
       )}
     </div>
