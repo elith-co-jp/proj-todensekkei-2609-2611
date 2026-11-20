@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, Response
@@ -40,6 +39,7 @@ from services.annotation_service import (
     store_image_bytes,
 )
 from services.export_service import import_zip, write_export_zip
+from services.jst import file_stamp_jst, iso_jst
 from services.page_orientation import upright_page
 from services.pdf_service import render_pdf_pages
 from services.sheet_number_service import suggest_sheet_numbers
@@ -49,7 +49,7 @@ _logger = logging.getLogger(__name__)
 
 
 def _stamp() -> str:
-    return datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
+    return file_stamp_jst()
 
 
 def _collect(db: Session, ids: list[int]) -> list[AnnotationProject]:
@@ -215,7 +215,7 @@ def list_projects(q: str | None = Query(default=None), db: Session = Depends(get
                 "prediction_count": prediction_counts.get(p.id, 0),
                 "analysis_wire_count": analysis_wire_count,
                 "analysis_connection_count": analysis_connection_count,
-                "updated_at": p.updated_at.isoformat() if p.updated_at else None,
+                "updated_at": iso_jst(p.updated_at),
             }
         )
     return out

@@ -124,7 +124,7 @@ from-to を Union-Find で連結し、導通する端子集合（ネット）に
 {
   "schema_version": "1.0",
   "tool": "seq-annotator",
-  "exported_at": "2026-08-04T22:51:38+00:00",
+  "exported_at": "2026-08-05T07:51:38+09:00",
   "classes": [
     { "key": "relay_coil", "label": "リレーコイル", "yolo_index": 0,
       "color": "#0055a4", "sort_order": 0, "is_active": true }
