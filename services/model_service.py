@@ -16,6 +16,7 @@ from database import MODEL_DIR
 from models import MlModel
 from runtime import is_frozen, resource_base
 from services.blob_store import store_blob
+from services.jst import iso_jst
 
 MAX_MODEL_BYTES = 1024 * 1024 * 1024  # 1 GiB
 BUNDLED_MODEL_NAME = "yolo11s_symbols_best.pt"
@@ -125,7 +126,7 @@ def serialize_model(m: MlModel) -> dict:
         "is_active": bool(m.is_active),
         "metrics": metrics,
         "note": m.note,
-        "created_at": m.created_at.isoformat() if m.created_at else None,
+        "created_at": iso_jst(m.created_at),
     }
 
 

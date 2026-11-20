@@ -12,14 +12,13 @@ import sys
 import threading
 import uuid
 import zipfile
-from datetime import datetime, UTC
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta, timezone
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote, unquote, urlparse
-
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
 STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -51,8 +50,12 @@ class RequestError(Exception):
         self.detail = detail
 
 
-def utc_now() -> str:
-    return datetime.now(UTC).isoformat(timespec="seconds")
+# 画面に出す時刻は日本時間（DD-0036）。日本は夏時間がないので固定の +9 時間。
+JST = timezone(timedelta(hours=9), "JST")
+
+
+def jst_now() -> str:
+    return datetime.now(JST).isoformat(timespec="seconds")
 
 
 def read_json(path: Path, default: Any) -> Any:
@@ -89,7 +92,7 @@ def read_state(job_id: str) -> dict[str, Any]:
 def update_state(job_id: str, **changes: Any) -> dict[str, Any]:
     state = read_state(job_id)
     state.update(changes)
-    state["updated_at"] = utc_now()
+    state["updated_at"] = jst_now()
     write_json(state_path(job_id), state)
     return state
 
@@ -260,7 +263,7 @@ def discover_models() -> list[dict[str, Any]]:
                     "path": str(path),
                     "name": path.name,
                     "size_mb": round(stat.st_size / 1024 / 1024, 2),
-                    "modified_at": datetime.fromtimestamp(stat.st_mtime, UTC).isoformat(timespec="seconds"),
+                    "modified_at": datetime.fromtimestamp(stat.st_mtime, JST).isoformat(timespec="seconds"),
                 }
             )
     return sorted(candidates, key=lambda item: item["modified_at"], reverse=True)[:30]
@@ -274,7 +277,16 @@ def list_job_states() -> list[dict[str, Any]]:
         state = read_json(path, None)
         if isinstance(state, dict):
             states.append(state)
-    return sorted(states, key=lambda item: item.get("created_at", ""), reverse=True)
+    return sorted(states, key=_created_key, reverse=True)
+
+
+def _created_key(state: dict[str, Any]) -> datetime:
+    # 以前のジョブは UTC（+00:00）、今は日本時間（+09:00）で記録されるため、文字列ではなく時刻として並べる。
+    try:
+        value = datetime.fromisoformat(str(state.get("created_at") or ""))
+    except ValueError:
+        return datetime.min.replace(tzinfo=JST)
+    return value if value.tzinfo else value.replace(tzinfo=UTC)
 
 
 def make_file_url(job_id: str, path_value: str | None) -> str | None:
@@ -518,10 +530,10 @@ def create_demo_job() -> dict[str, Any]:
     state = {
         "id": job_id,
         "status": "completed",
-        "created_at": utc_now(),
-        "updated_at": utc_now(),
-        "started_at": utc_now(),
-        "ended_at": utc_now(),
+        "created_at": jst_now(),
+        "updated_at": jst_now(),
+        "started_at": jst_now(),
+        "ended_at": jst_now(),
         "return_code": 0,
         "input": {
             "pdf": str(pdf_path),
@@ -563,7 +575,7 @@ def run_job(job_id: str, command: list[str], env_updates: dict[str, str]) -> Non
     env = os.environ.copy()
     env.update(env_updates)
     env["PYTHONUNBUFFERED"] = "1"
-    update_state(job_id, status="running", started_at=utc_now(), return_code=None)
+    update_state(job_id, status="running", started_at=jst_now(), return_code=None)
     try:
         with log_path.open("a", encoding="utf-8", errors="replace") as log:
             log.write(f"$ {command_preview(command)}\n\n")
@@ -589,7 +601,7 @@ def run_job(job_id: str, command: list[str], env_updates: dict[str, str]) -> Non
         update_state(
             job_id,
             status=status,
-            ended_at=utc_now(),
+            ended_at=jst_now(),
             return_code=return_code,
             outputs=collect_outputs(job_id) if return_code == 0 else None,
         )
@@ -598,7 +610,7 @@ def run_job(job_id: str, command: list[str], env_updates: dict[str, str]) -> Non
             _processes.pop(job_id, None)
         with log_path.open("a", encoding="utf-8", errors="replace") as log:
             log.write(f"\n[analysis-ui] failed: {caught}\n")
-        update_state(job_id, status="failed", ended_at=utc_now(), error=str(caught))
+        update_state(job_id, status="failed", ended_at=jst_now(), error=str(caught))
 
 
 def expand_page_numbers(specs: list[str]) -> list[int]:
@@ -812,8 +824,8 @@ def create_job(form: dict[str, list[FormField]]) -> dict[str, Any]:
     state = {
         "id": job_id,
         "status": "queued",
-        "created_at": utc_now(),
-        "updated_at": utc_now(),
+        "created_at": jst_now(),
+        "updated_at": jst_now(),
         "started_at": None,
         "ended_at": None,
         "return_code": None,

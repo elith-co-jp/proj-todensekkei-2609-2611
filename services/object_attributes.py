@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import json
 from collections import Counter
-from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -16,6 +15,7 @@ from sqlalchemy.orm import Session
 from models import AnnotationProject, AnnotationSymbol, Connection
 from services.annotation_service import WITH_ANNOTATIONS, dump_attributes, load_attributes, serialize_project
 from services.attribute_definitions import WIRE, all_definitions, symbol_definitions
+from services.jst import now_iso_jst
 
 SCHEMA = "todenyolo.object_attributes.v1"
 
@@ -62,7 +62,7 @@ def export_document(db: Session, project_ids: list[int], template: bool = False)
             })
     return {
         "schema": SCHEMA,
-        "generated_at": datetime.now(UTC).replace(microsecond=0).isoformat(),
+        "generated_at": now_iso_jst(),
         "template": template,
         "attribute_definitions": all_definitions(),
         "projects": [{"project_id": p.id, "key": keys[p.id], "sheet_no": p.sheet_no, "name": p.name} for p in projects],
