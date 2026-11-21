@@ -155,8 +155,25 @@ def x_mark(binary: np.ndarray, box: dict[str, float]) -> bool:
     return diagonal >= X_MIN_COVER and _wedge_ink(binary, cx, cy, r) <= X_MAX_WEDGE
 
 
+# 色記号の読み違い（OL8 → 0L8、RL5 → RLS）。先頭の 0 は O、L の後ろの番号の英字は形の似た数字に直して照らす。
+_DIGIT_LOOKALIKE = str.maketrans({"O": "0", "D": "0", "S": "5", "I": "1", "Z": "2", "B": "8"})
+
+
+def _lamp_token(token: str) -> str:
+    if len(token) >= 2 and token[1] == "L" and token[0] == "0":
+        token = "O" + token[1:]
+    if len(token) > 2 and token[1] == "L":
+        token = token[:2] + token[2:].translate(_DIGIT_LOOKALIKE)
+    return token
+
+
 def _lamp_words(text: str) -> list[str]:
-    return [token for token in normalize(text).split() if _LAMP_WORD.fullmatch(token)]
+    words = []
+    for token in normalize(text).split():
+        fixed = _lamp_token(token)
+        if _LAMP_WORD.fullmatch(token) or _LAMP_WORD.fullmatch(fixed):
+            words.append(fixed if _LAMP_WORD.fullmatch(fixed) else token)
+    return words
 
 
 def _nearby_texts(symbol: dict[str, Any], texts: list[dict[str, Any]]) -> tuple[str, ...]:

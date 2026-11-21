@@ -72,3 +72,17 @@ def test_cli_writes_report(tmp_path):
     report = json.loads((tmp_path / "out/reading_metrics.json").read_text(encoding="utf-8"))
     assert report["summary"]["wires"]["recall"] == 1.0 and report["leakage"]
     assert "誤結線" in (tmp_path / "out/reading_metrics.md").read_text(encoding="utf-8")
+
+
+def test_relay_coil_and_lamp_confusions_are_counted():
+    # #39（DD-0043）: 表示灯の正解が届いたら、この件数でリレーコイルとの取り違えを測る。
+    gold = _gold()
+    lamps = sum(s["class_key"] == "lamp" for p in gold for s in p["symbols"])
+    page_index, coil = next((i, s) for i, p in enumerate(gold) for s in p["symbols"] if s["class_key"] == "relay_coil")
+    coil["class_key"] = "lamp"                                         # 正解に表示灯を 1 つ足す
+    pred = copy.deepcopy(gold)
+    next(s for s in pred[page_index]["symbols"] if s["ref"] == coil["ref"])["class_key"] = "relay_coil"
+    s = rm.score(gold, pred)["summary"]
+    assert s["circles"]["gold"]["lamp"] == lamps + 1
+    assert s["circles"]["errors"] == 1 and s["circles"]["confusion"] == {"lamp->relay_coil": 1}
+    assert rm.score(gold, copy.deepcopy(gold))["summary"]["circles"]["errors"] == 0
