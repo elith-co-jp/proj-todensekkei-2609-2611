@@ -144,6 +144,10 @@ Windows 用 exe は必ず Windows 上でビルドしてください（spec: `seq
 アップロードに失敗した場合、ワークフローも失敗します。
 アップロード前に凍結 EXE を起動し、内蔵モデルからの短い学習と学習済みモデルによる
 推論を検証します。手動実行で `publish=false` を選ぶと、配布せずにビルド検証できます。
+手動実行で `layout=onedir` を選ぶと、1 ファイルの EXE の代わりにフォルダ形式（`TodenYOLO\TodenYOLO.exe` と
+`_internal\`）を ZIP（`TodenYOLO-folder.zip`）にして配ります。1 ファイルの EXE は起動のたびに約 900 MB を一時フォルダへ
+展開するため起動に 10〜13 秒かかりますが、フォルダ形式は 1.5〜2 秒で起動します（DD-0040。ZIP を展開したフォルダごと置き、
+中の `TodenYOLO.exe` を起動する。データの `data\` はその EXE と同じフォルダに作られます）。
 
 **初回セットアップ**（Google Drive へのアップロードを有効にするには）:
 
@@ -170,7 +174,7 @@ python desktop.py
 
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
+pip install -r requirements.txt -r requirements-dev.txt -c constraints.txt
 uvicorn main:app --reload --port 8010      # API: http://localhost:8010
 
 cd frontend && npm install && npm run dev  # UI:  http://localhost:5173
@@ -247,8 +251,15 @@ yolo detect train data=data.yaml model=yolo11s.pt epochs=100 imgsz=1280
 
 ## テスト
 
+PR と main への push ごとに `.github/workflows/ci.yml` が pytest・ruff・画面の型検査とテストを回します。
+依存の版は `constraints.txt` で固定しています（更新するときはファイル先頭のコマンドで作り直し、CI が通ることを確かめる）。
+
 ```bash
+pip install -r requirements.txt -r requirements-dev.txt -c constraints.txt
+make test                # 下の 4 つをまとめて実行
+make eval                # 合成回路・合成図面での評価。基準値より悪くなれば失敗（DD-0038。CI では --quick）
 python3 -m pytest        # API・PDF 分割・YOLO 形式・往復復元・セキュリティ
+ruff check .
 cd frontend && npm test        # UIの純粋ロジック
 cd frontend && npm run build   # 型チェック込み
 docker compose config --quiet  # Compose 設定検証

@@ -1,4 +1,5 @@
-fastapi>=0.115
+# 0.120 以降は TestClient が httpx 以外のパッケージを要求し、テストが起動しない（2026-11-21 確認）
+fastapi>=0.115,<0.120
 uvicorn[standard]>=0.30
 sqlalchemy>=2.0
 pydantic>=2.7

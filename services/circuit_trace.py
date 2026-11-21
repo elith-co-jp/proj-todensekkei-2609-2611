@@ -151,14 +151,23 @@ class Branch:
 def _adjacency(circuit: Circuit) -> dict[str, list[tuple[Element, str]]]:
     adj: dict[str, list[tuple[Element, str]]] = defaultdict(list)
     for e in circuit.elements:
-        if e.kind in ("a", "b") and e.a != e.b:
+        if e.kind in ("a", "b", "d") and e.a != e.b:
             adj[e.a].append((e, e.b))
             adj[e.b].append((e, e.a))
     return adj
 
 
-def _walks(adj: dict[str, list[tuple[Element, str]]], start: str, goal, limit: int):
-    """start から接点だけを通って goal(node) に着く単純な経路。母線（P・0）は終点にしかならない。"""
+def _passes(e: Element, node: str, nxt: str, upstream: bool) -> bool:
+    """ダイオードを node → nxt の向きにたどれるか（DD-0037）。電流は アノード（a）→ カソード（b）に流れる。
+    upstream は負荷から電源へ電流と逆向きにたどる場合。向きの分からないダイオードはどちら向きにもたどれる。"""
+    if e.kind != "d" or not e.directed:
+        return True
+    return (node, nxt) == ((e.b, e.a) if upstream else (e.a, e.b))
+
+
+def _walks(adj: dict[str, list[tuple[Element, str]]], start: str, goal, limit: int, *, upstream: bool = False):
+    """start から接点（とダイオード）だけを通って goal(node) に着く単純な経路。母線（P・0）は終点にしかならない。
+    ダイオードは条件の変数にならないので経路の素子には入れず、向きだけを守る。"""
     out: list[tuple[list[Element], list[str]]] = []
     if goal(start):
         return [([], [start])], False
@@ -167,14 +176,15 @@ def _walks(adj: dict[str, list[tuple[Element, str]]], start: str, goal, limit: i
     while stack:
         node, elems, nodes = stack.pop()
         for e, nxt in adj.get(node, []):
-            if nxt in nodes or any(x is e for x in elems):
+            if nxt in nodes or any(x is e for x in elems) or not _passes(e, node, nxt, upstream):
                 continue
+            path = elems if e.kind == "d" else elems + [e]
             if goal(nxt):
-                out.append((elems + [e], nodes + [nxt]))
+                out.append((path, nodes + [nxt]))
                 if len(out) >= limit:
                     return out, True
             elif not _is_bus(nxt):
-                stack.append((nxt, elems + [e], nodes + [nxt]))
+                stack.append((nxt, path, nodes + [nxt]))
     return out, truncated
 
 
@@ -185,7 +195,7 @@ def branches(circuit: Circuit, load: Element, *, limit: int = MAX_BRANCHES,
     found: dict[tuple[str, ...], Branch] = {}
     truncated = False
     for top, bottom in ((load.a, load.b), (load.b, load.a)):
-        ups, t1 = _walks(adj, top, _is_supply, limit)
+        ups, t1 = _walks(adj, top, _is_supply, limit, upstream=True)
         downs, t2 = _walks(adj, bottom, lambda n: n == GROUND, limit)
         truncated |= t1 or t2
         for up_elems, up_nodes in ups:

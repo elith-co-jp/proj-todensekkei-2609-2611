@@ -28,7 +28,16 @@ from services import sheet_links
 
 PASS_CLASSES = classes.PASS_THROUGH
 CONTACT_CLASSES = {"contact_a": "a", "contact_b": "b"}
-LOAD_CLASSES = frozenset({"relay_coil", "solenoid", "lamp", "diode"})
+LOAD_CLASSES = frozenset({"relay_coil", "solenoid", "lamp"})
+# 押しボタンは外部入力の接点（DD-0037）。a / b は属性 contact_kind、無ければ名前（停止は b、起動は a）、決まらなければ a。
+INPUT_CLASSES = frozenset({"push_button"})
+# ダイオードは向きのある導線（DD-0037）。アノード側の端子が分かれば逆向きには流さない。分からなければ両向きに流す。
+DIODE_CLASSES = frozenset({"diode"})
+ANODE_NAMES = frozenset({"A", "+", "ANODE", "アノード"})
+CATHODE_NAMES = frozenset({"K", "-", "CATHODE", "カソード"})
+# ダイオードの順方向・逆方向を決め直す回数の上限と、向きを決める電圧のしきい値。
+MAX_DIODE_STEPS = 20
+DIODE_EPS_V = 1e-6
 SUPPLY_V = 110.0
 R_ON, R_OFF = 0.01, 1e9
 R_LOAD = 1000.0
@@ -50,7 +59,9 @@ ELEMENT_LINK_MIN_PX = 30.0
 PASS_NODE_TERMINAL = "@node"
 ELEMENT_LINK_ALIGN_PX = 6.0
 
-Key = tuple[int, str, str]  # (図面 ID, 記号 ref, 端子 ref)
+Key = tuple[int, str, str]
+# ネットリストで閉 R_ON / 開 R_OFF の抵抗にする素子（接点とダイオード）
+SWITCH_KINDS = ("a", "b", "d")  # (図面 ID, 記号 ref, 端子 ref)
 
 
 @dataclass
@@ -65,6 +76,7 @@ class Element:
     device: str | None = None   # コイル・接点の器具番号（開閉の対応づけ）
     resistance: float = R_LOAD  # 負荷の抵抗。属性 coil_resistance_ohm / resistance_ohm があればその値（DD-0010）
     instant: bool = False       # タイマーの瞬時接点（属性 timer_contact = instant。DD-0033）
+    directed: bool = False      # ダイオードの向きが分かっている（a がアノード、b がカソード。DD-0037）
 
 
 @dataclass
@@ -165,6 +177,34 @@ def joins_inside_symbol(symbol: dict[str, Any], from_ref: str | None, to_ref: st
 def _is_pass(symbol: dict[str, Any]) -> bool:
     """端子をすべて同じ点として扱う記号: 分岐点・端子・コネクタ・母線端と、行先札・来先札（DD-0030）。"""
     return symbol["class_key"] in PASS_CLASSES or sheet_links.sheet_tag_target(symbol) is not None
+
+
+def _contact_kind(cls: str, symbol: dict[str, Any]) -> str | None:
+    """接点の種類（"a" / "b"）。押しボタンは属性 contact_kind、名前の取り決め、既定の a の順で決める（DD-0037）。"""
+    if cls in CONTACT_CLASSES:
+        return CONTACT_CLASSES[cls]
+    if cls not in INPUT_CLASSES:
+        return None
+    given = str((symbol.get("attributes") or {}).get("contact_kind") or "").strip().lower().removeprefix("contact_")
+    if given in ("a", "b"):
+        return given
+    from services.consistency import input_kind_by_name  # consistency が circuit_model を読むので、ここで読む
+
+    return input_kind_by_name(symbol.get("label") or "") or "a"
+
+
+def _diode_anode(symbol: dict[str, Any], terms: list[dict[str, Any]]) -> int | None:
+    """アノード側の端子の番号（0 / 1）。属性 anode_terminal（端子名か ref）か、端子名（A・K・+・- など）で決める。"""
+    names = [str(t.get("name") or "").strip().upper() for t in terms]
+    given = str((symbol.get("attributes") or {}).get("anode_terminal") or "").strip()
+    if given:
+        for i, t in enumerate(terms):
+            if given.upper() in (names[i], str(t.get("ref") or "").upper()):
+                return i
+    for i in (0, 1):
+        if names[i] in ANODE_NAMES or names[1 - i] in CATHODE_NAMES:
+            return i
+    return None
 
 
 def build_circuit(pages: list[dict[str, Any]], bus_texts: dict[int, list[dict[str, Any]]] | None = None) -> Circuit:
@@ -318,7 +358,7 @@ def build_circuit(pages: list[dict[str, Any]], bus_texts: dict[int, list[dict[st
     coil_by_canonical: dict[str, str] = {}
     for (pid, ref), s in sorted(symbols.items(), key=lambda kv: (kv[0][0], kv[0][1])):
         cls, terms = s["class_key"], s.get("terminals") or []
-        kind = CONTACT_CLASSES.get(cls) or ("load" if cls in LOAD_CLASSES else None)
+        kind = _contact_kind(cls, s) or ("load" if cls in LOAD_CLASSES else "d" if cls in DIODE_CLASSES else None)
         if kind is None:
             continue
         if len(terms) != 2:
@@ -326,9 +366,21 @@ def build_circuit(pages: list[dict[str, Any]], bus_texts: dict[int, list[dict[st
                                 "message": f"{s.get('class_label') or cls}の端子が {len(terms)} 個のため回路に含めません（2 個必要）"})
             continue
         a, b = node_of[(pid, ref, terms[0]["ref"])], node_of[(pid, ref, terms[1]["ref"])]
-        element = Element(f"{'SW' if kind in ('a', 'b') else 'R'}_{pid}_{_spice_name(ref)}", kind, a, b, pid, ref,
-                          s.get("label") or "", device_key(s.get("label")) if cls in CONTACT_CLASSES or cls == "relay_coil" else None,
+        anode = _diode_anode(s, terms) if kind == "d" else None
+        if anode == 1:
+            a, b = b, a
+        prefix = "SW" if kind in ("a", "b") else "D" if kind == "d" else "R"
+        is_switch = cls in CONTACT_CLASSES or cls in INPUT_CLASSES or cls == "relay_coil"
+        element = Element(f"{prefix}_{pid}_{_spice_name(ref)}", kind, a, b, pid, ref,
+                          s.get("label") or "", device_key(s.get("label")) if is_switch else None,
                           _load_resistance(s.get("attributes") or {}))
+        element.directed = anode is not None
+        if kind == "d" and anode is None:
+            diagnostics.append({"kind": "diode_direction_unknown", "project_id": pid, "symbol_ref": ref, "label": s.get("label"),
+                                "message": "ダイオードの向き（アノード側の端子）が分からないため、両向きに流れる導線として扱います"})
+        if cls in INPUT_CLASSES:
+            diagnostics.append({"kind": "push_button_input", "project_id": pid, "symbol_ref": ref, "label": s.get("label"),
+                                "message": f"押しボタンを外部入力の{kind}接点にしました"})
         element.instant = str((s.get("attributes") or {}).get("timer_contact") or "").strip() in ("instant", "瞬時")
         elements.append(element)
         if cls == "relay_coil" and element.device:
@@ -378,8 +430,8 @@ def netlist(circuit: Circuit, closed: dict[str, bool], title: str = "TodenYOLO c
     lines = [f"* {title}"] + [f"V_{_spice_name(n)} {_spice_name(n)} {GROUND} DC {SUPPLY_V:g}" for n in supplies]
     for e in circuit.elements:
         comment = f"* {e.label} ({e.project_id}:{e.symbol_ref})"
-        if e.kind in ("a", "b"):
-            # 開閉を決めた接点は抵抗にする（素子名の先頭の R が抵抗を表す）。
+        if e.kind in SWITCH_KINDS:
+            # 開閉を決めた接点・ダイオードは抵抗にする（素子名の先頭の R が抵抗を表す）。
             lines += [comment, f"R{e.name} {_spice_name(e.a)} {_spice_name(e.b)} {R_ON if closed.get(e.name) else R_OFF:g}"]
         else:
             lines += [comment, f"{e.name} {_spice_name(e.a)} {_spice_name(e.b)} {e.resistance:g}"]
@@ -489,7 +541,7 @@ class _MnaPlan:
             a, b = _spice_name(e.a), _spice_name(e.b)
             if not a or not b:
                 return None
-            if e.kind in ("a", "b"):
+            if e.kind in SWITCH_KINDS:
                 token = f"R{e.name}"
                 value: float | str = e.name  # 開閉で決まる。solve で R_ON / R_OFF にする
             else:
@@ -549,6 +601,14 @@ def _volt(volts: dict[str, float], node: str) -> float:
     return volts.get(_spice_name(node).lower(), 0.0)
 
 
+def _diode_conducts(e: Element, on: bool, volts: dict[str, float]) -> bool:
+    """向きの分かるダイオードは、閉なら逆向きに流れていないか、開なら順方向の電圧が掛かっているかで決める。"""
+    if not e.directed:
+        return True
+    forward = _volt(volts, e.a) - _volt(volts, e.b)
+    return forward > -DIODE_EPS_V if on else forward > DIODE_EPS_V
+
+
 def simulate(circuit: Circuit, inputs: dict[str, bool], energized: dict[str, bool] | None = None, *,
              forced_devices: dict[str, bool] | None = None, forced_contacts: dict[str, bool] | None = None,
              timer_outputs: dict[str, bool] | None = None) -> dict[str, Any]:
@@ -579,15 +639,30 @@ def simulate(circuit: Circuit, inputs: dict[str, bool], energized: dict[str, boo
 
     # ngspice が無ければ、ネットリストの文字を作らずに同じ計算で解く（_MnaPlan）。
     plan = None if ngspice_path() else _MnaPlan.build(circuit)
+    diodes = [e for e in circuit.elements if e.kind == "d"]
+    # ダイオードは閉（順方向）から始め、逆向きに流れたら開、開で順方向の電圧が掛かったら閉にし直す（DD-0037）。
+    diode_on = {e.name: forced_contacts.get(e.name, True) for e in diodes}
+
+    def solve_closed(closed: dict[str, bool]) -> tuple[dict[str, float], float, str]:
+        if plan is not None:
+            return (*plan.solve(closed), "builtin")
+        return solve(netlist(circuit, closed))
+
     steps = 0
     for steps in range(1, MAX_STEPS + 1):  # noqa: B007  回数を結果に出す
         closed = {e.name: forced_contacts.get(e.name, contact_on(e) == (e.kind == "a"))
                   for e in circuit.elements if e.kind in ("a", "b")}
-        if plan is not None:
-            volts, current = plan.solve(closed)
-            engine = "builtin"
+        for _ in range(MAX_DIODE_STEPS):
+            volts, current, engine = solve_closed(closed | diode_on)
+            # 断線・短絡を決めたダイオード（もしも。DD-0029）はその状態のまま。
+            new_diodes = {e.name: forced_contacts[e.name] if e.name in forced_contacts
+                          else _diode_conducts(e, diode_on[e.name], volts) for e in diodes}
+            if new_diodes == diode_on:
+                break
+            diode_on = new_diodes
         else:
-            volts, current, engine = solve(netlist(circuit, closed))
+            warnings.append("ダイオードの向きが落ち着きません（順方向・逆方向が決まらない回路の可能性）")
+        closed |= diode_on
         coil_v = {dev: max(abs(_volt(volts, e.a) - _volt(volts, e.b)) for e in es) for dev, es in circuit.coils.items()}
         new = {dev: bool(forced_devices[dev]) if dev in forced_devices else coil_v[dev] >= PICKUP_RATIO * SUPPLY_V
                for dev in circuit.coils}
@@ -612,6 +687,9 @@ def simulate(circuit: Circuit, inputs: dict[str, bool], energized: dict[str, boo
                    "energized": abs(_volt(volts, e.a) - _volt(volts, e.b)) >= PICKUP_RATIO * SUPPLY_V}
                   for e in circuit.elements if e.kind == "load"],
         "nodes": {n: round(_volt(volts, n), 2) for n in circuit.nodes},
+        # ダイオードが導通しているか（DD-0037）。向きが分からないものは常に導通。
+        "diodes": [{"project_id": e.project_id, "symbol_ref": e.symbol_ref, "label": e.label, "directed": e.directed,
+                    "conducting": closed[e.name]} for e in circuit.elements if e.kind == "d"],
         "netlist": netlist(circuit, closed),
     }
 
@@ -623,6 +701,8 @@ def export_netlist(circuit: Circuit, inputs: dict[str, bool] | None = None) -> s
         "* TodenYOLO: 図面のアノテーションから組んだ回路。外部入力の .param を 0/1 で切り替えて .op で解く",
         f".model SW_A SW(Ron={R_ON:g} Roff={R_OFF:g} Vt=0.5 Vh=0.1)",
         f".model SW_B SW(Ron={R_OFF:g} Roff={R_ON:g} Vt=0.5 Vh=0.1)",
+        # 順方向の電圧降下をほぼ 0 にした理想に近いダイオード（DD-0037）
+        ".model D_IDEAL D(Is=1e-12 N=0.05)",
         *[f"V_{_spice_name(n)} {_spice_name(n)} {GROUND} DC {SUPPLY_V:g}" for n in supplies],
     ]
     control: dict[str, str] = {}
@@ -641,6 +721,10 @@ def export_netlist(circuit: Circuit, inputs: dict[str, bool] | None = None) -> s
         lines.append(f"* {e.label} ({e.project_id}:{e.symbol_ref})")
         if e.kind in ("a", "b"):
             lines.append(f"S{e.name} {_spice_name(e.a)} {_spice_name(e.b)} {control[e.device]} 0 SW_{e.kind.upper()}")
+        elif e.kind == "d":
+            # 向きが分からないダイオードは両向きに流れる導線（閉じた接点と同じ抵抗）にする。
+            lines.append(f"{e.name} {_spice_name(e.a)} {_spice_name(e.b)} D_IDEAL" if e.directed
+                         else f"R{e.name} {_spice_name(e.a)} {_spice_name(e.b)} {R_ON:g}")
         else:
             lines.append(f"{e.name} {_spice_name(e.a)} {_spice_name(e.b)} {e.resistance:g}")
     lines += [f"R_LEAK_{_spice_name(n)} {_spice_name(n)} 0 {R_LEAK:g}" for n in circuit.nodes if n != GROUND]

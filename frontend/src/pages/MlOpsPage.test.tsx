@@ -4,7 +4,7 @@ import { cleanup, fireEvent, render, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { MemoryRouter } from 'react-router-dom'
 
-import type { MlModel, ProjectRow, TrainingRun } from '../types'
+import type { AnalysisJob, MlModel, ProjectRow, TrainingRun } from '../types'
 import MlOpsPage from './MlOpsPage'
 
 const api = vi.hoisted(() => ({
@@ -14,7 +14,10 @@ const api = vi.hoisted(() => ({
   listPredictions: vi.fn(),
   listTrainingRuns: vi.fn(),
   startTraining: vi.fn(),
-  runAnalysis: vi.fn(),
+  startAnalysisJob: vi.fn(),
+  getAnalysisJob: vi.fn(),
+  listAnalysisJobs: vi.fn(),
+  cancelAnalysisJob: vi.fn(),
   trainingClassStats: vi.fn(),
   trainingHardDrawings: vi.fn(),
 }))
@@ -32,6 +35,27 @@ const model: MlModel = {
   metrics: null,
   note: null,
   created_at: null,
+}
+
+function analysisJob(overrides: Partial<AnalysisJob>): AnalysisJob {
+  return {
+    id: 5,
+    status: 'running',
+    total: 1,
+    done: 0,
+    current: '匿名ページ1',
+    conf: 0.5,
+    connector_conf: 0.6,
+    results: [],
+    failures: [],
+    error: null,
+    cancel_requested: false,
+    detection_count: 0,
+    started_at: null,
+    finished_at: null,
+    model,
+    ...overrides,
+  }
 }
 
 function trainingRun(id: number, overrides: Partial<TrainingRun>): TrainingRun {
@@ -67,7 +91,9 @@ beforeEach(() => {
   api.listPredictions.mockResolvedValue([])
   api.listTrainingRuns.mockResolvedValue([])
   api.startTraining.mockResolvedValue(trainingRun(20, { status: 'running' }))
-  api.runAnalysis.mockResolvedValue({ model, conf: 0.5, connector_conf: 0.6, results: [], detection_count: 0 })
+  api.startAnalysisJob.mockResolvedValue(analysisJob({ status: 'running' }))
+  api.getAnalysisJob.mockResolvedValue(analysisJob({ status: 'done', done: 1 }))
+  api.listAnalysisJobs.mockResolvedValue([])
   api.trainingClassStats.mockResolvedValue({ done_drawings: 0, thin_threshold: 30, classes: [] })
   api.trainingHardDrawings.mockResolvedValue({ threshold: 0.9, drawings: [] })
 })
@@ -89,7 +115,38 @@ describe('MlOpsPage 学習の評価範囲', () => {
     const start = await view.findByRole('button', { name: 'AI 解析を実行' })
     expect((view.getByLabelText('コネクタのしきい値') as HTMLInputElement).value).toBe('0.6')
     fireEvent.click(start)
-    await waitFor(() => expect(api.runAnalysis).toHaveBeenCalledWith([], 0.5, 0.6))
+    await waitFor(() => expect(api.startAnalysisJob).toHaveBeenCalledWith([], 0.5, 0.6))
+  })
+
+  it('裏の解析の進み具合を出し、終われば結果と失敗した図面を知らせる', async () => {
+    api.mlStatus.mockResolvedValue({ ultralytics: true, active_model: model, model_count: 1, training_running: null })
+    api.listAnalysisJobs.mockResolvedValue([analysisJob({ total: 2, done: 1, current: '匿名ページ2' })])
+    api.getAnalysisJob.mockResolvedValue(
+      analysisJob({
+        status: 'done',
+        total: 2,
+        done: 2,
+        detection_count: 4,
+        results: [{ project_id: 1, name: '匿名ページ1', detections: 4, wire_count: 3 }],
+        failures: [{ project_id: 2, name: '匿名ページ2', message: '図面画像が見つかりません' }],
+      }),
+    )
+    const view = openPage()
+    expect(await view.findByText('解析中 1 / 2 図面')).toBeTruthy()
+    expect(view.getByText(/いま: 匿名ページ2/)).toBeTruthy()
+    expect(await view.findByText(/1 図面は解析できませんでした（匿名ページ2）/, undefined, { timeout: 3000 })).toBeTruthy()
+    expect(view.queryByText('解析中 1 / 2 図面')).toBeNull()
+  })
+
+  it('解析を中止できる', async () => {
+    api.mlStatus.mockResolvedValue({ ultralytics: true, active_model: model, model_count: 1, training_running: null })
+    api.listAnalysisJobs.mockResolvedValue([analysisJob({ total: 3 })])
+    api.getAnalysisJob.mockResolvedValue(analysisJob({ total: 3 }))
+    api.cancelAnalysisJob.mockResolvedValue(analysisJob({ total: 3, cancel_requested: true }))
+    const view = openPage()
+    fireEvent.click(await view.findByRole('button', { name: '中止' }))
+    await waitFor(() => expect(api.cancelAnalysisJob).toHaveBeenCalledWith(5))
+    expect(await view.findByRole('button', { name: '中止します…' })).toBeTruthy()
   })
 
   it('既定で未学習の図面で評価し、チェックを外すとその指定で学習を開始する', async () => {

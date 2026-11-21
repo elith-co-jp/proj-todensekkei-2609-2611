@@ -25,7 +25,7 @@ from services import circuit_code, circuit_model, circuit_whatif, consistency
 from services.circuit_model import build_circuit, simulate
 
 # 2 端子の部品として足せる種類（端子 1 が上、2 が下）
-COMPONENT_CLASSES = ["contact_a", "contact_b", "relay_coil", "lamp", "solenoid", "diode"]
+COMPONENT_CLASSES = ["contact_a", "contact_b", "push_button", "relay_coil", "lamp", "solenoid", "diode"]
 # 1 端子の点として足せる種類
 POINT_CLASSES = ["junction", "terminal", "power_bus", "other"]
 DEFAULT_SIZE = {"w": 0.02, "h": 0.03}
@@ -395,7 +395,7 @@ def _symbol_diff(before: list[dict[str, Any]], after: list[dict[str, Any]]) -> l
                           for k in ("class_key", "label", "attributes") if sb[ref].get(k) != sa[ref].get(k)}
                 if fields:
                     out.append({"project_id": pa["id"], "symbol_ref": ref, "change": "changed", "fields": fields})
-        key = lambda c: (c["from_symbol_ref"], c.get("from_terminal_ref"), c["to_symbol_ref"], c.get("to_terminal_ref"), c.get("wire_no"))
+        key = lambda c: (c["from_symbol_ref"], c.get("from_terminal_ref"), c["to_symbol_ref"], c.get("to_terminal_ref"), c.get("wire_no"))  # noqa: E731
         wb, wa = {key(c) for c in pb["connections"]}, {key(c) for c in pa["connections"]}
         out += [{"project_id": pa["id"], "wire": {"from": [k[0], k[1]], "to": [k[2], k[3]], "wire_no": k[4]}, "change": "added"}
                 for k in sorted(wa - wb, key=str)]
@@ -436,7 +436,7 @@ def netlist_text(circuit: circuit_model.Circuit, pages: list[dict[str, Any]]) ->
             return node
         return f"<{min(members.get(node, [node]))}>"
 
-    kinds = {"a": "a接点", "b": "b接点", "load": "負荷"}
+    kinds = {"a": "a接点", "b": "b接点", "load": "負荷", "d": "ダイオード"}
     lines = []
     for e in sorted(circuit.elements, key=lambda e: (e.project_id, e.symbol_ref)):
         kind = "コイル" if e.kind == "load" and e.device in circuit.coils else kinds[e.kind]
@@ -507,7 +507,7 @@ def preview(pages: list[dict[str, Any]], ops: list[dict[str, Any]], *,
     kb, ka = {_issue_key(i) for i in check_b["issues"]}, {_issue_key(i) for i in check_a["issues"]}
     introduced = [i for i in check_a["issues"] if _issue_key(i) not in kb]
     resolved = [i for i in check_b["issues"] if _issue_key(i) not in ka]
-    brief = lambda i: {k: i[k] for k in ("check", "severity", "title", "message", "locations")}
+    brief = lambda i: {k: i[k] for k in ("check", "severity", "title", "message", "locations")}  # noqa: E731
     return {
         "ok": True, "base_hash": base_hash, "after_hash": pages_hash(after_pages), "notes": notes,
         "diff": _symbol_diff(pages, after_pages), "netlist_diff": netlist_diff,

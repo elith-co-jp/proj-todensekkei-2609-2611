@@ -145,14 +145,14 @@ ZIP を選択してインポートすると、`bundle.json` の有無で復元�
 
 **画面の構成**（「図面選択 → 回路作成 → 動作確認」の 3 段で示す。文言とアイコンは [UI_WORDING.md](UI_WORDING.md)）
 
-- 図面選択の欄は、検索、全選択／選択解除、選択中の枚数を持つ。「回路を作成」のあとは 1 行に畳み、「図面選択」「再作成」（エディタで直した内容を読み込み直す）を置く
+- 図面選択の欄は、図面セット（DD-0041）、検索、全選択／選択解除、選択中の枚数を持つ。図面セットを選ぶとその図面を選び、行先札が指すのにセットに無いシートを示す（登録済みなら「選択に追加」）。選んだ図面は名前を付けてセットとして保存でき、「行先札から候補」で札でつながる図面の組を候補に出す。「回路を作成」のあとは 1 行に畳み、「図面選択」「再作成」（エディタで直した内容を読み込み直す）を置く
 - 図面一覧の各図面の「回路検証」アイコンと、選んだ図面の「回路検証（N 件）」から `#/circuit?ids=1,2` で開くと、その図面で回路を組んだ状態になる
 - 作成したあとは、見出しを 1 行（図面・警告の件数・図面選択・再作成）に縮め、残りの高さをすべて図面に使う
 - 図面はホイールでカーソル位置を中心に拡大・縮小、ドラッグで移動、ダブルクリック・「全体表示」・F キーで全体表示、＋／− キーで拡大・縮小（倍率を表示）。「全画面」でメニューも隠して画面いっぱいに表示し、Esc で戻る
 - 操作は図面の上に重ねる: 左上にページの切り替え・入力 ON の数・励磁の数・回路の警告・凡例（通電／接点 閉・開／励磁／入力）、左下に拡大・縮小、右上に全画面とパネルの開閉（P キー）。外部入力の接点（水色）は図面の上でクリックして ON / OFF を切り替えられる
 - パネルのタブ（操作／波及／タイマー／検査／変更）は、幅 1280px 以上では図面の右に重ね、閉じるとアイコンだけの列になって図面を広く使える。全体表示はパネルで隠れる幅を除いて合わせる。それより狭い画面では図面の下に並べる。「検査」は回路にできなかった箇所・シート間接続・整合性チェックをまとめ、件数をバッジで示す
 
-- 選んだ図面の記号・端子・配線から回路を組む。コネクタ・分岐点は通り抜けの点、接点はコイルで開閉する接点、コイル・電磁弁・表示灯は負荷。母線（PER…/NER…）と器具番号が同じリレーは図面をまたいでつなぐ
+- 選んだ図面の記号・端子・配線から回路を組む。コネクタ・分岐点は通り抜けの点、接点はコイルで開閉する接点、コイル・電磁弁・表示灯は負荷。押しボタンは外部入力の接点（a / b は属性 `contact_kind`、無ければ名前で停止は b・起動は a）、ダイオードは向きのある導線（アノード側は属性 `anode_terminal` か端子名 A/K。分からなければ両向きに流し、確認が必要な箇所に出す。DD-0037）。母線（PER…/NER…）と器具番号が同じリレーは図面をまたいでつなぐ
 - 同じ記号の 2 つの端子を結ぶ配線は、接点・コイルなどの機器では素子そのもの、カード（2B-2RSAM など）の列の上と下の黒丸（+ と -、縦に 30 px 以上）を結ぶ線はカードの入出力の素子として扱い、導線にしない。盤の枠（2RAXP・2RMMP）の中の線（枠を横切る短い線、母線に沿った線）は導線としてつなぐ（DD-0022）
 - 端子の無い分岐点・コネクタに付けた配線は、記号そのものを 1 つの節点としてつなぐ（DD-0023）
 - 選んだ図面にコイルが無い接点は外部入力として On/Off を切り替える。切り替えるたびに前の励磁状態から解くので、自己保持の回路は保持される
@@ -213,6 +213,9 @@ ZIP を選択してインポートすると、`bundle.json` の有無で復元�
 | `GET` | `/api/ml/projects/{id}/review-summary` | AI 検出の確認状況（採用・種別修正・削除・手動追加、領域枠数、次回学習に含まれるか）。`wiring` に AI 端子・AI 配線の `ai_count` / `imported` / `kept` / `deleted` / `manual_added`（構造解析が無ければ null）。`coils` にコイルの数（`count`）と取り決めに合わないコイル（`issues[]`: `symbol_ref`・`label`・`kind` = terminals / unwired / through・`message`） |
 | `POST` | `/api/ml/projects/{id}/ai-import` | エディタの現在の状態（未保存を含む）を受け取り、AI のシンボル・端子・配線のうち未登録のものだけを追加分として返す |
 | `POST` | `/api/ml/analysis/run` | `{project_ids[], conf}`。使用中モデルで推論し、続けて構造解析を実行して図面ごとに最新の結果を保存（アノテーションは変更しない） |
+| `POST` | `/api/ml/analysis/jobs` | 同じ解析を裏のジョブで行う（DD-0039）。図面ごとに保存し、失敗した図面は飛ばす。202 でジョブ。解析中は 409。AI 改善サイクルの画面はこちらを使う |
+| `GET` | `/api/ml/analysis/jobs`、`/api/ml/analysis/jobs/{id}` | ジョブの一覧・進み具合（`done` / `total`、`current`、`results`、`failures`） |
+| `POST` | `/api/ml/analysis/jobs/{id}/cancel` | 解析中の図面を終えたら止める |
 | `GET` | `/api/ml/projects/{id}/structure` | 図面の最新の構造解析結果（未実行は null） |
 | `POST` | `/api/ml/analysis/export` | `{project_ids[]}`。構造解析の結果を 1 つの `structure.json` にまとめて返す（形式は DATA_FORMAT.md §5）。未実行の図面があれば 409 |
 | `POST` | `/api/ml/training/run` | `{project_ids[], only_done, epochs, imgsz, base_model, holdout}`。バックグラウンドで学習。`holdout`（既定 true）で評価用図面を学習から外す |
@@ -224,6 +227,10 @@ ZIP を選択してインポートすると、`bundle.json` の有無で復元�
 | `GET` | `/api/attributes/definitions` | 記号（共通・種類別）と配線の標準の属性 |
 | `POST` | `/api/attributes/export` | `{project_ids[], template}`。オブジェクト ID と属性を 1 対 1 で並べた JSON（DATA_FORMAT.md §6） |
 | `POST` | `/api/attributes/import` | multipart `file`。属性の JSON を取り込み、`updated`・`unchanged`・`not_found`・`duplicates`・`type_mismatch`・`invalid` を返す |
+| `GET` / `POST` | `/api/drawing-sets` | 図面セットの一覧 / 作成 `{name, project_ids[], note}`（201。同じ名前は 400）。DD-0041 |
+| `GET` / `PUT` / `DELETE` | `/api/drawing-sets/{id}` | 図面セットの取得 / 変更（`name`・`project_ids`・`note`）/ 削除（204。図面は消えない） |
+| `GET` | `/api/drawing-sets/{id}/coverage` | 行先札が指すのにセットに無いシート（`missing_sheets`: 参照した札と、登録済みの図面の候補）、シート番号の分からない図面、`complete` |
+| `GET` | `/api/drawing-sets/suggest` | 登録済みの全図面を、行先札でつながるまとまりに分けた候補（保存しない）。回路の API にはセットの `project_ids` を渡す |
 | `POST` | `/api/circuit/build` | `{project_ids[]}`。回路を組み、コイルと接点、外部入力、確認が必要な箇所（`diagnostics`）、電源、解き方（`engine`）を返す |
 | `POST` | `/api/circuit/simulate` | `{project_ids[], inputs: {器具番号: bool}, energized: {器具番号: bool}}`。前の励磁状態から解き、`coil_states`・`warnings`・図面ごとの重ね表示（`overlay`）を返す |
 | `POST` | `/api/circuit/split-coil-wires` | `{symbols[], connections[], image_width, image_height}`（PUT annotations と同じ形）。コイルを通り抜ける配線を 2 本に分けて端子を付けた結果（`symbols`・`connections`・`counts`）を返す。保存はしない |
