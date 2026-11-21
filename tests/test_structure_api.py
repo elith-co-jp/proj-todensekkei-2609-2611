@@ -321,3 +321,79 @@ def test_project_list_reports_analysis_counts_only_when_analyzed(client):
     rows = {r["id"]: r for r in client.get("/api/projects").json()}
     assert (rows[analyzed]["analysis_wire_count"], rows[analyzed]["analysis_connection_count"]) == (4, 3)
     assert (rows[untouched]["analysis_wire_count"], rows[untouched]["analysis_connection_count"]) == (None, None)
+
+
+# ------------------------------------------------------------------------- バックグラウンドの解析（DD-0039）
+
+
+def _wait_job(client, job_id, timeout=10.0):
+    import time
+
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        job = client.get(f"/api/ml/analysis/jobs/{job_id}").json()
+        if job["status"] != "running":
+            return job
+        time.sleep(0.02)
+    raise AssertionError("job did not finish")
+
+
+def test_analysis_job_saves_each_drawing_and_skips_failures(client, monkeypatch):
+    from services import structure_service
+
+    first, second, third = create_project(client), create_project(client, "b.png"), create_project(client, "c.png")
+    _upload_model(client)
+    _fake_detector(monkeypatch)
+
+    def fail_second(project, *_args):
+        if project.id == second:
+            raise RuntimeError("test failure")
+        return _result(project.id)
+
+    monkeypatch.setattr(structure_service, "analyze_project", fail_second)
+    res = client.post("/api/ml/analysis/jobs", json={"project_ids": []})
+    assert res.status_code == 202, res.text
+    assert res.json()["total"] == 3
+    job = _wait_job(client, res.json()["id"])
+    assert job["status"] == "done"
+    assert job["done"] == 3
+    assert [r["project_id"] for r in job["results"]] == [first, third]
+    assert [(f["project_id"], f["message"]) for f in job["failures"]] == [(second, "test failure")]
+    assert client.get(f"/api/ml/projects/{first}/structure").json()["result"] is not None
+    assert client.get(f"/api/ml/projects/{second}/structure").json()["result"] is None
+    assert client.get(f"/api/ml/projects/{third}/structure").json()["result"] is not None
+    assert client.get("/api/ml/analysis/jobs").json()[0]["id"] == job["id"]
+    # ロックは解放され、次のジョブを始められる
+    assert client.post("/api/ml/analysis/jobs", json={"project_ids": [first]}).status_code == 202
+
+
+def test_analysis_job_can_be_cancelled_between_drawings(client, monkeypatch):
+    import threading
+
+    from services import structure_service
+
+    ids = [create_project(client, f"{n}.png") for n in "abc"]
+    _upload_model(client)
+    _fake_detector(monkeypatch)
+    gate = threading.Event()
+
+    def slow(project, *_args):
+        gate.wait(5)
+        return _result(project.id)
+
+    monkeypatch.setattr(structure_service, "analyze_project", slow)
+    job_id = client.post("/api/ml/analysis/jobs", json={"project_ids": ids}).json()["id"]
+    assert client.post("/api/ml/analysis/jobs", json={"project_ids": ids}).status_code == 409
+    assert client.post(f"/api/ml/analysis/jobs/{job_id}/cancel").json()["cancel_requested"]
+    gate.set()
+    job = _wait_job(client, job_id)
+    assert job["status"] == "cancelled"
+    assert job["done"] == 1
+    assert client.get("/api/ml/analysis/jobs/999").status_code == 404
+
+
+def test_analysis_job_rejects_unknown_drawings(client, monkeypatch):
+    pid = create_project(client)
+    _upload_model(client)
+    _fake_detector(monkeypatch)
+    assert client.post("/api/ml/analysis/jobs", json={"project_ids": [pid, 999]}).status_code == 404

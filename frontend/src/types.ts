@@ -200,6 +200,25 @@ export type InferenceRunResponse = {
   detection_count: number
 }
 
+// バックグラウンドの解析（DD-0039）。図面ごとに保存し、失敗した図面は failures に入れて続ける
+export type AnalysisJob = {
+  id: number
+  status: 'running' | 'done' | 'cancelled' | 'failed'
+  total: number
+  done: number
+  current: string | null
+  conf: number
+  connector_conf: number | null
+  results: InferenceRunResult[]
+  failures: { project_id: number; name: string | null; message: string }[]
+  error: string | null
+  cancel_requested: boolean
+  detection_count: number
+  started_at: string | null
+  finished_at: string | null
+  model?: MlModel
+}
+
 export type InferenceImportResult = {
   results: InferenceRunResult[]
   unmatched_files: string[]

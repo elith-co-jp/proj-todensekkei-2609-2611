@@ -213,6 +213,9 @@ ZIP を選択してインポートすると、`bundle.json` の有無で復元�
 | `GET` | `/api/ml/projects/{id}/review-summary` | AI 検出の確認状況（採用・種別修正・削除・手動追加、領域枠数、次回学習に含まれるか）。`wiring` に AI 端子・AI 配線の `ai_count` / `imported` / `kept` / `deleted` / `manual_added`（構造解析が無ければ null）。`coils` にコイルの数（`count`）と取り決めに合わないコイル（`issues[]`: `symbol_ref`・`label`・`kind` = terminals / unwired / through・`message`） |
 | `POST` | `/api/ml/projects/{id}/ai-import` | エディタの現在の状態（未保存を含む）を受け取り、AI のシンボル・端子・配線のうち未登録のものだけを追加分として返す |
 | `POST` | `/api/ml/analysis/run` | `{project_ids[], conf}`。使用中モデルで推論し、続けて構造解析を実行して図面ごとに最新の結果を保存（アノテーションは変更しない） |
+| `POST` | `/api/ml/analysis/jobs` | 同じ解析を裏のジョブで行う（DD-0039）。図面ごとに保存し、失敗した図面は飛ばす。202 でジョブ。解析中は 409。AI 改善サイクルの画面はこちらを使う |
+| `GET` | `/api/ml/analysis/jobs`、`/api/ml/analysis/jobs/{id}` | ジョブの一覧・進み具合（`done` / `total`、`current`、`results`、`failures`） |
+| `POST` | `/api/ml/analysis/jobs/{id}/cancel` | 解析中の図面を終えたら止める |
 | `GET` | `/api/ml/projects/{id}/structure` | 図面の最新の構造解析結果（未実行は null） |
 | `POST` | `/api/ml/analysis/export` | `{project_ids[]}`。構造解析の結果を 1 つの `structure.json` にまとめて返す（形式は DATA_FORMAT.md §5）。未実行の図面があれば 409 |
 | `POST` | `/api/ml/training/run` | `{project_ids[], only_done, epochs, imgsz, base_model, holdout}`。バックグラウンドで学習。`holdout`（既定 true）で評価用図面を学習から外す |

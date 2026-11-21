@@ -22,6 +22,7 @@ import { DEFAULT_CONNECTOR_CONF, DEFAULT_DETECTION_CONF } from '../api/defaults'
 import { LoadingOverlay } from '../components/LoadingOverlay'
 import { AdoptionReviewNote, PerClassComparison, TrainingDataPanel } from '../components/TrainingQuality'
 import type {
+  AnalysisJob,
   EvalScope,
   InferenceImportResult,
   InferenceRunResponse,
@@ -38,6 +39,8 @@ type Notice = { kind: 'success' | 'error'; title: string; body: string }
 
 // 学習実行中のステータスポーリング間隔
 const TRAINING_POLL_MS = 3000
+// 裏の解析（DD-0039）の進み具合を取りに行く間隔
+const ANALYSIS_POLL_MS = 1000
 
 const CYCLE_STEPS = [
   { icon: Zap, label: '解析', desc: 'シンボル・配線・接続を検出', tone: 'bg-blue-100 text-blue-700' },
@@ -49,10 +52,6 @@ const CYCLE_STEPS = [
 
 // 時間のかかる操作で画面全体に出すローディング表示（busy キー → メッセージ）
 const BUSY_OVERLAY: Record<string, { message: string; hint: string }> = {
-  inference: {
-    message: '図面を解析しています',
-    hint: '登録図面を順に処理しています。対象が多いほど時間がかかります。',
-  },
   import: {
     message: '推論結果を取り込んでいます',
     hint: 'ZIP の中身を確認して登録しています。',
@@ -115,6 +114,7 @@ export default function MlOpsPage() {
   const [importResult, setImportResult] = useState<InferenceImportResult | null>(null)
   const [jsonOpen, setJsonOpen] = useState<number | null>(null)
   const [jsonCache, setJsonCache] = useState<Record<number, ProjectPredictions>>({})
+  const [job, setJob] = useState<AnalysisJob | null>(null)
 
   // 学習パラメータ
   const [epochs, setEpochs] = useState(100)
@@ -169,25 +169,80 @@ export default function MlOpsPage() {
   const toggleInfer = toggleSet(setIds)
   const toggleTrain = toggleSet(setTrainIds)
 
+  // 解析は裏のジョブで 1 枚ずつ進め、図面ごとに保存する（DD-0039）。画面を離れても続き、戻ると進み具合を出す
+  const jobRunning = job?.status === 'running'
+  const finishJob = useCallback(
+    async (j: AnalysisJob) => {
+      setInferenceResult({
+        model: j.model ?? (status?.active_model as MlModel),
+        conf: j.conf,
+        connector_conf: j.connector_conf,
+        results: j.results,
+        detection_count: j.detection_count,
+      })
+      setImportResult(null)
+      setJsonCache({})
+      setJsonOpen(null)
+      const wires = j.results.reduce((n, page) => n + (page.wire_count ?? 0), 0)
+      const warn = j.results.some((page) => page.warnings?.length) ? '一部のラベル読み取りに問題があります。解析結果を確認してください。' : ''
+      const failed = j.failures.length ? `${j.failures.length} 図面は解析できませんでした（${j.failures.map((f) => f.name ?? f.project_id).join('、')}）。` : ''
+      if (j.status === 'failed') {
+        setNotice({ kind: 'error', title: '解析に失敗しました', body: j.error ?? '解析に失敗しました' })
+      } else {
+        setNotice({
+          kind: j.failures.length ? 'error' : 'success',
+          title: j.status === 'cancelled' ? `解析を中止しました（${j.done} / ${j.total} 図面）` : '解析結果を保存しました',
+          body: `${j.detection_count} 件のシンボル、${wires} 本の配線を検出しました（${j.results.length} 図面）。${failed}${warn}`,
+        })
+      }
+      await reload()
+    },
+    [reload, status?.active_model],
+  )
+
+  useEffect(() => {
+    // 画面を開いたとき、裏で解析中のジョブがあれば進み具合の表示を続ける
+    void api
+      .listAnalysisJobs()
+      .then((jobs) => {
+        const running = jobs.find((j) => j.status === 'running')
+        if (running) setJob(running)
+      })
+      .catch(() => undefined)
+  }, [])
+
+  useEffect(() => {
+    if (!job || job.status !== 'running') return
+    const timer = window.setInterval(() => {
+      void api
+        .getAnalysisJob(job.id)
+        .then((next) => {
+          setJob((prev) => ({ ...next, model: next.model ?? prev?.model }))
+          if (next.status !== 'running') void finishJob({ ...next, model: next.model ?? job.model })
+        })
+        .catch(() => undefined)
+    }, ANALYSIS_POLL_MS)
+    return () => window.clearInterval(timer)
+  }, [job, finishJob])
+
   const runInference = async () => {
     setBusy('inference')
     setNotice(null)
     try {
-      const r = await api.runAnalysis(Array.from(ids), conf, connectorConf)
-      setInferenceResult(r)
-      setImportResult(null)
-      setJsonCache({})
-      setJsonOpen(null)
-      setNotice({
-        kind: 'success',
-        title: '解析結果を保存しました',
-        body: `${r.detection_count} 件のシンボル、${r.results.reduce((n, page) => n + (page.wire_count ?? 0), 0)} 本の配線を検出しました（${r.results.length} 図面）。${r.results.some((page) => page.warnings?.length) ? '一部のラベル読み取りに問題があります。解析結果を確認してください。' : ''}`,
-      })
-      await reload()
+      setJob(await api.startAnalysisJob(Array.from(ids), conf, connectorConf))
     } catch (e) {
-      setNotice({ kind: 'error', title: '推論に失敗しました', body: e instanceof Error ? e.message : String(e) })
+      setNotice({ kind: 'error', title: '解析を始められませんでした', body: e instanceof Error ? e.message : String(e) })
     } finally {
       setBusy(null)
+    }
+  }
+
+  const cancelJob = async () => {
+    if (!job) return
+    try {
+      setJob(await api.cancelAnalysisJob(job.id))
+    } catch (e) {
+      setNotice({ kind: 'error', title: '中止できませんでした', body: e instanceof Error ? e.message : String(e) })
     }
   }
 
@@ -611,15 +666,40 @@ export default function MlOpsPage() {
               <button
                 className="btn btn-accent w-full justify-center"
                 onClick={() => void runInference()}
-                disabled={busy !== null || !status?.ultralytics || !status?.active_model || projects.length === 0}
+                disabled={busy !== null || jobRunning || !status?.ultralytics || !status?.active_model || projects.length === 0}
               >
-                {busy === 'inference' ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
+                {busy === 'inference' || jobRunning ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
                 {!status?.active_model
                   ? 'モデルを先に登録してください'
                   : !status?.ultralytics
                     ? 'この環境では実行できません（外部実行）'
-                    : 'AI 解析を実行'}
+                    : jobRunning
+                      ? '解析中…'
+                      : 'AI 解析を実行'}
               </button>
+              {job && jobRunning && (
+                <div className="rounded-2xl border border-cyan-100 bg-cyan-50/60 p-3" role="status" aria-label="解析の進み具合">
+                  <div className="flex items-center gap-2 text-xs font-bold text-cyan-800">
+                    <span>
+                      解析中 {job.done} / {job.total} 図面
+                    </span>
+                    {job.failures.length > 0 && <span className="text-rose-600">失敗 {job.failures.length}</span>}
+                    <span className="flex-1" />
+                    <button type="button" className="btn btn-sm" onClick={() => void cancelJob()} disabled={job.cancel_requested}>
+                      {job.cancel_requested ? '中止します…' : '中止'}
+                    </button>
+                  </div>
+                  <div className="mt-2 h-2 overflow-hidden rounded-full bg-white">
+                    <div
+                      className="h-full rounded-full bg-cyan-500 transition-all"
+                      style={{ width: `${job.total ? Math.round((100 * job.done) / job.total) : 0}%` }}
+                    />
+                  </div>
+                  <p className="mt-2 text-[11px] leading-5 text-slate-500">
+                    {job.current ? `いま: ${job.current}。` : ''}図面ごとに保存します。この画面を離れても解析は続きます。
+                  </p>
+                </div>
+              )}
 
               <div className="border-t border-slate-100 pt-4">
                 <div className="mb-2 flex items-center gap-2 text-[11px] font-bold text-slate-500">

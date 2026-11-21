@@ -21,6 +21,7 @@ from fastapi.staticfiles import StaticFiles
 from database import init_db
 from routers import annotations, attributes, circuit, exchange, ml
 from runtime import resource_base
+from services import analysis_jobs
 
 _DESKTOP_MODE = os.environ.get("SEQANNO_DESKTOP") == "1"
 _DESKTOP_IDLE_TIMEOUT_SECONDS = max(
@@ -55,7 +56,8 @@ def _start_desktop_watchdog() -> None:
             time.sleep(min(15, max(5, _DESKTOP_IDLE_TIMEOUT_SECONDS / 3)))
             with _desktop_lock:
                 idle_seconds = time.monotonic() - _desktop_last_heartbeat
-            if idle_seconds >= _DESKTOP_IDLE_TIMEOUT_SECONDS:
+            # 裏で解析中（DD-0039）なら、画面を閉じていても終わるまで待つ
+            if idle_seconds >= _DESKTOP_IDLE_TIMEOUT_SECONDS and not analysis_jobs.running():
                 os._exit(0)
 
     thread = threading.Thread(target=watch, name="desktop-idle-watchdog", daemon=True)

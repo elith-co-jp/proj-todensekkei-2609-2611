@@ -1,4 +1,5 @@
 import type {
+  AnalysisJob,
   AiImportResult,
   AttributeDefinitions,
   AttributeImportReport,
@@ -205,6 +206,20 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ project_ids: projectIds, conf, connector_conf: connectorConf }),
     }),
+
+  // 全図面の解析を裏で回す（DD-0039）。進み具合は getAnalysisJob で取りに行く
+  startAnalysisJob: (projectIds: number[], conf = DEFAULT_DETECTION_CONF, connectorConf: number | null = null) =>
+    req<AnalysisJob>('/api/ml/analysis/jobs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ project_ids: projectIds, conf, connector_conf: connectorConf }),
+    }),
+
+  getAnalysisJob: (jobId: number) => req<AnalysisJob>(`/api/ml/analysis/jobs/${jobId}`),
+
+  listAnalysisJobs: () => req<AnalysisJob[]>('/api/ml/analysis/jobs'),
+
+  cancelAnalysisJob: (jobId: number) => req<AnalysisJob>(`/api/ml/analysis/jobs/${jobId}/cancel`, { method: 'POST' }),
 
   getStructure: (projectId: number) =>
     req<{ project_id: number; result: StructureResult | null }>(`/api/ml/projects/${projectId}/structure`),
