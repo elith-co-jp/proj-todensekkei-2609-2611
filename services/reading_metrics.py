@@ -332,7 +332,7 @@ def markdown(report: dict[str, Any]) -> str:
     s = report["summary"]
 
     def pr(x: dict[str, Any]) -> str:
-        f = lambda v: "-" if v is None else f"{v:.3f}"
+        f = lambda v: "-" if v is None else f"{v:.3f}"  # noqa: E731
         return f"適合率 {f(x['precision'])} / 再現率 {f(x['recall'])}（TP {x['tp']}・FP {x['fp']}・FN {x['fn']}）"
 
     def rate(x: dict[str, Any]) -> str:

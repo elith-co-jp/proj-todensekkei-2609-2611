@@ -68,7 +68,7 @@ def apply_change(circuit: Circuit, change: dict[str, Any] | None) -> tuple[Circu
         e = element(item)
         if e is None:
             continue
-        if e.kind in ("a", "b"):
+        if e.kind in ("a", "b", "d"):  # ダイオードの断線は開のまま（DD-0037）
             forced_contacts[e.name] = False
         elif e.device in circuit.coils:  # 同じ器具番号のコイルは同じ 1 つのコイル（図面をまたいで描かれる）
             forced_devices[e.device] = False
@@ -80,7 +80,7 @@ def apply_change(circuit: Circuit, change: dict[str, Any] | None) -> tuple[Circu
         e = element(item)
         if e is None:
             continue
-        if e.kind in ("a", "b"):
+        if e.kind in ("a", "b", "d"):  # ダイオードの短絡は両向きに流れる
             forced_contacts[e.name] = True
         else:
             resistance[e.name] = R_ON

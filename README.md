@@ -170,7 +170,7 @@ python desktop.py
 
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
+pip install -r requirements.txt -r requirements-dev.txt -c constraints.txt
 uvicorn main:app --reload --port 8010      # API: http://localhost:8010
 
 cd frontend && npm install && npm run dev  # UI:  http://localhost:5173
@@ -247,8 +247,14 @@ yolo detect train data=data.yaml model=yolo11s.pt epochs=100 imgsz=1280
 
 ## テスト
 
+PR と main への push ごとに `.github/workflows/ci.yml` が pytest・ruff・画面の型検査とテストを回します。
+依存の版は `constraints.txt` で固定しています（更新するときはファイル先頭のコマンドで作り直し、CI が通ることを確かめる）。
+
 ```bash
+pip install -r requirements.txt -r requirements-dev.txt -c constraints.txt
+make test                # 下の 4 つをまとめて実行
 python3 -m pytest        # API・PDF 分割・YOLO 形式・往復復元・セキュリティ
+ruff check .
 cd frontend && npm test        # UIの純粋ロジック
 cd frontend && npm run build   # 型チェック込み
 docker compose config --quiet  # Compose 設定検証

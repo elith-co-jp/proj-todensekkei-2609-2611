@@ -157,3 +157,93 @@ def test_junction_without_terminals_still_joins_its_wires(engine):
     circuit = build_circuit([page])
     assert not any(d["kind"] == "wire_without_terminal" for d in circuit.diagnostics)
     assert simulate(circuit, {})["coils"]["X R100"]["energized"] is True
+
+
+# ------------------------------------------------------------------------------------- 押しボタン・ダイオード（DD-0037）
+
+
+def _series_page(middle):
+    """P ─ middle ─ X コイル ─ N。"""
+    symbols = [_sym("P", "power_bus", terms=1, cy=0.1), _sym("N", "power_bus", terms=1, cy=0.9), middle,
+               _sym("XC", "relay_coil", "X R1")]
+    ref = middle["ref"]
+    wires = [_wire(("P", 1), (ref, 1)), _wire((ref, 2), ("XC", 1)), _wire(("XC", 2), ("N", 1))]
+    return {"id": 1, "name": "t", "image_width": 1000, "image_height": 1000, "symbols": symbols, "connections": wires}
+
+
+def test_push_button_is_an_input_contact(engine):
+    circuit = build_circuit([_series_page(_sym("PB", "push_button", "PB1"))])
+    assert circuit.inputs == ["PB1"]
+    assert any(d["kind"] == "push_button_input" for d in circuit.diagnostics)
+    assert not simulate(circuit, {"PB1": False})["coils"]["X R1"]["energized"]
+    assert simulate(circuit, {"PB1": True})["coils"]["X R1"]["energized"]
+
+
+def test_stop_push_button_is_a_break_contact_unless_attribute_says_otherwise():
+    stop = build_circuit([_series_page(_sym("PB", "push_button", "STOP"))])
+    assert [e.kind for e in stop.elements if e.symbol_ref == "PB"] == ["b"]
+    assert simulate(stop, {"STOP": False})["coils"]["X R1"]["energized"]
+    page = _series_page(_sym("PB", "push_button", "STOP") | {"attributes": {"contact_kind": "a"}})
+    assert [e.kind for e in build_circuit([page]).elements if e.symbol_ref == "PB"] == ["a"]
+
+
+def test_diode_in_series_with_a_coil_conducts(engine):
+    circuit = build_circuit([_series_page(_sym("D", "diode", "D1"))])
+    assert any(d["kind"] == "diode_direction_unknown" for d in circuit.diagnostics)
+    result = simulate(circuit, {})
+    assert result["coils"]["X R1"]["energized"]
+    assert result["diodes"] == [{"project_id": 1, "symbol_ref": "D", "label": "D1", "directed": False, "conducting": True}]
+
+
+@pytest.mark.parametrize(("anode", "energized"), [("1", True), ("2", False)])
+def test_diode_with_known_anode_blocks_reverse_current(engine, anode, energized):
+    page = _series_page(_sym("D", "diode", "D1") | {"attributes": {"anode_terminal": anode}})
+    circuit = build_circuit([page])
+    assert not any(d["kind"] == "diode_direction_unknown" for d in circuit.diagnostics)
+    result = simulate(circuit, {})
+    assert result["coils"]["X R1"]["energized"] is energized
+    assert result["diodes"][0]["conducting"] is energized
+
+
+def test_diode_terminal_names_give_the_direction():
+    diode = _sym("D", "diode", "D1")
+    diode["terminals"][0]["name"], diode["terminals"][1]["name"] = "K", "A"
+    circuit = build_circuit([_series_page(diode)])
+    assert not simulate(circuit, {})["coils"]["X R1"]["energized"]
+
+
+def test_diodes_isolate_two_inputs_feeding_one_coil(engine):
+    """PB1 ─ D1 ─┬─ X コイル、PB2 ─ D2 ─┘ と、PB2 の先の表示灯 L。D2 が逆流を止めるので PB1 では L が点かない。"""
+    symbols = [_sym("P", "power_bus", terms=1, cy=0.1), _sym("N", "power_bus", terms=1, cy=0.9),
+               _sym("PB1", "contact_a", "PB1"), _sym("PB2", "contact_a", "PB2"),
+               _sym("D1", "diode", "D1", ) | {"attributes": {"anode_terminal": "1"}},
+               _sym("D2", "diode", "D2") | {"attributes": {"anode_terminal": "1"}},
+               _sym("XC", "relay_coil", "X R1"), _sym("L", "lamp", "RL")]
+    wires = [_wire(("P", 1), ("PB1", 1)), _wire(("P", 1), ("PB2", 1)), _wire(("PB1", 2), ("D1", 1)), _wire(("PB2", 2), ("D2", 1)),
+             _wire(("D1", 2), ("XC", 1)), _wire(("D2", 2), ("XC", 1)), _wire(("XC", 2), ("N", 1)),
+             _wire(("PB2", 2), ("L", 1)), _wire(("L", 2), ("N", 1))]
+    circuit = build_circuit([{"id": 1, "name": "t", "image_width": 1000, "image_height": 1000,
+                              "symbols": symbols, "connections": wires}])
+    result = simulate(circuit, {"PB1": True})
+    assert result["coils"]["X R1"]["energized"]
+    lamp = next(x for x in result["loads"] if x["symbol_ref"] == "L")
+    assert not lamp["energized"]
+
+
+def test_trace_passes_through_diodes_in_their_direction_and_code_round_trips():
+    from services import circuit_code, circuit_trace
+
+    for anode, expect in (("1", "PB1"), ("2", None)):
+        page = _series_page(_sym("PB", "contact_a", "PB1"))
+        page["symbols"].append(_sym("D", "diode", "D1") | {"attributes": {"anode_terminal": anode}})
+        # P ─ PB ─ D ─ X コイル ─ N
+        page["connections"] = [_wire(("P", 1), ("PB", 1)), _wire(("PB", 2), ("D", 1)), _wire(("D", 2), ("XC", 1)),
+                               _wire(("XC", 2), ("N", 1))]
+        circuit = build_circuit([page])
+        cond = circuit_trace.condition_json(circuit_trace.Tracer(circuit), "X R1")
+        assert cond["text"] == (expect or "FALSE")
+        code = circuit_code.to_python(circuit)
+        assert "c.diode(" in code
+        rebuilt = circuit_code.from_python(code)
+        assert [(e.kind, e.directed) for e in rebuilt.elements if e.kind == "d"] == [("d", True)]
+        assert simulate(rebuilt, {"PB1": True})["coils"]["X R1"]["energized"] is (expect is not None)

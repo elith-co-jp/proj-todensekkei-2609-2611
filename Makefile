@@ -1,7 +1,7 @@
 .PHONY: install dev build serve test docker-up docker-down docker-logs clean
 
 install:
-	pip install -r requirements.txt
+	pip install -r requirements.txt -r requirements-dev.txt -c constraints.txt
 	cd frontend && npm install
 
 dev:
@@ -18,6 +18,8 @@ serve: build
 
 test:
 	python3 -m pytest
+	ruff check .
+	cd frontend && npx tsc -b && npm test
 
 docker-up:
 	docker compose up --build -d

@@ -36,7 +36,7 @@ class CircuitCode:
         if ref in self.refs:
             raise ValueError(f"参照記号 {ref} が重なっています")
         pid, symbol_ref = source
-        prefix = "SW" if kind in ("a", "b") else "R"
+        prefix = "SW" if kind in ("a", "b") else "D" if kind == "d" else "R"
         element = Element(f"{prefix}_{pid}_{_spice_name(symbol_ref)}", kind, a, b, pid, symbol_ref, label, device, resistance)
         self.elements.append(element)
         self.refs[ref] = element
@@ -67,6 +67,12 @@ class CircuitCode:
              resistance: float = R_LOAD) -> Element:
         """リレーのコイル。両端の電圧で励磁し、同じ器具番号の接点を開閉する。"""
         return self._add(ref, "load", a, b, source=source, label=label, device=device, resistance=resistance)
+
+    def diode(self, ref: str, a: str, b: str, *, source: tuple[int, str], label: str = "", directed: bool = False) -> Element:
+        """ダイオード。directed=True なら a がアノード、b がカソードで、逆向きには流れない。False なら両向きに流れる（DD-0037）。"""
+        e = self._add(ref, "d", a, b, source=source, label=label)
+        e.directed = directed
+        return e
 
     def load(self, ref: str, a: str, b: str, *, source: tuple[int, str], label: str = "", resistance: float = R_LOAD) -> Element:
         """表示灯・電磁弁・ダイオードなど、ほかを開閉しない負荷。"""
@@ -128,6 +134,9 @@ def to_python(circuit: Circuit, *, pages: list[dict[str, Any]] | None = None, ti
         if e.kind in ("a", "b"):
             instant = ", instant=True" if e.instant else ""
             lines.append(f"c.{KIND_CALL[e.kind]}({args}, device={e.device!r}, source={_src(e)}{label}{instant})")
+        elif e.kind == "d":
+            directed = ", directed=True" if e.directed else ""
+            lines.append(f"c.diode({args}, source={_src(e)}{label}{directed})")
         elif e.device and e.device in circuit.coils:
             res = "" if e.resistance == R_LOAD else f", resistance={e.resistance:g}"
             lines.append(f"c.coil({args}, device={e.device!r}, source={_src(e)}{label}{res})")

@@ -1,0 +1,8 @@
+# テスト・静的検査の依存（CI と開発環境）。本体は requirements.txt、版は constraints.txt で固定する。
+#   pip install -r requirements.txt -r requirements-dev.txt -c constraints.txt
+pytest>=8
+httpx>=0.27
+ruff==0.15.0
+# 配線解析（analysis/wiring）と合成図面のテストで使う
+opencv-python-headless>=4.10
+numpy>=1.26
