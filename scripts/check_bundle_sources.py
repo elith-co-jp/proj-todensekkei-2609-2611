@@ -16,6 +16,8 @@ import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
+# PyInstaller がビルド中に作るもの（base_library.zip など）。リポジトリのファイルではない
+GENERATED = {"build", "dist"}
 FORBIDDEN = ("*.pdf", "*.tif", "*.tiff", "*.db", "*.sqlite", "*.sqlite3", "*.zip", "*.7z", "*.rar",
              "*.doc", "*.docx", "*.xls", "*.xlsx", "*.ppt", "*.pptx", "*.csv")
 
@@ -29,8 +31,10 @@ def repo_sources(toc_path: Path) -> list[tuple[str, Path]]:
             continue
         source = Path(str(row[1]))
         try:
-            source.resolve().relative_to(REPO)
+            rel = source.resolve().relative_to(REPO)
         except (ValueError, OSError):
+            continue
+        if rel.parts and rel.parts[0] in GENERATED:
             continue
         out.append((str(row[0]), source))
     return out
