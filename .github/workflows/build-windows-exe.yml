@@ -221,19 +221,9 @@ jobs:
             $unexpectedEntries | ForEach-Object { Write-Error "Unexpected dist entry: $($_.FullName)" }
             throw "dist must contain only the TodenYOLO folder."
           }
-          # 図面・データ・文書のファイルが入っていないこと（パッケージ同梱の画像は対象外）
-          $forbiddenPatterns = @("*.pdf", "*.tif", "*.tiff", "*.db", "*.sqlite", "*.sqlite3", "*.zip", "*.7z", "*.rar",
-                                 "*.doc", "*.docx", "*.xls", "*.xlsx", "*.ppt", "*.pptx")
-          # base_library.zip は PyInstaller が入れる Python の標準ライブラリ
-          $allowed = @((Resolve-Path "dist\TodenYOLO\_internal\base_library.zip" -ErrorAction SilentlyContinue).Path)
-          $forbidden = Get-ChildItem -Path dist -Recurse -File -Force | Where-Object {
-            $name = $_.Name
-            ($allowed -notcontains $_.FullName) -and (($forbiddenPatterns | Where-Object { $name -like $_ }).Count -gt 0)
-          }
-          if ($forbidden) {
-            $forbidden | ForEach-Object { Write-Error "Forbidden dist file: $($_.FullName)" }
-            throw "Refusing to upload dist because it contains confidential-looking files."
-          }
+          # リポジトリから同梱したファイル（spec の datas）に図面・DB・文書が無いこと。パッケージのファイルは除く
+          python scripts/check_bundle_sources.py build/seq-annotator/COLLECT-00.toc
+          if ($LASTEXITCODE -ne 0) { throw "Refusing to upload dist because it contains confidential-looking files." }
 
       - name: Smoke test frozen training and inference
         timeout-minutes: 15
