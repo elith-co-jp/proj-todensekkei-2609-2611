@@ -11,9 +11,12 @@
 from __future__ import annotations
 
 import io
+import logging
 import zipfile
+from collections.abc import Callable
 from importlib.util import find_spec
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
+from typing import Any
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -25,6 +28,8 @@ from services.export_service import safe_members
 from services.geometry import sanitize_box
 from services.model_service import card_model_path, model_path
 from symbol_class_policy import canonical_symbol_class_key
+
+_logger = logging.getLogger(__name__)
 
 # predictions ZIP でファイル名からプロジェクトを引く規則。
 # エクスポート画像名は p<project_id>_<stem>.png なので、同じ stem の labels を対応付ける。
@@ -160,8 +165,17 @@ def run_inference(
     *,
     connector_conf: float | None = None,
     include_structure: bool = False,
+    keep_going: bool = False,
+    on_progress: Callable[[dict], None] | None = None,
+    should_stop: Callable[[], bool] | None = None,
 ) -> list[dict]:
-    """登録済みモデルで推論し、結果を predictions テーブルへ保存する。"""
+    """登録済みモデルで推論し、結果を predictions テーブルへ保存する。
+
+    keep_going=False（既定）: 途中で失敗したら例外を出し、全図面の保存をやめる（呼び出し側が rollback）。
+    keep_going=True（バックグラウンドの解析。DD-0039）: 図面ごとに保存し、失敗した図面は飛ばして続ける。
+    on_progress は図面ごとに {"project_id", "name", "ok", "result" | "error"} で呼ぶ。should_stop が True を返せば
+    次の図面に進まずに止める。
+    """
     if not ultralytics_available():
         raise RuntimeError(
             "ultralytics がインストールされていないためサーバ内で推論できません。"
@@ -173,8 +187,6 @@ def run_inference(
 
     from ultralytics import YOLO  # 重量級のため遅延 import
 
-    from analysis.runtime import page_for_detection
-
     detector = YOLO(str(path))
     # 並んだカードを 1 つにまとめないよう、「その他」（カード・札・領域）は別のモデルで検出する（DD-0019）。
     card_path = card_model_path()
@@ -182,54 +194,83 @@ def run_inference(
     class_by_index = _class_by_yolo_index(db)
     summary = []
     for project in projects:
-        if include_structure and len(project.images) != 1:
-            raise RuntimeError("構造解析は1図面につき1画像で実行してください。")
-        detections: list[dict] = []
-        skipped_images = 0
-        for image in project.images:
-            src = image_path(image.sha256)
-            if not src.exists():
-                skipped_images += 1
-                continue
-            page = page_for_detection(src)
-            found = _detect(detector, page, conf, connector_conf, class_by_index)
-            if card_detector is not None:
-                found = merge_card_detections(found, _detect(card_detector, page, conf, connector_conf, class_by_index))
-            detections.extend(found)
-        structure = None
-        if include_structure:
-            if skipped_images:
-                raise RuntimeError(f"図面画像が見つかりません: {project.name}")
-            from services.structure_service import analyze_project
-
-            symbol_detections = [d for d in detections if detection_kind(d["w"], d["h"]) == "symbol"]
-            region_detections = [d for d in detections if detection_kind(d["w"], d["h"]) == "region"]
-            structure = analyze_project(project, model, symbol_detections, region_detections)
-        counts = _record_predictions(
-            db, project, detections, model,
-            model_label=model.name if card_path is None else f"{model.name} + {card_path.stem}",
-        )
-        if structure is not None:
-            from services.structure_service import save_structure
-
-            save_structure(db, project.id, structure)
-        summary.append(
-            {
-                "project_id": project.id,
-                "name": project.name,
-                "detections": counts["symbol"],
-                "region_count": counts["region"],
-                "skipped_images": skipped_images,
-                **({
-                    "structure_available": True,
-                    "wire_count": len(structure.get("wires", [])),
-                    "connection_count": structure["from_to"]["connection_count"],
-                    "warnings": structure.get("warnings", []),
-                } if structure is not None else {}),
-            }
-        )
+        if should_stop is not None and should_stop():
+            break
+        if not keep_going:
+            summary.append(_infer_project(db, model, project, detector, card_detector, card_path, class_by_index,
+                                          conf, connector_conf, include_structure))
+            continue
+        project_id, name = project.id, project.name
+        try:
+            row = _infer_project(db, model, project, detector, card_detector, card_path, class_by_index,
+                                 conf, connector_conf, include_structure)
+            db.commit()
+        except Exception as exc:  # noqa: BLE001  1 図面の失敗で残りを止めない（失敗は呼び出し側に知らせる）
+            db.rollback()
+            _logger.exception("Inference failed: project %s", project_id)
+            message = str(exc) if isinstance(exc, RuntimeError) else "解析に失敗しました"
+            if on_progress is not None:
+                on_progress({"project_id": project_id, "name": name, "ok": False, "error": message})
+            continue
+        summary.append(row)
+        if on_progress is not None:
+            on_progress({"project_id": project_id, "name": name, "ok": True, "result": row})
     db.commit()
     return summary
+
+
+def _infer_project(db: Session, model: MlModel, project: AnnotationProject, detector: Any, card_detector: Any,
+                   card_path: Path | None, class_by_index: dict, conf: float, connector_conf: float | None,
+                   include_structure: bool) -> dict:
+    """1 図面を推論し、検出（と構造解析）を保存して、結果の要約を返す（commit はしない）。"""
+    from analysis.runtime import page_for_detection
+
+    if include_structure and len(project.images) != 1:
+        raise RuntimeError("構造解析は1図面につき1画像で実行してください。")
+    detections: list[dict] = []
+    skipped_images = 0
+    for image in project.images:
+        src = image_path(image.sha256)
+        if not src.exists():
+            skipped_images += 1
+            continue
+        page = page_for_detection(src)
+        found = _detect(detector, page, conf, connector_conf, class_by_index)
+        if card_detector is not None:
+            found = merge_card_detections(found, _detect(card_detector, page, conf, connector_conf, class_by_index))
+        detections.extend(found)
+    structure = None
+    if include_structure:
+        if skipped_images:
+            raise RuntimeError(f"図面画像が見つかりません: {project.name}")
+        from services.structure_service import analyze_project
+
+        symbol_detections = [d for d in detections if detection_kind(d["w"], d["h"]) == "symbol"]
+        region_detections = [d for d in detections if detection_kind(d["w"], d["h"]) == "region"]
+        structure = analyze_project(project, model, symbol_detections, region_detections)
+    counts = _record_predictions(
+        db, project, detections, model,
+        model_label=model.name if card_path is None else f"{model.name} + {card_path.stem}",
+    )
+    if structure is not None:
+        from services.structure_service import save_structure
+
+        save_structure(db, project.id, structure)
+    return (
+        {
+            "project_id": project.id,
+            "name": project.name,
+            "detections": counts["symbol"],
+            "region_count": counts["region"],
+            "skipped_images": skipped_images,
+            **({
+                "structure_available": True,
+                "wire_count": len(structure.get("wires", [])),
+                "connection_count": structure["from_to"]["connection_count"],
+                "warnings": structure.get("warnings", []),
+            } if structure is not None else {}),
+        }
+    )
 
 
 def _parse_label_lines(

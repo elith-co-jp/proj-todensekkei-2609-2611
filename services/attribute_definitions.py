@@ -33,6 +33,8 @@ SYMBOL_BY_CLASS: dict[str, list[AttributeDef]] = {
                   _d("external_io", "外部入力・I/O（yes なら図面範囲外の入力。DD-0035）")],
     "contact_b": [_d("contact_rating_a", "接点定格", "number", "A"), _d("timer_contact", "タイマーの接点（瞬時 = instant）"),
                   _d("external_io", "外部入力・I/O（yes なら図面範囲外の入力。DD-0035）")],
+    "push_button": [_d("contact_kind", "接点の種類（a / b。空なら名前で決める。DD-0037）")],
+    "diode": [_d("anode_terminal", "アノード側の端子名（空なら端子名 A・K で決める。DD-0037）")],
     "connector": [_d("pin_count", "ピン数", "number")],
     "terminal": [_d("pin_count", "ピン数", "number")],
     "lamp": [_d("rated_power_w", "定格電力", "number", "W")],

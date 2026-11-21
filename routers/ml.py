@@ -14,9 +14,10 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse, Response
 from sqlalchemy.orm import Session
 
-from database import get_db
+from database import SessionLocal, get_db
 from models import AnnotationProject, MlModel, TrainingRun
 from routers.common import get_project_or_404, safe_upload_name
+from services import analysis_jobs, inference_service
 from schemas import AnnotationUpdatePayload, InferenceRunRequest, TrainingDecisionPayload, TrainingRunRequest
 from services.ai_import_service import import_payload
 from services.inference_service import (
@@ -37,7 +38,7 @@ from services.model_service import (
     store_model_bytes,
 )
 from services.review_service import project_review_summary
-from services.structure_service import document_structure, get_structure
+from services.structure_service import document_structure, get_structure_json, get_structures
 from services.training_data_service import class_stats, hard_drawings
 from services.training_service import running_training, serialize_run, start_training
 
@@ -179,10 +180,90 @@ def _run_inference(payload: InferenceRunRequest, db: Session, *, include_structu
     }
 
 
+# ---------------------------------------------------------------- バックグラウンドの解析（DD-0039）
+def _job_targets(payload: InferenceRunRequest, db: Session) -> tuple[MlModel, list[int]]:
+    model = active_model(db)
+    if model is None:
+        raise HTTPException(400, "推論に使うモデルがありません。先にモデルを登録してください")
+    if not inference_service.ultralytics_available():
+        raise HTTPException(400, "ultralytics がインストールされていないためサーバ内で解析できません。")
+    q = db.query(AnnotationProject.id)
+    if payload.project_ids:
+        q = q.filter(AnnotationProject.id.in_(payload.project_ids))
+    ids = [row[0] for row in q.order_by(AnnotationProject.id.asc()).all()]
+    if not ids:
+        raise HTTPException(404, "対象のプロジェクトがありません")
+    if payload.project_ids and set(payload.project_ids) != set(ids):
+        raise HTTPException(404, "対象に存在しない図面が含まれています")
+    return model, ids
+
+
+def _analysis_work(model_id: int, payload: InferenceRunRequest):
+    def work(job: analysis_jobs.AnalysisJob) -> None:
+        db = SessionLocal()
+        try:
+            model = db.query(MlModel).filter(MlModel.id == model_id).one()
+            projects = (db.query(AnnotationProject).filter(AnnotationProject.id.in_(job.project_ids))
+                        .order_by(AnnotationProject.id.asc()).all())
+            names = [p.name for p in projects]
+            analysis_jobs.set_current(job, names[0] if names else None)
+
+            def on_progress(event: dict) -> None:
+                index = job.done + 1
+                analysis_jobs.progress(job, event, names[index] if index < len(names) else None)
+
+            run_inference(db, model, projects, conf=payload.conf, connector_conf=payload.connector_conf,
+                          include_structure=True, keep_going=True, on_progress=on_progress,
+                          should_stop=lambda: job.cancel_requested)
+        finally:
+            db.close()
+
+    return work
+
+
+@router.post("/analysis/jobs", status_code=202)
+def analysis_job_start(payload: InferenceRunRequest, db: Session = Depends(get_db)):
+    """全図面（または選んだ図面）の解析を裏で始める。進み具合は GET /analysis/jobs/{id}。"""
+    model, ids = _job_targets(payload, db)
+    if not _inference_lock.acquire(blocking=False):
+        raise HTTPException(409, "別の解析を実行中です。完了してから再実行してください。")
+    try:
+        job = analysis_jobs.start(ids, payload.conf, payload.connector_conf, _analysis_work(model.id, payload),
+                                  on_finish=_inference_lock.release)
+    except Exception:
+        _inference_lock.release()
+        raise
+    return job.to_dict() | {"model": serialize_model(model)}
+
+
+@router.get("/analysis/jobs")
+def analysis_jobs_list():
+    return [j.to_dict() for j in analysis_jobs.recent()]
+
+
+@router.get("/analysis/jobs/{job_id}")
+def analysis_job_get(job_id: int):
+    job = analysis_jobs.get(job_id)
+    if job is None:
+        raise HTTPException(404, "解析のジョブが見つかりません")
+    return job.to_dict()
+
+
+@router.post("/analysis/jobs/{job_id}/cancel")
+def analysis_job_cancel(job_id: int):
+    job = analysis_jobs.cancel(job_id)
+    if job is None:
+        raise HTTPException(404, "解析のジョブが見つかりません")
+    return job.to_dict()
+
+
 @router.get("/projects/{project_id}/structure")
 def project_structure(project_id: int, db: Session = Depends(get_db)):
     get_project_or_404(db, project_id)
-    return {"project_id": project_id, "result": get_structure(db, project_id)}
+    # 保存した JSON（1 枚 400 KB ほど）は開かずにそのまま埋め込む（DD-0042）。中身は get_structure と同じ。
+    raw = get_structure_json(db, project_id)
+    return Response(f'{{"project_id":{project_id},"result":{raw if raw is not None else "null"}}}',
+                    media_type="application/json")
 
 
 @router.post("/analysis/export")
@@ -194,8 +275,9 @@ def export_structure(payload: InferenceRunRequest, db: Session = Depends(get_db)
     if not projects or (payload.project_ids and set(payload.project_ids) != {p.id for p in projects}):
         raise HTTPException(404, "対象の図面が見つかりません")
     pages = []
+    structures = get_structures(db, [p.id for p in projects])
     for project in projects:
-        result = get_structure(db, project.id)
+        result = structures.get(project.id)
         if result is None:
             raise HTTPException(409, f"構造解析が未実行の図面があります: {project.name}")
         pages.append({**result, "sheet_no": project.sheet_no})

@@ -58,6 +58,7 @@ def main() -> None:
     parser.add_argument("--structure-kb", type=int, default=430)
     parser.add_argument("--structure-file", type=Path, help="実際の構造解析の JSON（無ければ --structure-kb の大きさで作る）")
     parser.add_argument("--repeat", type=int, default=5)
+    parser.add_argument("--set-size", type=int, default=30, help="回路・対応表でまとめて読む図面の数")
     args = parser.parse_args()
 
     tmp = tempfile.mkdtemp(prefix="seqanno_bench_")
@@ -96,14 +97,23 @@ def main() -> None:
             "一覧 GET /projects": timed(lambda: client.get("/api/projects").raise_for_status(), args.repeat),
             "図面 GET /projects/{id}": timed(lambda: client.get(f"/api/projects/{pid}").raise_for_status(), args.repeat),
             "集計 GET /stats": timed(lambda: client.get("/api/stats").raise_for_status(), args.repeat),
+            "構造解析 GET /ml/projects/{id}/structure": timed(
+                lambda: client.get(f"/api/ml/projects/{pid}/structure").raise_for_status(), args.repeat),
         }
+        # 回路・対応表は図面セットの規模（既定 30 枚）でまとめて読む（DD-0042）
+        group = ids[:args.set_size]
+        rows[f"回路 POST /circuit/build（{len(group)} 枚）"] = timed(
+            lambda: client.post("/api/circuit/build", json={"project_ids": group}).raise_for_status(), args.repeat)
+        query = ",".join(map(str, group))
+        rows[f"対応表 GET /exchange/table json（{len(group)} 枚）"] = timed(
+            lambda: client.get(f"/api/exchange/table?format=json&project_ids={query}").raise_for_status(), args.repeat)
         victims = iter(ids[1:])
         rows["削除 DELETE /projects/{id}"] = timed(
             lambda: client.delete(f"/api/projects/{next(victims)}").raise_for_status(), args.repeat)
     print(f"図面 {args.projects} 枚、1 枚にシンボル {args.symbols}・端子 {args.symbols * 2}・配線 {args.wires}、"
           f"構造解析 {len(payload_json) // 1024} KB（中央値、ミリ秒）")
     for name, ms in rows.items():
-        print(f"  {name:<36} {ms:8.1f}")
+        print(f"  {name:<44} {ms:8.1f}")
 
 
 if __name__ == "__main__":

@@ -164,3 +164,17 @@ def link_tags(tags: list[Tag], page_sheets: dict[int, str | None]) -> tuple[list
                                 "message": f"札 {t.label or t.symbol_ref} と {u.own_sheet} の札 {u.label or u.symbol_ref} を、"
                                            "向かい合う札が 1 組だけのためつなぎました（電線番号があれば確かめられます）"})
     return pairs, diagnostics
+
+
+def page_references(page: dict[str, Any]) -> list[dict[str, Any]]:
+    """図面の中の行先札と種別「シート間参照」の配線が指すシート番号（図面セットの過不足を見るため。DD-0041）。"""
+    refs = [{"target": t, "symbol_ref": s["ref"], "label": s.get("label") or "", "source": "symbol"}
+            for s in page.get("symbols") or [] if (t := sheet_tag_target(s)) is not None]
+    for c in page.get("connections") or []:
+        if c.get("kind") != "sheet_ref":
+            continue
+        m = _SHEET.search(_norm(c.get("external_ref")).replace(" ", ""))
+        if m:
+            refs.append({"target": m.group(0), "symbol_ref": c.get("to_symbol_ref"), "label": c.get("external_ref") or "",
+                         "source": "connection"})
+    return refs

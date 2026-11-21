@@ -200,7 +200,7 @@ def test_conditions_match_synthetic_truth(seed):
 
 # ------------------------------------------------------------------------------------- 代表回路の正解・対応表
 
-from services import annotation_table, circuit_scenarios
+from services import annotation_table, circuit_scenarios  # noqa: E402
 
 
 def test_scenarios_compare_condition_cases_and_effects():

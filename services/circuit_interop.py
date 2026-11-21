@@ -87,6 +87,9 @@ def lcapy_netlist(circuit: Circuit, closed: dict[str, bool] | None = None, *, pa
                 lines.append(f"W {a} {b}")
             else:
                 lines.append(f"O {a} {b}")
+        elif e.kind == "d":
+            # ダイオードは導通していれば導線、止めていれば開放（Lcapy では理想ダイオードを解けないため。DD-0037）。
+            lines.append(f"O {a} {b}" if closed is not None and closed.get(e.name) is False else f"W {a} {b}")
         else:
             lines.append(f"R{p.ref} {a} {b} {e.resistance:g}")
     if leak:
