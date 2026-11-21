@@ -8,6 +8,9 @@
   reading   図面を読む手順（DD-0035）: 成立条件・3 値の判定・順引きが正解と一致するか
   drawings  合成図面（PDF → 画像 → 配線の読み取り → 回路）: 配線の再現率・適合率と、回路の意味が正解と同じか。
             きれいな図面と、スキャンに似せて劣化させた図面（受領図面はスキャン）の両方。--model で記号の検出も YOLO で行う
+  circles   リレーコイルと表示灯の判別（#39、DD-0043）: スキャン風の合成図面で、検出が正しいとき（correct）と
+            リレーコイル↔表示灯をすべて取り違えたとき（swapped）に、4 つの手がかりが直した数・誤って確定した数。
+            --enable-ocr が無いと文字の手がかり（色記号・リレー表・接点）は使えず、×印だけになる
 
 Example:
     python analysis/tools/eval_suite.py                      # 既定の規模。基準値（analysis/eval_baseline.json）と比べる
@@ -32,6 +35,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from analysis.synthetic_circuits import circles as circle_eval
 from analysis.synthetic_circuits import logic_eval
 from analysis.synthetic_circuits.dataset import DatasetConfig, evaluate_dataset, generate_dataset
 
@@ -40,8 +44,8 @@ BASELINE = TOOLS.parent / "eval_baseline.json"
 JST = timezone(timedelta(hours=9))
 # 規模（--quick と既定）。基準値はこの規模ごとに持つ（規模が変わると値も変わるため）。
 SCALES = {
-    "quick": {"logic_seeds": 8, "faults": 1, "reading_seeds": 8, "drawings": 8},
-    "full": {"logic_seeds": 40, "faults": 3, "reading_seeds": 40, "drawings": 40},
+    "quick": {"logic_seeds": 8, "faults": 1, "reading_seeds": 8, "drawings": 8, "circles": 4},
+    "full": {"logic_seeds": 40, "faults": 3, "reading_seeds": 40, "drawings": 40, "circles": 40},
 }
 # 指標ごとの向き。higher: 大きいほど良い、lower: 小さいほど良い。許す悪化の幅は TOLERANCE。
 DIRECTION_LOWER = ("false_alarms", "silent_harm", "wrong")
@@ -107,6 +111,23 @@ def run_drawings(count: int, work: Path, *, model: Path | None, enable_ocr: bool
     return out
 
 
+def run_circles(count: int, work: Path, *, enable_ocr: bool) -> dict[str, Any]:
+    """リレーコイルと表示灯の判別（DD-0043）。errors は判別の後に残った取り違え（要確認も含む）、
+    wrong_confirmed は誤った種別のまま「確定」にしたもの、wrong_changes は正しい検出を誤って書き換えたもの。"""
+    r = circle_eval.evaluate(count, work / "circles", enable_ocr=enable_ocr)
+    correct, swapped = r["scenarios"]["correct"], r["scenarios"]["swapped"]
+    circles = correct["circles"] + swapped["circles"]
+    return {
+        "circles.correct.wrong_changes": correct["broken"],
+        "circles.correct.wrong_confirmed": correct["confirmed_wrong"],
+        "circles.swapped.errors": swapped["after_errors"],
+        "circles.swapped.wrong_confirmed": swapped["confirmed_wrong"],
+        "circles.swapped.fixed_rate": _rate(swapped["fixed"], swapped["circles"]),
+        "circles.status_agree": _rate(correct["expected_status_ok"] + swapped["expected_status_ok"], circles),
+        "circles.errors": len(r["errors"]),
+    }
+
+
 def run_gold(gold: list[Path], pred: list[Path], work: Path) -> dict[str, Any]:
     """顧客の正解と機械の結果（どちらもアプリの書き出し ZIP）を eval_reading.py で比べ、主な正解率を取り出す。"""
     out_dir = work / "reading"
@@ -124,6 +145,10 @@ def run_gold(gold: list[Path], pred: list[Path], work: Path) -> dict[str, Any]:
             flat[prefix] = round(float(value), 4)
 
     walk("gold", report)
+    # リレーコイルと表示灯の取り違え（#39、DD-0043）。表示灯の正解が届いたら、この件数で改善を確かめる。
+    circles = report["summary"]["circles"]
+    flat |= {"gold.circles.relay_coil": circles["gold"]["relay_coil"], "gold.circles.lamp": circles["gold"]["lamp"],
+             "gold.circles.errors": circles["errors"]}
     return flat
 
 
@@ -158,7 +183,7 @@ def markdown(scale: str, metrics: dict[str, Any], worse: list[dict[str, Any]], b
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--quick", action="store_true", help="CI 向けの小さい規模で回す")
-    parser.add_argument("--only", nargs="+", choices=["logic", "reading", "drawings"], help="一部だけ回す")
+    parser.add_argument("--only", nargs="+", choices=["logic", "reading", "drawings", "circles"], help="一部だけ回す")
     parser.add_argument("--model", type=Path, help="記号の検出に使う YOLO の重み（無ければ正解の記号の位置を使う）")
     parser.add_argument("--enable-ocr", action="store_true", help="合成図面で文字の読み取り（RapidOCR）も行う")
     parser.add_argument("--gold", type=Path, nargs="+", help="顧客の正解（アプリの書き出し ZIP）")
@@ -175,7 +200,7 @@ def main() -> None:
         scale += "+model" if args.model else ""
         scale += "+ocr" if args.enable_ocr else ""
     size = SCALES["quick" if args.quick else "full"]
-    parts = args.only or ["logic", "reading", "drawings"]
+    parts = args.only or ["logic", "reading", "drawings", "circles"]
     out = args.out or Path("runs/eval") / datetime.now(JST).strftime("%Y%m%d-%H%M%S")
     out.mkdir(parents=True, exist_ok=True)
 
@@ -188,6 +213,8 @@ def main() -> None:
             metrics |= run_reading(size["reading_seeds"])
         if "drawings" in parts:
             metrics |= run_drawings(size["drawings"], Path(tmp), model=args.model, enable_ocr=args.enable_ocr)
+        if "circles" in parts:
+            metrics |= run_circles(size["circles"], Path(tmp), enable_ocr=args.enable_ocr)
         if args.gold:
             metrics |= run_gold(args.gold, args.pred, out)
     seconds = time.time() - start
