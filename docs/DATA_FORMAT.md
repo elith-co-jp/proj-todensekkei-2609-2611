@@ -259,6 +259,8 @@ AI 改善サイクル画面の構造解析をまとめて書き出したファ�
 | `dot_roles` | 黒丸の判定件数と判定に使った値 |
 | `quality.symbol_label_ocr` | ラベルを読んだ件数。`llm_reread_count` / `llm_text_reread_count` はローカル LLM、`name_ocr_reread_count` は日本語対応 OCR が読み直した件数。`quality.relay_rows_by_position`（行列で結び付いた行数）、`quality.circle_review`（円形の記号の確認件数） |
 
+アプリの DB では、図面ごとの `texts[]` を `structure_predictions.texts_json` にも写して持ち、回路の組み立てはそちらを読む（DD-0042。書き出す structure.json の内容は変わらない）。
+
 参照先の図面は、図面情報のシート番号（未入力ならシート番号の候補の 1 位）で照合する。枝番つきの参照（`ER21212-1`）は枝番なしの図面にも合わせる。
 
 
@@ -273,7 +275,7 @@ AI 改善サイクル画面の構造解析をまとめて書き出したファ�
 ```json
 {
   "schema": "todenyolo.object_attributes.v1",
-  "generated_at": "2026-11-07T06:00:00+00:00",
+  "generated_at": "2026-11-07T15:00:00+09:00",
   "template": true,
   "attribute_definitions": { "symbol": { "common": [], "by_class": {} }, "wire": [] },
   "projects": [{ "project_id": 1, "key": "ER21216", "sheet_no": "ER21216", "name": "ER21216.png" }],
@@ -301,10 +303,13 @@ AI 改善サイクル画面の構造解析をまとめて書き出したファ�
 | 対象 | 項目（キー・単位） |
 | --- | --- |
 | 記号（共通） | メーカー `maker`、型式 `model`、品番 `part_no`、定格電圧 `rated_voltage_v`（V）、取付位置 `location` |
-| リレーコイル | コイル抵抗 `coil_resistance_ohm`（Ω）、動作電圧 `pickup_voltage_v`（V） |
+| リレーコイル | コイル抵抗 `coil_resistance_ohm`（Ω）、動作電圧 `pickup_voltage_v`（V）、タイマーの種類 `timer_mode`（on_delay / off_delay。オンディレー・オフディレー・限時動作・限時復帰も可）、タイマーの時間 `delay_s`（s）（DD-0033） |
 | 電磁弁 | コイル抵抗 `coil_resistance_ohm`（Ω）、定格電流 `rated_current_a`（A） |
-| a 接点・b 接点 | 接点定格 `contact_rating_a`（A） |
+| a 接点・b 接点 | 接点定格 `contact_rating_a`（A）、タイマーの接点 `timer_contact`（瞬時なら `instant`。DD-0033）、外部入力・I/O `external_io`（yes なら図面範囲外の入力。DD-0035） |
+| 押しボタン | 接点の種類 `contact_kind`（a / b。空なら名前で決める: 停止は b・起動は a。DD-0037） |
+| ダイオード | アノード側の端子名 `anode_terminal`（空なら端子名 A・K で決める。DD-0037） |
 | コネクタ・端子 | ピン数 `pin_count` |
+| 表示灯 | 定格電力 `rated_power_w`（W） |
 | 配線 | 長さ `length_m`（m）、電線種別 `wire_type`、断面積 `cross_section_mm2`（mm²）、色 `color`、ケーブル番号 `cable_no`、心線番号 `core_no`、メーカー `maker` |
 
 取り込み（`POST /api/attributes/import`）:
@@ -315,3 +320,96 @@ AI 改善サイクル画面の構造解析をまとめて書き出したファ�
 - 同じファイルをもう一度取り込んでも変わらない。
 
 回路シミュレーション（DD-0009）は、リレーコイル・電磁弁の `coil_resistance_ohm`（または `resistance_ohm`）があればその値を負荷の抵抗に使う。
+
+---
+
+## 7. 回路の書き出し
+
+回路検証（SPECIFICATION.md §3.6）で、選んだ図面のアノテーションから組んだ回路を次の形で書き出す。どれも図面上の位置は含まず、
+位置の正本は bundle.json（§3）のアノテーション。
+
+| ファイル | API | 内容 |
+|---|---|---|
+| `circuit_code.py` | `POST /api/circuit/code` | 回路を書き換えられる Python のコード（DD-0029）。`CircuitCode` の呼び出し（`contact_a`・`contact_b`・負荷・タイマー）を図面ごとに並べたもので、リポジトリの中で `python circuit_code.py` と実行すると回路が組み上がる。各素子の `source=(図面 ID, 記号 ref)` で元の記号に戻れる。電気的なつながりと、リレーのコイルと接点の対応の正本 |
+| `circuit.cir` | `POST /api/circuit/netlist` | SPICE ネットリスト。LTspice・ngspice で開ける。接点は与えた入力・励磁の状態の開閉で出す |
+| `circuit_lcapy.txt` | `POST /api/circuit/lcapy` | Lcapy のネットリスト（DD-0028）。`lcapy.Circuit(text)` で読み込める。`fixed=true` なら接点を今の開閉（閉は導線 W・開は開放 O）に固定し、`false` なら接点をスイッチ（SW no / nc）で出す |
+| `circuit_skidl.py` | `POST /api/circuit/skidl` | SKiDL のスクリプト（DD-0028）。実行すると KiCad のネットリスト `circuit.net` を書き出す |
+
+ノード名は共通で、`P` / `P_xxx` が電源の正側（PER 母線）、`0` が負側（NER 母線）、`N001`… が配線でつながった端子の集まり。
+リレーの動作（コイルの励磁で接点が切り替わる）は Lcapy・SKiDL では表せないため、もしも・タイマーなどのシミュレーションは
+アプリの回路モデル（`services/circuit_model.py`）で行う。
+
+### 図面の変更の操作（DD-0034）
+
+図面の変更は操作の並び（JSON、最大 200 個）で表し、全体で 1 つの変更として原子的に適用する。操作の種類と各操作の
+JSON Schema は `GET /api/circuit/edit/tools` が返す（LLM のツール定義としてそのまま使える）。適用した変更は
+`circuit_change_sets`（ER_DIAGRAM.md）に、操作の並び・変更前の図面・変更後の図面のハッシュとともに残り、取り消せる。
+
+---
+
+## 8. 正解のやり取り（DD-0035）
+
+東電設計様と Elith の間で、図面の読み取りの正解をやり取りするための形式。
+
+### 8.1 対応表（`annotation_table.xlsx` / `.csv`）
+
+`GET /api/exchange/table?project_ids=1,2&drawing_set=<図面セットID>&format=xlsx`。xlsx は 2 枚のシート。
+
+| シート | 列・内容 |
+|---|---|
+| 対応表 | 図面セットID／ページID／要素ID／種別／原文／参照・接続先ID／判定／根拠・備考。要素 ID は「ページ:記号 ref」、端子は「ページ:記号 ref/端子名」。行は記号 1 個、配線 1 本、行先札の組 1 組、コイルと接点の対応 1 組（コイルの無い接点は出どころ） |
+| 代表回路 | 代表回路の正解（何を知りたいか・起点／出力・追う順番とページ・成立条件・成立する例・しない例）の記入例 |
+
+Elith が書き出して送り、東電設計様が判定の列（接続／非接続／不明）や原文を直して返す。返ってきた表は
+`POST /api/exchange/table/compare` で、関係（配線・別ページの継続・コイルと接点の対応）ごとの適合率・再現率と誤結線
+（正解で非接続の組を機械が出した数）、原文の完全一致率で照合する。「不明」の組は数えない。
+
+### 8.2 代表回路のシナリオ（YAML / JSON）
+
+`POST /api/exchange/scenarios/evaluate` に、シナリオの並び（`scenarios`）か YAML / JSON の文字列（`text`）を渡す。
+照合するのは、対象が見つかるか、成立条件が同じ論理か（違えば反例を返す）、例ごとの判定、順引きの影響先の適合率・再現率、
+根拠のページが正解のページを含むか。器具の名前は、器具番号の全体か先頭の語（一意なとき）で回路の器具に当てる。
+
+### 8.3 CVAT（`annotations.xml`）
+
+CVAT for images 1.1 の XML。`GET /api/exchange/cvat?project_ids=1,2` で書き出し、画像は `/api/projects/{id}/image` から取る。
+
+| 要素 | CVAT の形 | 属性 |
+|---|---|---|
+| 記号 | box | `ref`・`text` |
+| 端子 | points | `group_id` で記号に結ぶ |
+| 配線 | polyline | `from`・`to`・`wire_no`・`judge` |
+
+取り込み（`POST /api/exchange/cvat/import`）は、配線の端点をいちばん近い端子（12 px 以内）に着け、`judge=非接続` の線
+（単なる交差の例）は配線にしない。画像名の `p{図面 ID}_` か図面名・シート番号で図面に当て、大きさが違えば警告する。
+`apply=false` で確認だけ、`true` で図面のアノテーションを置き換える。ページをまたぐ関係は CVAT に入れず、対応表で扱う。
+
+---
+
+## 9. ベクター PDF の線・文字（`vector_pdf/{図面 ID}.json`）
+
+PDF で図面を登録すると、ページごとに PyMuPDF で線・黒丸（塗りつぶした小さい図形）・文字を取り出し、画像と同じ座標
+（150 dpi。横書きの図面を回したなら同じだけ回す）で `DATA_DIR/vector_pdf/{図面 ID}.json` に保存する。
+`GET /api/projects/{id}/vector-pdf` で返す。保存は図面の画像のハッシュに結び付け、ID を使い回した図面では古い内容を返さない。
+
+| 項目 | 内容 |
+|---|---|
+| `kind` | `vector`（線・文字あり）、`scan`（画像だけの PDF。線・文字は空）、`mixed`（ページの大半を画像が覆う）、`empty` |
+| `width` / `height` / `dpi` / `turn` | 画像の大きさ、解像度、登録時に回した角度 |
+| `wires` | 配線の候補の線。細切れの同じ線はつなぐ |
+| `frame` / `dashed` | 図枠（ページ幅・高さの 85% 以上、ページの端に沿う線）、破線（盤の枠・注釈線） |
+| `dots` | 黒丸 |
+| `texts` | 文字の行ごとの外接枠・向き（横・縦・回転）・大きさ |
+| `nets` / `junctions` / `crossings` | 接続でまとめた線の集まり（電気的な接続の候補）、接続点、黒丸の無い十字の交わり（非接続） |
+
+受け取る図面はスキャン PDF のため、通常は `kind = "scan"` になり、線・文字は画像から読む（構造解析）。
+電気的な接続の正本はアノテーションで、この JSON は候補にとどまる。
+
+---
+
+## 10. 時刻の表し方
+
+書き出しファイル（`exported_at`・`generated_at`）と API（`created_at`・`updated_at`・`started_at`・`finished_at`・`undone_at`）の
+時刻は、日本時間の ISO 形式（例 `2026-11-20T17:10:05+09:00`）で出す（DD-0036）。DB には UTC で保存している。
+オフセットの無い古い形式の値を読むときは UTC とみなす。
+

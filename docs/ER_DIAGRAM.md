@@ -25,6 +25,7 @@ erDiagram
         string color
         bool is_active
         int sort_order
+        datetime created_at
     }
     annotation_projects {
         int id PK
@@ -38,6 +39,8 @@ erDiagram
         string status
         string assignee
         text note
+        datetime created_at
+        datetime updated_at
     }
     annotation_images {
         int id PK
@@ -46,6 +49,7 @@ erDiagram
         string sha256
         int width
         int height
+        datetime created_at
     }
     annotation_symbols {
         int id PK
@@ -61,6 +65,7 @@ erDiagram
         string origin "manual / inference"
         float confidence "推論由来の信頼度（NULL 可）"
         text attributes_json "メーカー・型式などの属性（DD-0010）"
+        datetime created_at
     }
     symbol_terminals {
         int id PK
@@ -85,6 +90,7 @@ erDiagram
         string origin "manual / inference"
         string ref "図面内で一意（W-0001）"
         text attributes_json "長さ・電線種別などの属性（DD-0010）"
+        datetime created_at
     }
     ml_models {
         int id PK
@@ -118,7 +124,23 @@ erDiagram
         text payload_json "構造解析の結果（1 枚 400 KB ほど）"
         int wire_count "一覧用。JSON を書くたびに数え直す"
         int connection_count "一覧用。同上"
+        text texts_json "回路用の文字の写し（DD-0042）"
         datetime created_at
+    }
+    circuit_change_sets {
+        int id PK
+        string title "変更の題名"
+        text reason "NULL 可"
+        string author "user / llm / 名前"
+        text project_ids_json "対象の図面（その時点の一覧）"
+        text ops_json "操作の並び（DD-0034）"
+        text notes_json "操作ごとの説明。NULL 可"
+        text summary_json "試行の結果の要約。NULL 可"
+        text before_json "変更前の図面（取り消しで戻す）"
+        string after_hash "変更後の図面のハッシュ"
+        string status "applied / undone"
+        datetime created_at
+        datetime undone_at "NULL 可"
     }
     training_runs {
         int id PK
@@ -130,6 +152,10 @@ erDiagram
         string base_model
         int result_model_id FK "NULL 可"
         text metrics_json
+        string decision "pending / adopted / rejected。空は判定なし"
+        text baseline_metrics_json "旧モデルの評価指標"
+        string baseline_label "旧モデルの表示名"
+        text eval_scope_json "評価に使った図面の範囲（holdout / train）"
         text log_tail
         datetime started_at
         datetime finished_at
@@ -201,8 +227,11 @@ ORM の relationship は `passive_deletes=True` で、子を読み込まずに�
 | `connections (from_symbol_id)` / `(to_symbol_id)` / `(from_terminal_id)` / `(to_terminal_id)` | 記号・端子を消したときの連鎖 |
 | `symbol_terminals (symbol_id)` | 記号の端子の読み込み・連鎖 |
 | `predictions (project_id, kind)` | 図面の推論結果・件数 |
+| `annotation_symbols (class_id)` / `predictions (class_id)` | クラスごとの集計（`/api/stats`）、クラスが使われているかの確認（DD-0042） |
+| `predictions (model_id)` / `training_runs (result_model_id)` | モデルを消したときの `SET NULL`（DD-0042） |
 | `annotation_images (project_id)` / `(sha256)` | 図面の画像・同じ画像の検索 |
 | `ml_models (sha256)` | 同じモデルの検索 |
+| `drawing_set_members (project_id)` | 図面を消したときに図面セットから外す連鎖（DD-0041） |
 
 主キーに重ねた索引（`ix_<表>_id`）は作りません（主キーの索引で足ります）。
 
@@ -213,10 +242,16 @@ ORM の relationship は `passive_deletes=True` で、子を読み込まずに�
 行ごとの遅延読み込み（記号 150 個なら端子だけで 150 回のクエリ）をしません。
 一覧に出す構造解析の件数は `structure_predictions` の列から読み、JSON は開きません。
 
+回路・対応表・CVAT・図面セットのように何十枚もまとめて読むところは、`annotation_service.load_pages` を使います（DD-0042）。
+表ごとに 1 回の SELECT で読み、ORM の行を組み立てずに、`serialize_project` と同じ形の辞書を返します。
+回路が使う構造解析の文字（母線の PER/NER など）は `structure_predictions.texts_json` から読み、1 枚 400 KB ほどの
+`payload_json` 全体は開きません。`texts_json` は `payload_json` を書くたびに写し（`@validates`。文字が無ければ `"[]"`）、
+NULL は「まだ写していない」の意味です。`GET /api/ml/projects/{id}/structure` は保存した JSON をそのまま返します（応答の形は以前と同じ）。
+
 ### 既存 DB の移行
 
 `db_migrations.py` の `STEPS` を起動のたびに順に実行します。どの手順も済んでいれば何もしません。
-列の追加、件数の列の埋め戻し、親の無い行の片付け、配線の参照名の振り直し（欠けと重複）、
+列の追加、件数の列の埋め戻し、文字の列（`texts_json`）の埋め戻し（DD-0042）、親の無い行の片付け、配線の参照名の振り直し（欠けと重複）、
 索引の作成、主キーに重ねた索引の削除、の順です。
 
 ### AI 改善サイクルのデータ
@@ -225,9 +260,23 @@ ORM の relationship は `passive_deletes=True` で、子を読み込まずに�
   人が確認・修正して `annotation_symbols`（`origin=inference`）へ昇格させたものが
   学習データとして蓄積される、という分担です。
 - `training_runs` は学習ジョブの実行履歴。成功時は結果の `best.pt` が
-  `ml_models` に `source=trained` かつ `is_active` で登録されます。
+  `ml_models` に `source=trained` で登録され、`decision=pending`（採用待ち）になります。
+  利用者が新旧の比較を見て採用すると使用中（`is_active`）に切り替わります。比較する使用中のモデルが無い初回だけは
+  自動で使用中にします（`decision=adopted`）。
   学習に使った図面は `project_ids_json` に**その時点の一覧**として残します（図面を後で消しても
   履歴は変わらないので、関連の表にはしていません）。
+
+### 回路の変更のデータ（DD-0034）
+
+- `circuit_change_sets` は図面の変更（操作の並び）を適用した記録です。変更前の図面（記号・端子・配線）を `before_json` に
+  丸ごと持ち、取り消すとそれに戻します（`status=undone`）。取り消す前に図面が変わっていないかは `after_hash` で確かめます。
+- 変更は複数の図面にまたがりうるので、図面との関連は外部キーにせず、`project_ids_json` にその時点の一覧として残します
+  （`training_runs.project_ids_json` と同じ考え方）。図面を削除しても履歴は残ります。
+
+### 時刻
+
+`created_at` などの日時の列は、タイムゾーンなしの UTC で保存します（`models.utc_now_naive`）。API・画面・書き出しでは
+日本時間（`+09:00`）に直して出します（DD-0036）。DB の移行は不要です。
 
 ### DB 変更時の運用ルール
 
