@@ -13,7 +13,13 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from models import AnnotationProject, AnnotationSymbol, Connection
-from services.annotation_service import WITH_ANNOTATIONS, dump_attributes, load_attributes, serialize_project
+from services.annotation_service import (
+    WITH_ANNOTATIONS,
+    classes_ordered,
+    dump_attributes,
+    load_attributes,
+    serialize_project,
+)
 from services.attribute_definitions import WIRE, all_definitions, symbol_definitions
 from services.jst import now_iso_jst
 
@@ -42,9 +48,10 @@ def export_document(db: Session, project_ids: list[int], template: bool = False)
     if not projects:
         raise ValueError("図面を選んでください")
     keys = _page_keys(projects)
+    classes = {c.id: c for c in classes_ordered(db)}
     objects = []
     for project in projects:
-        page = serialize_project(db, project, with_image_meta=False)
+        page = serialize_project(db, project, with_image_meta=False, classes=classes)
         base = {"project_id": project.id, "sheet_no": project.sheet_no}
         for s in page["symbols"]:
             objects.append({

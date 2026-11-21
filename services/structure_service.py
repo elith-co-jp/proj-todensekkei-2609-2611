@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import unicodedata
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from analysis.relay_links import link_document_relay_rows
@@ -39,8 +40,41 @@ def save_structure(db: Session, project_id: int, payload: dict) -> None:
 
 
 def get_structure(db: Session, project_id: int) -> dict | None:
-    row = db.get(StructurePrediction, project_id)
-    return json.loads(row.payload_json) if row else None
+    raw = get_structure_json(db, project_id)
+    return json.loads(raw) if raw is not None else None
+
+
+def get_structure_json(db: Session, project_id: int) -> str | None:
+    """保存した JSON の文字列そのもの（開かずに返すとき用）。"""
+    return db.execute(
+        select(StructurePrediction.payload_json).where(StructurePrediction.project_id == project_id)
+    ).scalar_one_or_none()
+
+
+def get_structures(db: Session, project_ids: list[int]) -> dict[int, dict]:
+    """図面ごとの構造解析の結果を 1 回のクエリで読む。結果の無い図面は含めない。"""
+    if not project_ids:
+        return {}
+    rows = db.execute(select(StructurePrediction.project_id, StructurePrediction.payload_json)
+                      .where(StructurePrediction.project_id.in_(set(project_ids))))
+    return {pid: json.loads(raw) for pid, raw in rows}
+
+
+def get_structure_texts(db: Session, project_ids: list[int]) -> dict[int, list]:
+    """構造解析が読んだ文字（payload の texts）だけを、JSON 全体を開かずに読む（DD-0042）。
+
+    文字が無い（構造解析が無いか、texts が空の）図面は含めない。列が未反映（NULL）の行は JSON 全体から読む。
+    """
+    if not project_ids:
+        return {}
+    out: dict[int, list] = {}
+    rows = db.execute(select(StructurePrediction.project_id, StructurePrediction.texts_json)
+                      .where(StructurePrediction.project_id.in_(set(project_ids))))
+    for pid, raw in rows:
+        texts = json.loads(raw) if raw is not None else (get_structure(db, pid) or {}).get("texts")
+        if texts:
+            out[pid] = texts
+    return out
 
 
 def document_structure(pages: list[dict]) -> dict:

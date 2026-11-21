@@ -140,8 +140,9 @@ def build_connections_csv(db: Session, projects: list[AnnotationProject]) -> str
             "note",
         ]
     )
+    classes = {c.id: c for c in classes_ordered(db)}
     for p in projects:
-        data = serialize_project(db, p, with_image_meta=False)
+        data = serialize_project(db, p, with_image_meta=False, classes=classes)
         by_ref = {s["ref"]: s for s in data["symbols"]}
         for c in data["connections"]:
             src = by_ref.get(c["from_symbol_ref"], {})
@@ -190,8 +191,9 @@ def _node_key(sym: str, term: str | None) -> str:
 def build_netlist(db: Session, projects: list[AnnotationProject]) -> dict:
     """from-to を連結して、同一ネットに属する端子集合を求める（Union-Find）。"""
     out = []
+    classes = {c.id: c for c in classes_ordered(db)}
     for p in projects:
-        data = serialize_project(db, p, with_image_meta=False)
+        data = serialize_project(db, p, with_image_meta=False, classes=classes)
         parent: dict[str, str] = {}
         for c in data["connections"]:
             _union(
@@ -232,6 +234,7 @@ def build_netlist(db: Session, projects: list[AnnotationProject]) -> dict:
 
 
 def build_bundle(db: Session, projects: list[AnnotationProject]) -> dict:
+    classes = classes_ordered(db)
     return {
         "schema_version": SCHEMA_VERSION,
         "tool": TOOL_NAME,
@@ -245,9 +248,9 @@ def build_bundle(db: Session, projects: list[AnnotationProject]) -> dict:
                 "sort_order": c.sort_order,
                 "is_active": bool(c.is_active),
             }
-            for c in classes_ordered(db)
+            for c in classes
         ],
-        "projects": [serialize_project(db, p) for p in projects],
+        "projects": [serialize_project(db, p, classes={c.id: c for c in classes}) for p in projects],
     }
 
 

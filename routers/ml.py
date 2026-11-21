@@ -38,7 +38,7 @@ from services.model_service import (
     store_model_bytes,
 )
 from services.review_service import project_review_summary
-from services.structure_service import document_structure, get_structure
+from services.structure_service import document_structure, get_structure_json, get_structures
 from services.training_data_service import class_stats, hard_drawings
 from services.training_service import running_training, serialize_run, start_training
 
@@ -260,7 +260,10 @@ def analysis_job_cancel(job_id: int):
 @router.get("/projects/{project_id}/structure")
 def project_structure(project_id: int, db: Session = Depends(get_db)):
     get_project_or_404(db, project_id)
-    return {"project_id": project_id, "result": get_structure(db, project_id)}
+    # 保存した JSON（1 枚 400 KB ほど）は開かずにそのまま埋め込む（DD-0042）。中身は get_structure と同じ。
+    raw = get_structure_json(db, project_id)
+    return Response(f'{{"project_id":{project_id},"result":{raw if raw is not None else "null"}}}',
+                    media_type="application/json")
 
 
 @router.post("/analysis/export")
@@ -272,8 +275,9 @@ def export_structure(payload: InferenceRunRequest, db: Session = Depends(get_db)
     if not projects or (payload.project_ids and set(payload.project_ids) != {p.id for p in projects}):
         raise HTTPException(404, "対象の図面が見つかりません")
     pages = []
+    structures = get_structures(db, [p.id for p in projects])
     for project in projects:
-        result = get_structure(db, project.id)
+        result = structures.get(project.id)
         if result is None:
             raise HTTPException(409, f"構造解析が未実行の図面があります: {project.name}")
         pages.append({**result, "sheet_no": project.sheet_no})

@@ -28,6 +28,7 @@ ADDED_COLUMNS: list[tuple[str, str, str]] = [
     ("predictions", "kind", "VARCHAR(20) NOT NULL DEFAULT 'symbol'"),
     ("structure_predictions", "wire_count", "INTEGER"),
     ("structure_predictions", "connection_count", "INTEGER"),
+    ("structure_predictions", "texts_json", "TEXT"),
 ]
 
 
@@ -48,6 +49,22 @@ def backfill_prediction_kind(conn: DbConnection) -> None:
     region_ids = [{"id": row.id} for row in rows if detection_kind(row.w, row.h) == "region"]
     if region_ids:
         conn.execute(text("UPDATE predictions SET kind = 'region' WHERE id = :id"), region_ids)
+
+
+def backfill_structure_texts(conn: DbConnection) -> None:
+    """文字の列が空（NULL）の行に、構造解析の結果の texts を写す（DD-0042）。
+
+    列を足す前の結果と、列を知らない古い版で解析し直した結果が対象。いまの版は必ず書く（文字が無くても "[]"）ので、
+    済んでいれば対象は無い。1 枚ずつ読んで書き、図面が多くても一度に全部の JSON をメモリに載せない。
+    """
+    from models import structure_texts_json
+
+    ids = conn.execute(text("SELECT project_id FROM structure_predictions WHERE texts_json IS NULL")).scalars().all()
+    for project_id in ids:
+        raw = conn.execute(text("SELECT payload_json FROM structure_predictions WHERE project_id = :p"),
+                           {"p": project_id}).scalar_one()
+        conn.execute(text("UPDATE structure_predictions SET texts_json = :t WHERE project_id = :p"),
+                     {"t": structure_texts_json(json.loads(raw)), "p": project_id})
 
 
 def backfill_structure_counts(conn: DbConnection) -> None:
@@ -119,6 +136,7 @@ def drop_redundant_indexes(conn: DbConnection) -> None:
 STEPS: list[Callable[[DbConnection], None]] = [
     add_columns,
     backfill_structure_counts,
+    backfill_structure_texts,
     remove_orphans,
     assign_connection_refs,
     create_indexes,

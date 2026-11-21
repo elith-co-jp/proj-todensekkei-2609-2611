@@ -13,7 +13,7 @@ from database import get_db
 from models import AnnotationProject
 from schemas import AnnotationUpdatePayload
 from services import annotation_table, circuit_scenarios, cvat_format
-from services.annotation_service import WITH_ANNOTATIONS, replace_annotations, serialize_project
+from services.annotation_service import load_pages, replace_annotations
 from services.circuit_service import annotation_table_rows, evaluate_scenarios
 
 router = APIRouter(prefix="/api/exchange", tags=["exchange"])
@@ -32,10 +32,10 @@ def _ids(project_ids: str) -> list[int]:
 
 
 def _projects(db: Session, ids: list[int]) -> list[dict[str, Any]]:
-    projects = db.query(AnnotationProject).options(*WITH_ANNOTATIONS).filter(AnnotationProject.id.in_(ids)).all()
-    if not projects:
+    pages = load_pages(db, ids)
+    if not pages:
         raise HTTPException(404, "図面がありません")
-    return [serialize_project(db, p, with_image_meta=False) for p in sorted(projects, key=lambda p: p.id)]
+    return pages
 
 
 @router.get("/table")

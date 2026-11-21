@@ -5,9 +5,10 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from models import AnnotationProject
+from models import AnnotationImage, AnnotationProject
 from services import (
     circuit_code,
     circuit_edit,
@@ -18,23 +19,34 @@ from services import (
     consistency,
     vector_pdf,
 )
-from services.annotation_service import WITH_ANNOTATIONS, serialize_project
+from services.annotation_service import load_pages
 from services.circuit_model import SUPPLY_V, Circuit, build_circuit, export_netlist, simulate
 from services.jst import iso_jst
-from services.structure_service import get_structure
+from services.structure_service import get_structure_texts, get_structures
 
 LIVE_RATIO = 0.5
 
 
 def _pages(db: Session, project_ids: list[int]) -> tuple[list[dict[str, Any]], dict[int, list[dict[str, Any]]]]:
-    projects = db.query(AnnotationProject).options(*WITH_ANNOTATIONS).filter(AnnotationProject.id.in_(project_ids)).all()
-    if not projects:
+    pages = load_pages(db, project_ids)
+    if not pages:
         raise ValueError("図面を選んでください")
-    pages = [serialize_project(db, p, with_image_meta=False) for p in sorted(projects, key=lambda p: p.id)]
-    shas = {p.id: p.images[0].sha256 if p.images else None for p in projects}
-    texts = {p["id"]: (get_structure(db, p["id"]) or {}).get("texts") or _vector_texts(p["id"], shas.get(p["id"]))
-             for p in pages}
-    return pages, texts
+    ids = [p["id"] for p in pages]
+    texts = get_structure_texts(db, ids)
+    if missing := [pid for pid in ids if pid not in texts]:
+        shas: dict[int, str] = {}
+        for pid, sha in db.execute(select(AnnotationImage.project_id, AnnotationImage.sha256)
+                                   .where(AnnotationImage.project_id.in_(missing)).order_by(AnnotationImage.id)):
+            shas.setdefault(pid, sha)
+        for pid in missing:
+            texts[pid] = _vector_texts(pid, shas.get(pid))
+    return pages, {pid: texts[pid] for pid in ids}
+
+
+def _structures(db: Session, pages: list[dict[str, Any]]) -> dict[int, Any]:
+    """図面ごとの構造解析の結果（無い図面は None）。1 回のクエリで読む。"""
+    found = get_structures(db, [p["id"] for p in pages])
+    return {p["id"]: found.get(p["id"]) for p in pages}
 
 
 def _vector_texts(project_id: int, image_sha256: str | None) -> list[dict[str, Any]]:
@@ -188,7 +200,7 @@ FIX_CLASSES = frozenset({"contact_a", "contact_b", "relay_coil"})
 def consistency_check(db: Session, project_ids: list[int]) -> dict[str, Any]:
     """複数の解析方法の結果の矛盾と、精査の結果・直し方（DD-0031）。"""
     pages, texts = _pages(db, project_ids)
-    structures = {p["id"]: get_structure(db, p["id"]) for p in pages}
+    structures = _structures(db, pages)
     return consistency.check(pages, structures, bus_texts=texts)
 
 
@@ -236,8 +248,7 @@ def apply_consistency_fixes(db: Session, project_ids: list[int], issue_ids: list
 
 def _edit_inputs(db: Session, project_ids: list[int]) -> tuple[list[dict[str, Any]], dict[int, Any], dict[int, Any]]:
     pages, texts = _pages(db, project_ids)
-    structures = {p["id"]: get_structure(db, p["id"]) for p in pages}
-    return pages, texts, structures
+    return pages, texts, _structures(db, pages)
 
 
 def edit_context(db: Session, project_ids: list[int]) -> dict[str, Any]:
