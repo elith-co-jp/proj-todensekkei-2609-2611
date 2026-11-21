@@ -15,6 +15,11 @@ const api = vi.hoisted(() => ({
   imageUrl: (id: number) => `/img/${id}`,
   circuitEditHistory: vi.fn(async () => ({ change_sets: [] })),
   traceTargets: vi.fn(async () => ({ loads: [], devices: [] })),
+  listDrawingSets: vi.fn(async () => []),
+  drawingSetCoverage: vi.fn(),
+  createDrawingSet: vi.fn(),
+  updateDrawingSet: vi.fn(),
+  suggestDrawingSets: vi.fn(async () => []),
 }))
 vi.mock('../api/client', () => ({ api, BASE: '' }))
 

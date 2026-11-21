@@ -626,3 +626,32 @@ export type TraceTargets = {
   loads: { name: string; device?: string; project_id?: number; symbol_ref?: string }[]
   devices: { device: string; source: TraceSource; source_label: string; reason: string; contact_count: number }[]
 }
+
+// 図面セット（DD-0041）。回路の API にはセットの図面の ID をそのまま渡す
+export type DrawingSet = {
+  id: number
+  name: string
+  note: string | null
+  project_ids: number[]
+  sheets?: (string | null)[]
+  created_at: string | null
+  updated_at: string | null
+}
+
+export type DrawingSetCoverage = {
+  set: DrawingSet
+  missing_sheets: {
+    sheet: string
+    referenced_by: { project_id: number; name: string; target: string; symbol_ref: string | null; label: string; source: string }[]
+    candidates: { project_id: number; name: string; sheet: string }[]
+  }[]
+  pages_without_sheet: { project_id: number; name: string }[]
+  complete: boolean
+}
+
+export type DrawingSetSuggestion = {
+  name: string
+  project_ids: number[]
+  sheets: string[]
+  missing_sheets: string[]
+}

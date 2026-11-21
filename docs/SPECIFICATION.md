@@ -145,7 +145,7 @@ ZIP を選択してインポートすると、`bundle.json` の有無で復元�
 
 **画面の構成**（「図面選択 → 回路作成 → 動作確認」の 3 段で示す。文言とアイコンは [UI_WORDING.md](UI_WORDING.md)）
 
-- 図面選択の欄は、検索、全選択／選択解除、選択中の枚数を持つ。「回路を作成」のあとは 1 行に畳み、「図面選択」「再作成」（エディタで直した内容を読み込み直す）を置く
+- 図面選択の欄は、図面セット（DD-0041）、検索、全選択／選択解除、選択中の枚数を持つ。図面セットを選ぶとその図面を選び、行先札が指すのにセットに無いシートを示す（登録済みなら「選択に追加」）。選んだ図面は名前を付けてセットとして保存でき、「行先札から候補」で札でつながる図面の組を候補に出す。「回路を作成」のあとは 1 行に畳み、「図面選択」「再作成」（エディタで直した内容を読み込み直す）を置く
 - 図面一覧の各図面の「回路検証」アイコンと、選んだ図面の「回路検証（N 件）」から `#/circuit?ids=1,2` で開くと、その図面で回路を組んだ状態になる
 - 作成したあとは、見出しを 1 行（図面・警告の件数・図面選択・再作成）に縮め、残りの高さをすべて図面に使う
 - 図面はホイールでカーソル位置を中心に拡大・縮小、ドラッグで移動、ダブルクリック・「全体表示」・F キーで全体表示、＋／− キーで拡大・縮小（倍率を表示）。「全画面」でメニューも隠して画面いっぱいに表示し、Esc で戻る
@@ -227,6 +227,10 @@ ZIP を選択してインポートすると、`bundle.json` の有無で復元�
 | `GET` | `/api/attributes/definitions` | 記号（共通・種類別）と配線の標準の属性 |
 | `POST` | `/api/attributes/export` | `{project_ids[], template}`。オブジェクト ID と属性を 1 対 1 で並べた JSON（DATA_FORMAT.md §6） |
 | `POST` | `/api/attributes/import` | multipart `file`。属性の JSON を取り込み、`updated`・`unchanged`・`not_found`・`duplicates`・`type_mismatch`・`invalid` を返す |
+| `GET` / `POST` | `/api/drawing-sets` | 図面セットの一覧 / 作成 `{name, project_ids[], note}`（201。同じ名前は 400）。DD-0041 |
+| `GET` / `PUT` / `DELETE` | `/api/drawing-sets/{id}` | 図面セットの取得 / 変更（`name`・`project_ids`・`note`）/ 削除（204。図面は消えない） |
+| `GET` | `/api/drawing-sets/{id}/coverage` | 行先札が指すのにセットに無いシート（`missing_sheets`: 参照した札と、登録済みの図面の候補）、シート番号の分からない図面、`complete` |
+| `GET` | `/api/drawing-sets/suggest` | 登録済みの全図面を、行先札でつながるまとまりに分けた候補（保存しない）。回路の API にはセットの `project_ids` を渡す |
 | `POST` | `/api/circuit/build` | `{project_ids[]}`。回路を組み、コイルと接点、外部入力、確認が必要な箇所（`diagnostics`）、電源、解き方（`engine`）を返す |
 | `POST` | `/api/circuit/simulate` | `{project_ids[], inputs: {器具番号: bool}, energized: {器具番号: bool}}`。前の励磁状態から解き、`coil_states`・`warnings`・図面ごとの重ね表示（`overlay`）を返す |
 | `POST` | `/api/circuit/split-coil-wires` | `{symbols[], connections[], image_width, image_height}`（PUT annotations と同じ形）。コイルを通り抜ける配線を 2 本に分けて端子を付けた結果（`symbols`・`connections`・`counts`）を返す。保存はしない |

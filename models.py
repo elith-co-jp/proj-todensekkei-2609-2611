@@ -350,3 +350,30 @@ class CircuitChangeSet(Base):
     status = Column(String(20), nullable=False, default="applied")  # applied / undone
     created_at = Column(DateTime, default=utc_now_naive)
     undone_at = Column(DateTime, nullable=True)
+
+
+class DrawingSet(Base):
+    """図面セット（DD-0041）: 行先札でつながる一続きの図面の組。回路・波及範囲・追跡をセット単位で回す。
+
+    1 枚の図面は複数のセットに入れてよい（電源の図面など、いくつかのセットが共有する図面がある）。
+    """
+
+    __tablename__ = "drawing_sets"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String(200), nullable=False, unique=True)
+    note = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=utc_now_naive)
+    updated_at = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
+
+    members = relationship("DrawingSetMember", back_populates="drawing_set", cascade="all, delete-orphan",
+                           passive_deletes=True, order_by="DrawingSetMember.project_id")
+
+
+class DrawingSetMember(Base):
+    __tablename__ = "drawing_set_members"
+
+    set_id = Column(Integer, ForeignKey("drawing_sets.id", ondelete="CASCADE"), primary_key=True)
+    project_id = Column(Integer, ForeignKey("annotation_projects.id", ondelete="CASCADE"), primary_key=True, index=True)
+
+    drawing_set = relationship("DrawingSet", back_populates="members")

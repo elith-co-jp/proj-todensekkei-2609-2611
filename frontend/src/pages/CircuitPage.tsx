@@ -32,6 +32,7 @@ import TimelinePanel from './circuit/TimelinePanel'
 import TracePanel from './circuit/TracePanel'
 import WhatIfPanel from './circuit/WhatIfPanel'
 import DrawingViewer from './circuit/DrawingViewer'
+import DrawingSetBar from './circuit/DrawingSetBar'
 
 const ENGINE_LABEL = { ngspice: 'ngspice で計算', builtin: '内蔵ソルバで計算（ngspice 未導入）' }
 
@@ -455,7 +456,10 @@ export default function CircuitPage() {
           <X size={12} /> 選択解除
         </button>
       </div>
-      <div className="thin-scroll my-3 flex max-h-44 flex-wrap gap-2 overflow-auto">
+      <div className="mt-3">
+        <DrawingSetBar selected={selected} onSelect={(next) => setIds(new Set(next))} />
+      </div>
+      <div className="thin-scroll mb-3 flex max-h-44 flex-wrap gap-2 overflow-auto">
         {rows.length === 0 && (
           <p className="text-xs text-slate-500">
             まだ図面がありません。<Link className="font-bold text-blue-700 underline" to="/">図面一覧</Link>で登録してください。

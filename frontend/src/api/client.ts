@@ -1,5 +1,8 @@
 import type {
   AnalysisJob,
+  DrawingSet,
+  DrawingSetCoverage,
+  DrawingSetSuggestion,
   AiImportResult,
   AttributeDefinitions,
   AttributeImportReport,
@@ -220,6 +223,29 @@ export const api = {
   listAnalysisJobs: () => req<AnalysisJob[]>('/api/ml/analysis/jobs'),
 
   cancelAnalysisJob: (jobId: number) => req<AnalysisJob>(`/api/ml/analysis/jobs/${jobId}/cancel`, { method: 'POST' }),
+
+  // 図面セット（DD-0041）
+  listDrawingSets: () => req<DrawingSet[]>('/api/drawing-sets'),
+
+  createDrawingSet: (name: string, projectIds: number[]) =>
+    req<DrawingSet>('/api/drawing-sets', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, project_ids: projectIds }),
+    }),
+
+  updateDrawingSet: (id: number, change: { name?: string; project_ids?: number[]; note?: string }) =>
+    req<DrawingSet>(`/api/drawing-sets/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(change),
+    }),
+
+  deleteDrawingSet: (id: number) => req<void>(`/api/drawing-sets/${id}`, { method: 'DELETE' }),
+
+  drawingSetCoverage: (id: number) => req<DrawingSetCoverage>(`/api/drawing-sets/${id}/coverage`),
+
+  suggestDrawingSets: () => req<DrawingSetSuggestion[]>('/api/drawing-sets/suggest'),
 
   getStructure: (projectId: number) =>
     req<{ project_id: number; result: StructureResult | null }>(`/api/ml/projects/${projectId}/structure`),
