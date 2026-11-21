@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 
 from models import AnnotationProject, DrawingSet, DrawingSetMember
 from services import sheet_links
-from services.annotation_service import WITH_ANNOTATIONS, serialize_project
+from services.annotation_service import load_pages
 from services.jst import iso_jst
 
 
@@ -113,10 +113,9 @@ def set_project_ids(db: Session, set_id: int) -> list[int]:
 
 
 def _pages(db: Session, project_ids: list[int] | None = None) -> list[dict[str, Any]]:
-    q = db.query(AnnotationProject).options(*WITH_ANNOTATIONS)
-    if project_ids is not None:
-        q = q.filter(AnnotationProject.id.in_(project_ids))
-    return [serialize_project(db, p, with_image_meta=False) for p in sorted(q.all(), key=lambda p: p.id)]
+    if project_ids is None:
+        project_ids = [pid for (pid,) in db.query(AnnotationProject.id)]
+    return load_pages(db, project_ids)
 
 
 def coverage(db: Session, set_id: int) -> dict[str, Any]:

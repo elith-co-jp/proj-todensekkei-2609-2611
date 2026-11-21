@@ -13,6 +13,7 @@ import os
 from pathlib import Path
 
 from PIL import Image
+from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from database import IMAGE_DIR
@@ -260,11 +261,64 @@ WITH_ANNOTATIONS = (
 )
 
 
-def serialize_project(db: Session, project: AnnotationProject, with_image_meta: bool = True) -> dict:
-    """端子の参照名は記号の中の並び（id 順）で SYM-0001-T1 のように付ける。"""
-    cls_by_id = {c.id: c for c in classes_ordered(db)}
-    symbols = sorted(project.symbols, key=lambda s: s.ref)
-    terminal_refs = {t.id: f"{s.ref}-T{i}" for s in symbols for i, t in enumerate(s.terminals, start=1)}
+def serialize_project(
+    db: Session, project: AnnotationProject, with_image_meta: bool = True,
+    classes: dict[int, SymbolClass] | None = None,
+) -> dict:
+    """端子の参照名は記号の中の並び（id 順）で SYM-0001-T1 のように付ける。
+
+    classes（クラスの id → 行）を渡せば、図面ごとにクラスの表を読み直さない。
+    """
+    cls_by_id = classes if classes is not None else {c.id: c for c in classes_ordered(db)}
+    data = _page_dict(project, project.symbols, {s.id: s.terminals for s in project.symbols},
+                      project.connections, cls_by_id)
+    if with_image_meta:
+        data["images"] = [
+            {"filename": im.filename, "sha256": im.sha256, "width": im.width, "height": im.height}
+            for im in project.images
+        ]
+    return data
+
+
+def load_pages(db: Session, project_ids: list[int]) -> list[dict]:
+    """読むだけの図面（serialize_project(with_image_meta=False) と同じ形）を、図面の id 順に返す。
+
+    回路・対応表・図面セットのように何十枚もまとめて読むところで使う（DD-0042）。ORM の行を組み立てず、
+    図面・記号・端子・配線を表ごとに 1 回の SELECT で列だけ読む。並びと中身は serialize_project と同じ
+    （どちらも _page_dict で組み立てる）。存在しない id は無視する。
+    """
+    if not project_ids:
+        return []
+    ids = sorted(set(project_ids))
+    p, s, t, c = (AnnotationProject.__table__, AnnotationSymbol.__table__, SymbolTerminal.__table__,
+                  Connection.__table__)
+    projects = db.execute(select(p).where(p.c.id.in_(ids)).order_by(p.c.id)).all()
+    if not projects:
+        return []
+    symbols: dict[int, list] = {}
+    for row in db.execute(select(s).where(s.c.project_id.in_(ids))).all():
+        symbols.setdefault(row.project_id, []).append(row)
+    terminals: dict[int, list] = {}
+    for row in db.execute(
+        select(t).join(s, s.c.id == t.c.symbol_id).where(s.c.project_id.in_(ids)).order_by(t.c.id)
+    ).all():
+        terminals.setdefault(row.symbol_id, []).append(row)
+    connections: dict[int, list] = {}
+    for row in db.execute(select(c).where(c.c.project_id.in_(ids))).all():
+        connections.setdefault(row.project_id, []).append(row)
+    cls_by_id = {cls.id: cls for cls in classes_ordered(db)}
+    return [
+        _page_dict(row, symbols.get(row.id, []), terminals, connections.get(row.id, []), cls_by_id)
+        for row in projects
+    ]
+
+
+def _page_dict(project, symbols_in, terminals_of: dict, connections_in, cls_by_id: dict) -> dict:
+    """図面 1 枚の dict。project・記号・端子・配線は ORM の行でも SELECT の行でもよい（列を属性で読む）。"""
+    symbols = sorted(symbols_in, key=lambda s: s.ref)
+    terminal_refs = {
+        t.id: f"{s.ref}-T{i}" for s in symbols for i, t in enumerate(terminals_of.get(s.id, ()), start=1)
+    }
     out_symbols = []
     for s in symbols:
         cls = cls_by_id.get(s.class_id)
@@ -285,14 +339,14 @@ def serialize_project(db: Session, project: AnnotationProject, with_image_meta: 
                 "attributes": load_attributes(s.attributes_json),
                 "terminals": [
                     {"ref": terminal_refs[t.id], "name": t.name, "tx": t.tx, "ty": t.ty, "origin": t.origin or "manual"}
-                    for t in s.terminals
+                    for t in terminals_of.get(s.id, ())
                 ],
             }
         )
 
     sym_by_id = {s.id: s for s in symbols}
     out_connections = []
-    for c in sorted(project.connections, key=lambda c: c.id):
+    for c in sorted(connections_in, key=lambda c: c.id):
         src, dst = sym_by_id.get(c.from_symbol_id), sym_by_id.get(c.to_symbol_id)
         if src is None or dst is None:
             continue
@@ -313,7 +367,7 @@ def serialize_project(db: Session, project: AnnotationProject, with_image_meta: 
             }
         )
 
-    data = {
+    return {
         "id": project.id,
         "name": project.name,
         "sheet_no": project.sheet_no,
@@ -330,9 +384,3 @@ def serialize_project(db: Session, project: AnnotationProject, with_image_meta: 
         "symbols": out_symbols,
         "connections": out_connections,
     }
-    if with_image_meta:
-        data["images"] = [
-            {"filename": im.filename, "sha256": im.sha256, "width": im.width, "height": im.height}
-            for im in project.images
-        ]
-    return data

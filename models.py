@@ -125,7 +125,8 @@ class AnnotationSymbol(Base):
     project_id = Column(
         Integer, ForeignKey("annotation_projects.id", ondelete="CASCADE"), nullable=False
     )
-    class_id = Column(Integer, ForeignKey("symbol_classes.id"), nullable=False)
+    # 索引: クラスごとの集計（/stats）と、クラスが使われているかの確認（DD-0042）
+    class_id = Column(Integer, ForeignKey("symbol_classes.id"), nullable=False, index=True)
     ref = Column(String(50), nullable=False)  # SYM-0001（プロジェクト内で一意）
     label = Column(String(200), nullable=True)  # 33HB / FV2306 など
     cx = Column(Float, nullable=False)
@@ -249,10 +250,10 @@ class Prediction(Base):
         Integer, ForeignKey("annotation_projects.id", ondelete="CASCADE"), nullable=False
     )
     model_id = Column(
-        Integer, ForeignKey("ml_models.id", ondelete="SET NULL"), nullable=True
+        Integer, ForeignKey("ml_models.id", ondelete="SET NULL"), nullable=True, index=True
     )
     model_label = Column(String(200), nullable=False, default="")  # 表示用（外部取込時はファイル名等）
-    class_id = Column(Integer, ForeignKey("symbol_classes.id"), nullable=False)
+    class_id = Column(Integer, ForeignKey("symbol_classes.id"), nullable=False, index=True)
     cx = Column(Float, nullable=False)
     cy = Column(Float, nullable=False)
     w = Column(Float, nullable=False)
@@ -273,6 +274,7 @@ class StructurePrediction(Base):
     """図面ごとの最新の構造解析の結果（手入力のアノテーションとは独立）。
 
     一覧に出す件数は JSON を開かずに読めるよう列にも持つ。JSON を書いたときに必ず数え直すので食い違わない。
+    回路の API が毎回使う文字（texts）も列に写しておき、1 枚 400 KB ほどの JSON 全体を開かずに読む（DD-0042）。
     """
 
     __tablename__ = "structure_predictions"
@@ -283,18 +285,27 @@ class StructurePrediction(Base):
     payload_json = Column(Text, nullable=False)
     wire_count = Column(Integer, nullable=True)
     connection_count = Column(Integer, nullable=True)
+    # payload の texts（構造解析が読んだ文字）の JSON。無ければ "[]"。NULL は未反映（起動時の移行で埋める。DD-0042）
+    texts_json = Column(Text, nullable=True)
     created_at = Column(DateTime, default=utc_now_naive)
     project = relationship("AnnotationProject", back_populates="structure_prediction")
 
     @validates("payload_json")
     def _count(self, _key: str, value: str) -> str:
-        self.wire_count, self.connection_count = structure_counts(json.loads(value))
+        payload = json.loads(value)
+        self.wire_count, self.connection_count = structure_counts(payload)
+        self.texts_json = structure_texts_json(payload)
         return value
 
 
 def structure_counts(payload: dict) -> tuple[int, int]:
     """一覧に出す件数（検出した配線の本数、端子間の接続の数）。"""
     return len(payload.get("wires") or []), int((payload.get("from_to") or {}).get("connection_count") or 0)
+
+
+def structure_texts_json(payload: dict) -> str:
+    """texts 列に写す JSON。payload に texts が無いか空なら "[]"（NULL は「まだ写していない」の意味）。"""
+    return json.dumps(payload.get("texts") or [], ensure_ascii=False)
 
 
 class TrainingRun(Base):
@@ -314,7 +325,7 @@ class TrainingRun(Base):
     imgsz = Column(Integer, nullable=False, default=1280)
     base_model = Column(String(500), nullable=True)  # 学習の起点（モデル名 or パス）
     result_model_id = Column(
-        Integer, ForeignKey("ml_models.id", ondelete="SET NULL"), nullable=True
+        Integer, ForeignKey("ml_models.id", ondelete="SET NULL"), nullable=True, index=True
     )
     metrics_json = Column(Text, nullable=True)
     # 採用判定: ''=対象外（実行中/失敗） / pending=採用待ち / adopted=採用 / rejected=見送り
