@@ -375,15 +375,18 @@ def test_analysis_job_can_be_cancelled_between_drawings(client, monkeypatch):
     ids = [create_project(client, f"{n}.png") for n in "abc"]
     _upload_model(client)
     _fake_detector(monkeypatch)
-    gate = threading.Event()
+    gate, started = threading.Event(), threading.Event()
 
     def slow(project, *_args):
+        started.set()
         gate.wait(5)
         return _result(project.id)
 
     monkeypatch.setattr(structure_service, "analyze_project", slow)
     job_id = client.post("/api/ml/analysis/jobs", json={"project_ids": ids}).json()["id"]
     assert client.post("/api/ml/analysis/jobs", json={"project_ids": ids}).status_code == 409
+    # 1 枚目の解析が始まってから中止する（始まる前の中止は 0 枚で止まる）
+    assert started.wait(5)
     assert client.post(f"/api/ml/analysis/jobs/{job_id}/cancel").json()["cancel_requested"]
     gate.set()
     job = _wait_job(client, job_id)
