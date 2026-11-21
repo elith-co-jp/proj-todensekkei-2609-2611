@@ -73,7 +73,9 @@ def main() -> None:
             [str(executable)], cwd=temporary, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
         )
         try:
-            _wait_for_server(base_url, process, time.monotonic() + 300)
+            started = time.monotonic()
+            _wait_for_server(base_url, process, started + 300)
+            print(f"Startup (first launch): {time.monotonic() - started:.1f} s")
             status = _request("GET", f"{base_url}/api/ml/status")
             if status["ultralytics"] is not True:
                 raise AssertionError(f"ultralytics is unavailable in frozen exe: {status}")
@@ -147,16 +149,31 @@ def main() -> None:
                 print(error_log.read_text(encoding="utf-8", errors="replace"), file=sys.stderr)
             raise
         finally:
-            if process.poll() is None:
-                if os.name == "nt":
-                    subprocess.run(["taskkill", "/T", "/F", "/PID", str(process.pid)], check=False)
-                else:
-                    process.terminate()
-                try:
-                    process.wait(timeout=10)
-                except subprocess.TimeoutExpired:
-                    process.kill()
-                    process.wait(timeout=10)
+            _stop(process)
+
+        # 2 回目の起動の時間（DD-0040）。1 ファイルの EXE は毎回一時フォルダへ展開し直すので、フォルダ形式と比べる。
+        process = subprocess.Popen(
+            [str(executable)], cwd=temporary, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+        )
+        try:
+            started = time.monotonic()
+            _wait_for_server(base_url, process, started + 300)
+            print(f"Startup (second launch): {time.monotonic() - started:.1f} s")
+        finally:
+            _stop(process)
+
+
+def _stop(process: subprocess.Popen) -> None:
+    if process.poll() is None:
+        if os.name == "nt":
+            subprocess.run(["taskkill", "/T", "/F", "/PID", str(process.pid)], check=False)
+        else:
+            process.terminate()
+        try:
+            process.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=10)
 
 
 if __name__ == "__main__":

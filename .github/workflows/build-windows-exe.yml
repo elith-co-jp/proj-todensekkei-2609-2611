@@ -7,6 +7,11 @@ on:
         description: Upload the verified executable to GitHub Artifacts and Google Drive
         type: boolean
         default: true
+      layout:
+        description: "onefile: TodenYOLO.exe 1 つ（従来）／onedir: フォルダ形式を ZIP にする（起動が速い。DD-0040）"
+        type: choice
+        options: [onefile, onedir]
+        default: onefile
   push:
     branches: [main]
     # EXE に入らない変更（文書・テスト・評価と実験のスクリプト）ではビルドしない。
@@ -29,9 +34,12 @@ concurrency:
 
 jobs:
   build:
-    name: Build one-file Windows executable
+    name: Build Windows executable
     runs-on: windows-latest
     timeout-minutes: 60
+    env:
+      # push（main）は従来どおり 1 ファイル。手動実行で onedir を選べる（DD-0040）
+      LAYOUT: ${{ inputs.layout || 'onefile' }}
 
     defaults:
       run:
@@ -131,13 +139,23 @@ jobs:
         run: python scripts/fetch_base_model.py
 
       - name: Build executable
+        env:
+          SEQANNO_ONEDIR: ${{ env.LAYOUT == 'onedir' && '1' || '0' }}
         run: |
           pyinstaller seq-annotator.spec --noconfirm --clean
 
       - name: Report bundled size
+        if: env.LAYOUT == 'onefile'
         run: python scripts/report_bundle.py build/seq-annotator/PKG-00.toc
 
+      - name: Report folder size
+        if: env.LAYOUT == 'onedir'
+        run: |
+          $files = Get-ChildItem -Path dist/TodenYOLO -Recurse -File
+          "files: $($files.Count), total $([math]::Round(($files | Measure-Object Length -Sum).Sum / 1MB, 1)) MB"
+
       - name: Verify packaged output
+        if: env.LAYOUT == 'onefile'
         run: |
           $ErrorActionPreference = "Stop"
           $exePath = "dist\TodenYOLO.exe"
@@ -191,16 +209,47 @@ jobs:
             throw "Refusing to upload dist because it contains confidential-looking files."
           }
 
+      - name: Verify packaged folder
+        if: env.LAYOUT == 'onedir'
+        run: |
+          $ErrorActionPreference = "Stop"
+          if (-not (Test-Path "dist\TodenYOLO\TodenYOLO.exe" -PathType Leaf)) {
+            throw "Expected artifact was not created: dist\TodenYOLO\TodenYOLO.exe"
+          }
+          $unexpectedEntries = Get-ChildItem -Path dist -Force | Where-Object { $_.Name -ne "TodenYOLO" }
+          if ($unexpectedEntries) {
+            $unexpectedEntries | ForEach-Object { Write-Error "Unexpected dist entry: $($_.FullName)" }
+            throw "dist must contain only the TodenYOLO folder."
+          }
+          # 図面・データ・文書のファイルが入っていないこと（パッケージ同梱の画像は対象外）
+          $forbiddenPatterns = @("*.pdf", "*.tif", "*.tiff", "*.db", "*.sqlite", "*.sqlite3", "*.zip", "*.7z", "*.rar",
+                                 "*.doc", "*.docx", "*.xls", "*.xlsx", "*.ppt", "*.pptx")
+          $forbidden = Get-ChildItem -Path dist -Recurse -File -Force | Where-Object {
+            $name = $_.Name
+            ($forbiddenPatterns | Where-Object { $name -like $_ }).Count -gt 0
+          }
+          if ($forbidden) {
+            $forbidden | ForEach-Object { Write-Error "Forbidden dist file: $($_.FullName)" }
+            throw "Refusing to upload dist because it contains confidential-looking files."
+          }
+
       - name: Smoke test frozen training and inference
         timeout-minutes: 15
-        run: python scripts/smoke_packaged_ml.py dist/TodenYOLO.exe
+        run: python scripts/smoke_packaged_ml.py ${{ env.LAYOUT == 'onedir' && 'dist/TodenYOLO/TodenYOLO.exe' || 'dist/TodenYOLO.exe' }}
+
+      - name: Zip folder build
+        if: env.LAYOUT == 'onedir'
+        run: |
+          New-Item -ItemType Directory -Force release | Out-Null
+          Compress-Archive -Path dist/TodenYOLO -DestinationPath release/TodenYOLO-folder.zip
+          "zip: $([math]::Round((Get-Item release/TodenYOLO-folder.zip).Length / 1MB, 1)) MB"
 
       - name: Upload executable
         if: github.event_name == 'push' || inputs.publish
         uses: actions/upload-artifact@v7.0.1
         with:
           name: TodenYOLO-windows-exe
-          path: dist/TodenYOLO.exe
+          path: ${{ env.LAYOUT == 'onedir' && 'release/TodenYOLO-folder.zip' || 'dist/TodenYOLO.exe' }}
           if-no-files-found: error
           retention-days: 7
 
@@ -215,4 +264,4 @@ jobs:
           if (-not $env:GOOGLE_DRIVE_CREDENTIALS_JSON) {
             throw "GOOGLE_DRIVE_CREDENTIALS_JSON が未設定です。README の「Google Drive への自動アップロード」を参照してください。"
           }
-          python scripts/upload_to_drive.py dist/TodenYOLO.exe
+          python scripts/upload_to_drive.py ${{ env.LAYOUT == 'onedir' && 'release/TodenYOLO-folder.zip' || 'dist/TodenYOLO.exe' }}

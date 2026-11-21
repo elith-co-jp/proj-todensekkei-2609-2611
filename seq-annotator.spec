@@ -9,15 +9,19 @@
 
 生成物:
     dist/TodenYOLO.exe  （Windows。Python 非同梱の PC でもそのまま動く）
+    SEQANNO_ONEDIR=1 のときは dist/TodenYOLO/（フォルダ形式。TodenYOLO.exe と _internal/）。起動のたびの展開が無いので速く起動する（DD-0040）
 
 Windows 用 exe は Windows 上でビルドすること（PyInstaller はクロスビルド不可）。
 """
 
+import os
 from pathlib import Path
 
 from PyInstaller.utils.hooks import collect_all, collect_submodules
 
 spec_dir = Path(SPECPATH)
+# フォルダ形式（DD-0040）。1 ファイルの EXE は起動のたびに約 900 MB を一時フォルダへ展開する。
+ONEDIR = os.environ.get("SEQANNO_ONEDIR") == "1"
 
 # --- 同梱データ（ビルド済みフロントエンド） -----------------------------------
 datas = [(str(spec_dir / "frontend" / "dist"), "frontend/dist")]
@@ -67,7 +71,8 @@ a = Analysis(
     hiddenimports=hiddenimports,
     hookspath=[],
     runtime_hooks=[],
-    excludes=["tkinter", "pytest"],
+    # psycopg: Docker の PostgreSQL 用で、EXE は SQLite だけを使う。AVIF: 図面の画像に使わない（DD-0040）
+    excludes=["tkinter", "pytest", "psycopg", "psycopg_binary", "psycopg_c", "PIL._avif", "PIL.AvifImagePlugin"],
     noarchive=False,
 )
 
@@ -86,23 +91,43 @@ a.binaries = [entry for entry in a.binaries if _used(entry)]
 
 pyz = PYZ(a.pure)
 
-exe = EXE(
-    pyz,
-    a.scripts,
-    a.binaries,
-    a.datas,
-    [],
-    name="TodenYOLO",
-    debug=False,
-    bootloader_ignore_signals=False,
-    strip=False,
-    upx=False,
-    upx_exclude=[],
-    runtime_tmpdir=None,
-    console=False,
-    disable_windowed_traceback=False,
-    argv_emulation=False,
-    target_arch=None,
-    codesign_identity=None,
-    entitlements_file=None,
-)
+if ONEDIR:
+    exe = EXE(
+        pyz,
+        a.scripts,
+        [],
+        exclude_binaries=True,
+        name="TodenYOLO",
+        debug=False,
+        bootloader_ignore_signals=False,
+        strip=False,
+        upx=False,
+        console=False,
+        disable_windowed_traceback=False,
+        argv_emulation=False,
+        target_arch=None,
+        codesign_identity=None,
+        entitlements_file=None,
+    )
+    coll = COLLECT(exe, a.binaries, a.datas, strip=False, upx=False, upx_exclude=[], name="TodenYOLO")
+else:
+    exe = EXE(
+        pyz,
+        a.scripts,
+        a.binaries,
+        a.datas,
+        [],
+        name="TodenYOLO",
+        debug=False,
+        bootloader_ignore_signals=False,
+        strip=False,
+        upx=False,
+        upx_exclude=[],
+        runtime_tmpdir=None,
+        console=False,
+        disable_windowed_traceback=False,
+        argv_emulation=False,
+        target_arch=None,
+        codesign_identity=None,
+        entitlements_file=None,
+    )
