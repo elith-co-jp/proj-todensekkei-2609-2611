@@ -742,10 +742,24 @@ def _round_trip_metrics(original: Image.Image, rendered: Image.Image) -> tuple[f
     return mean_abs, dark_recall
 
 
+def _degrade_like_scan(path: Path, seed: int) -> None:
+    import cv2
+
+    from analysis.synthetic_circuits.scan import scan_variant
+
+    gray = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
+    if gray is None or not cv2.imwrite(str(path), scan_variant(gray, seed)):
+        raise OSError(f"cannot degrade synthetic page: {path}")
+
+
 def evaluate_dataset(
     root: Path, *, disable_ocr: bool | None = None, model_path: Path | None = None, confidence: float = 0.5,
+    scan_seed: int | None = None,
 ) -> dict[str, Any]:
-    """Render PDFs, run production analysis, and compare symbols, terminals and circuit semantics."""
+    """Render PDFs, run production analysis, and compare symbols, terminals and circuit semantics.
+
+    scan_seed を与えると、解析の前にスキャンに似せた劣化（analysis.synthetic_circuits.scan）を図面ごとに掛ける（DD-0038）。
+    """
     from analysis import runtime
 
     detector = None
@@ -805,6 +819,8 @@ def evaluate_dataset(
                 mean_abs, dark_recall = _round_trip_metrics(original, rendered)
                 pixel_differences.append(mean_abs)
                 dark_recalls.append(dark_recall)
+                if scan_seed is not None:
+                    _degrade_like_scan(input_path, scan_seed + len(pixel_differences))
                 detections = (
                     _predict_detections(detector, input_path, confidence)
                     if detector is not None else source["oracle_detections"]
@@ -922,6 +938,7 @@ def evaluate_dataset(
     report = {
         "schema_version": SCHEMA_VERSION,
         "evaluation_mode": "model_production_logic_explicit_config" if detector is not None else "oracle_symbols_structural",
+        "scan_seed": scan_seed,
         "ocr_requested": not disable_ocr,
         "ocr_runtime": {
             "status_counts": dict(sorted(ocr_statuses.items())),

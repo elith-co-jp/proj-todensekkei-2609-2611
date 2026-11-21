@@ -43,6 +43,19 @@ jobs:
       - name: Pytest
         run: python -m pytest
 
+      # 合成回路・合成図面での評価（DD-0038）。基準値（analysis/eval_baseline.json）より悪くなれば失敗する
+      - name: Evaluation (quick)
+        run: python analysis/tools/eval_suite.py --quick --out runs/eval
+
+      - name: Upload evaluation summary
+        if: always()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: eval-summary
+          path: runs/eval/summary.*
+          if-no-files-found: ignore
+          retention-days: 14
+
   frontend:
     name: Frontend type check and tests
     runs-on: ubuntu-latest

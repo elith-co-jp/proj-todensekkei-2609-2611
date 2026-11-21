@@ -253,6 +253,7 @@ PR と main への push ごとに `.github/workflows/ci.yml` が pytest・ruff�
 ```bash
 pip install -r requirements.txt -r requirements-dev.txt -c constraints.txt
 make test                # 下の 4 つをまとめて実行
+make eval                # 合成回路・合成図面での評価。基準値より悪くなれば失敗（DD-0038。CI では --quick）
 python3 -m pytest        # API・PDF 分割・YOLO 形式・往復復元・セキュリティ
 ruff check .
 cd frontend && npm test        # UIの純粋ロジック
