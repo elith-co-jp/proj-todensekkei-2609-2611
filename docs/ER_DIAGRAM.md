@@ -124,6 +124,7 @@ erDiagram
         text payload_json "構造解析の結果（1 枚 400 KB ほど）"
         int wire_count "一覧用。JSON を書くたびに数え直す"
         int connection_count "一覧用。同上"
+        text texts_json "回路用の文字の写し（DD-0042）"
         datetime created_at
     }
     circuit_change_sets {
@@ -226,8 +227,11 @@ ORM の relationship は `passive_deletes=True` で、子を読み込まずに�
 | `connections (from_symbol_id)` / `(to_symbol_id)` / `(from_terminal_id)` / `(to_terminal_id)` | 記号・端子を消したときの連鎖 |
 | `symbol_terminals (symbol_id)` | 記号の端子の読み込み・連鎖 |
 | `predictions (project_id, kind)` | 図面の推論結果・件数 |
+| `annotation_symbols (class_id)` / `predictions (class_id)` | クラスごとの集計（`/api/stats`）、クラスが使われているかの確認（DD-0042） |
+| `predictions (model_id)` / `training_runs (result_model_id)` | モデルを消したときの `SET NULL`（DD-0042） |
 | `annotation_images (project_id)` / `(sha256)` | 図面の画像・同じ画像の検索 |
 | `ml_models (sha256)` | 同じモデルの検索 |
+| `drawing_set_members (project_id)` | 図面を消したときに図面セットから外す連鎖（DD-0041） |
 
 主キーに重ねた索引（`ix_<表>_id`）は作りません（主キーの索引で足ります）。
 
@@ -238,10 +242,16 @@ ORM の relationship は `passive_deletes=True` で、子を読み込まずに�
 行ごとの遅延読み込み（記号 150 個なら端子だけで 150 回のクエリ）をしません。
 一覧に出す構造解析の件数は `structure_predictions` の列から読み、JSON は開きません。
 
+回路・対応表・CVAT・図面セットのように何十枚もまとめて読むところは、`annotation_service.load_pages` を使います（DD-0042）。
+表ごとに 1 回の SELECT で読み、ORM の行を組み立てずに、`serialize_project` と同じ形の辞書を返します。
+回路が使う構造解析の文字（母線の PER/NER など）は `structure_predictions.texts_json` から読み、1 枚 400 KB ほどの
+`payload_json` 全体は開きません。`texts_json` は `payload_json` を書くたびに写し（`@validates`。文字が無ければ `"[]"`）、
+NULL は「まだ写していない」の意味です。`GET /api/ml/projects/{id}/structure` は保存した JSON をそのまま返します（応答の形は以前と同じ）。
+
 ### 既存 DB の移行
 
 `db_migrations.py` の `STEPS` を起動のたびに順に実行します。どの手順も済んでいれば何もしません。
-列の追加、件数の列の埋め戻し、親の無い行の片付け、配線の参照名の振り直し（欠けと重複）、
+列の追加、件数の列の埋め戻し、文字の列（`texts_json`）の埋め戻し（DD-0042）、親の無い行の片付け、配線の参照名の振り直し（欠けと重複）、
 索引の作成、主キーに重ねた索引の削除、の順です。
 
 ### AI 改善サイクルのデータ

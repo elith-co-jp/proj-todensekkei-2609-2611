@@ -259,6 +259,8 @@ AI 改善サイクル画面の構造解析をまとめて書き出したファ�
 | `dot_roles` | 黒丸の判定件数と判定に使った値 |
 | `quality.symbol_label_ocr` | ラベルを読んだ件数。`llm_reread_count` / `llm_text_reread_count` はローカル LLM、`name_ocr_reread_count` は日本語対応 OCR が読み直した件数。`quality.relay_rows_by_position`（行列で結び付いた行数）、`quality.circle_review`（円形の記号の確認件数） |
 
+アプリの DB では、図面ごとの `texts[]` を `structure_predictions.texts_json` にも写して持ち、回路の組み立てはそちらを読む（DD-0042。書き出す structure.json の内容は変わらない）。
+
 参照先の図面は、図面情報のシート番号（未入力ならシート番号の候補の 1 位）で照合する。枝番つきの参照（`ER21212-1`）は枝番なしの図面にも合わせる。
 
 
@@ -304,6 +306,8 @@ AI 改善サイクル画面の構造解析をまとめて書き出したファ�
 | リレーコイル | コイル抵抗 `coil_resistance_ohm`（Ω）、動作電圧 `pickup_voltage_v`（V）、タイマーの種類 `timer_mode`（on_delay / off_delay。オンディレー・オフディレー・限時動作・限時復帰も可）、タイマーの時間 `delay_s`（s）（DD-0033） |
 | 電磁弁 | コイル抵抗 `coil_resistance_ohm`（Ω）、定格電流 `rated_current_a`（A） |
 | a 接点・b 接点 | 接点定格 `contact_rating_a`（A）、タイマーの接点 `timer_contact`（瞬時なら `instant`。DD-0033）、外部入力・I/O `external_io`（yes なら図面範囲外の入力。DD-0035） |
+| 押しボタン | 接点の種類 `contact_kind`（a / b。空なら名前で決める: 停止は b・起動は a。DD-0037） |
+| ダイオード | アノード側の端子名 `anode_terminal`（空なら端子名 A・K で決める。DD-0037） |
 | コネクタ・端子 | ピン数 `pin_count` |
 | 表示灯 | 定格電力 `rated_power_w`（W） |
 | 配線 | 長さ `length_m`（m）、電線種別 `wire_type`、断面積 `cross_section_mm2`（mm²）、色 `color`、ケーブル番号 `cable_no`、心線番号 `core_no`、メーカー `maker` |

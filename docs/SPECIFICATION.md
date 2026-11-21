@@ -49,6 +49,8 @@ Docker Compose は `frontend`（Nginx）、`backend`（FastAPI + Poppler）、`d
 | `services/circuit_edit.py` | 図面の変更の操作・試行・適用・取り消し（DD-0034） |
 | `services/annotation_table.py`・`services/circuit_scenarios.py`・`services/cvat_format.py`・`services/reading_metrics.py` | 正解のやり取り（対応表・代表回路・CVAT）と正解率（DD-0035） |
 | `services/vector_pdf.py` | PDF の線・黒丸・文字を取り出す（DD-0035。スキャン PDF では取り出せる線が無い） |
+| `services/drawing_sets.py` | 図面セット（行先札でつながる図面の組）と、足りないシート・組の候補（DD-0041） |
+| `services/analysis_jobs.py` | 全図面の AI 解析を裏のジョブで 1 枚ずつ行い、図面ごとに保存する（DD-0039） |
 | `services/jst.py` | 画面・API・書き出しの時刻を日本時間にする（DD-0036） |
 
 ## 3. 画面仕様
@@ -155,6 +157,7 @@ ZIP を選択してインポートすると、`bundle.json` の有無で復元�
 - **推論**: 対象図面と信頼度しきい値（既定 0.5。図面単位の交差検証で F1 が最も高かった値）を指定して実行。雲マークがあれば、その線を消した図面で検出する。検出は `predictions` テーブルに図面単位で「最新だけ」保持し、同画面で JSON 表示できる
 - **領域枠**: 正規化サイズで面積 4% 以上、または長辺 40% 以上の検出は `kind=region` として保存し、シンボル件数・エディタへの取込・構造解析から外す。解析結果画面で表示を切り替えられる
 - **構造解析**: 検出したシンボルから配線と端子間の接続を組み、文字（器具番号・端子番号・装置名・行先）、リレー表、シート間参照、シート番号の候補、領域の種類を構造 JSON に出す（形式は DATA_FORMAT.md §5）。リレー表・表題欄の中の検出は配線に使わない。雲マークの線は消してから配線を読み、雲マークは領域として出す。接点の端子番号を読み、リレー表の行を行列の位置の接点に結び付けて端子番号と接点の種類を照合する。円形の記号はリレー・表示灯の手がかりで確かめ、「その他」は区分（行先・カード・端子台ユニット・盤・遮断器）を付ける。書き出し時に、行先・来先のシート番号を同時に書き出した図面と照合し、別のシートのコイルを指す接点・コイルをその図面のコイルとリレー表の行に結び付ける
+- **AI 解析の実行**: 「AI 解析を実行」で、選んだ図面（未選択なら全図面）の推論と構造解析を裏のジョブで 1 枚ずつ行い、図面ごとに保存する（DD-0039）。1 秒ごとに進み具合（何枚目か・解析中の図面・失敗の数）と中止ボタンを出し、画面を離れて戻っても表示を続ける。失敗した図面は理由とともに飛ばして次へ進み、中止すると解析中の図面を終えたところで止まる。ジョブはプロセスの中だけに持つ（再起動すると一覧は消えるが、保存した結果は残る）。EXE は解析中のジョブがある間は自動終了しない
 - **日本語の名称・注記の読み直し**: 名称・注記と判定した文字だけを、同梱の日本語対応の文字認識モデル（PP-OCRv5）で読み直す。モデルファイルが無い開発環境では読み直さない
 - **ローカル LLM による読み直し（任意）**: 環境変数 `LABEL_LLM_URL`（Ollama 互換 API）と `LABEL_LLM_MODEL` を設定したときだけ、器具番号の形をしていない接点・コイルのラベル（830-1、0010 など）と、リレー表・表題欄の外の日本語の名称・注記を LLM に読み直させる。設定がなければ OCR の結果だけを使う
 - **図面の字体に合わせた文字認識（任意）**: 環境変数 `SEQANNO_OCR_REC_MODEL` に、図面の文字で追加学習した文字認識モデル（ONNX）を指定すると、コネクタ・接点・コイルの枠ごとの拡大読みだけをそのモデルで読む。ページ全体の読み（リレー表・注記・シート番号）は同梱のモデルのまま。指定がなければ同梱のモデルで読む
@@ -353,7 +356,7 @@ ZIP を選択してインポートすると、`bundle.json` の有無で復元�
 
 | 項目 | 内容 |
 |------|------|
-| 運用形態 | 各 PC で動く Windows 単一 EXE を第一とする（サーバは `127.0.0.1` だけで待ち受け、データは EXE と同じフォルダの `data/`）。Docker Compose（共有サーバ）でも動く |
+| 運用形態 | 各 PC で動く Windows 単一 EXE を第一とする（サーバは `127.0.0.1` だけで待ち受け、データは EXE と同じフォルダの `data/`）。1 ファイルの EXE は約 913 MB で起動に 10〜13 秒、必要なときだけ作るフォルダ形式（ZIP 約 372 MB）は 1.5〜2 秒で起動する（DD-0040）。Docker Compose（共有サーバ）でも動く |
 | 認証 | なし（ローカル運用前提）。必要ならセッション認証を追加する |
 | 外部通信 | なし（`LABEL_LLM_URL` を設定したときだけ、その URL へ記号・文字の切り出し画像を送る）。CORS は `SEQANNO_CORS_ORIGINS` で明示したオリジンのみ。ブラウザ発のリクエストは `Origin` がローカル（localhost/127.0.0.1/::1）または許可オリジン以外の場合 403 で拒否（localhost CSRF 対策） |
 | アップロード上限 | PDF 256 MiB・500ページ／画像 1 枚 64 MiB／ZIP 展開後 2 GiB・20,000 ファイル・圧縮率 25 倍 |
@@ -361,6 +364,7 @@ ZIP を選択してインポートすると、`bundle.json` の有無で復元�
 | ページの向き | 登録時に OCR の文字検出で文字の向きを調べ、文字の大半が縦向きのページを 90° か 270° 回して保存する（1 ページ約 0.25 秒）。OCR が使えないときはそのまま保存する。上下逆さのページは直さない |
 | 時刻 | DB には UTC で保存し、画面・API・書き出しはすべて日本時間（`+09:00` 付きの ISO 形式）で出す。画面は PC のタイムゾーン設定に左右されない（DD-0036） |
 | 処理時間 | 4 コア CPU のみの環境で、図面の解析（記号の検出・配線・文字の読み取り）は合成図面 6 枚で約 29 秒（1 枚目のモデル読み込みを除く）。うち約 19 秒が文字の読み取り。回路の画面の各 API は 1 回 0.01〜0.08 秒（[speedup-20261120](evidence/speedup-20261120.md)） |
+| 依存の版 | `constraints.txt` で固定する（DD-0037）。更新したら CI が通ることを確かめる |
 | LLM | 使う場合はローカル LLM（Ollama 互換 API）のみ。外部の LLM API は使わない。設定が無ければ LLM を使わずに動く |
 | 同時編集 | 排他制御なし（後勝ち）。分担する場合は図面単位で分け、ZIP で統合する |
 | 機械学習 | Windows 配布 EXE は CPU 版 PyTorch・`requirements-ml.txt`・学習開始用モデルを同梱。開発環境では追加依存を任意導入。未導入環境でもモデル登録・推論結果の取込・JSON 表示は動作し、推論・学習は外部実行フローへ誘導 |
@@ -368,6 +372,7 @@ ZIP を選択してインポートすると、`bundle.json` の有無で復元�
 ## 6. テスト
 
 `python3 -m pytest`（`tests/` と `analysis/tests/`）、画面は `cd frontend && npm test`（vitest）と `npm run build`（型検査）で実行する。
+PR と main への push ごとに `.github/workflows/ci.yml` が pytest・ruff・画面の型検査とテストを回す（DD-0037）。`make test` で同じものをまとめて実行できる。
 主なテストファイルと観点は次のとおり。
 
 | 区分 | ファイル | 観点 |
@@ -376,9 +381,10 @@ ZIP を選択してインポートすると、`bundle.json` の有無で復元�
 | 安全・DB | `tests/test_security.py`・`test_db_design.py`・`test_jst.py`・`test_desktop_launcher.py` | `Origin` ガード、外部キーと連鎖削除・索引・移行、日本時間の出力、EXE の起動 |
 | AI 改善サイクル | `tests/test_ml_cycle.py`・`test_ai_import.py`・`test_review_summary.py`・`test_training_holdout.py`・`test_training_quality.py`・`test_card_model.py`・`test_region_frames.py`・`test_fetch_base_model.py` | モデル登録・切替・削除、推論の前提エラー、推論結果 ZIP の取込、AI 取込の重複防止、確認状況、評価用図面の分離、採用判定の推奨、カード用モデル、領域枠 |
 | 構造解析 | `tests/test_structure_api.py`・`test_structure_runtime.py`・`test_wire_*.py`・`test_faint_wires.py`・`test_inside_wires.py`・`test_coil_wiring.py`・`test_wiring_recall_gate.py`・`test_vector_pdf.py`、`analysis/tests/` | 配線の検出・グラフ・端子・結び付け、文字・リレー表・シート間参照、再現率の基準、ベクター PDF |
-| 回路 | `tests/test_circuit_model.py`・`test_circuit_api.py`・`test_circuit_interop.py`・`test_circuit_whatif.py`・`test_circuit_timing.py`・`test_circuit_trace.py`・`test_sheet_links.py`・`test_consistency.py`・`test_circuit_edit.py` | 回路の組み立て・シミュレーション、Lcapy・SKiDL・SPICE、もしも・手順・波及範囲、タイマー、逆引き・順引き（3 値の判定）、行先札、整合性チェック、図面の変更と取り消し |
-| 正解のやり取り・評価 | `tests/test_exchange_api.py`・`test_reading_metrics.py`・`test_logic_validation.py`・`test_synthetic_scan_data.py` | 対応表・CVAT・代表回路のシナリオ、正解率の分け方、正解つき合成回路での論理の検証 |
+| 回路 | `tests/test_circuit_model.py`・`test_circuit_api.py`・`test_circuit_interop.py`・`test_circuit_whatif.py`・`test_circuit_timing.py`・`test_circuit_trace.py`・`test_sheet_links.py`・`test_consistency.py`・`test_circuit_edit.py`・`test_drawing_sets.py` | 回路の組み立て・シミュレーション、Lcapy・SKiDL・SPICE、もしも・手順・波及範囲、タイマー、逆引き・順引き（3 値の判定）、行先札、整合性チェック、図面の変更と取り消し、押しボタン・ダイオード、図面セット |
+| 正解のやり取り・評価 | `tests/test_exchange_api.py`・`test_reading_metrics.py`・`test_logic_validation.py`・`test_synthetic_scan_data.py`、`analysis/tests/test_eval_suite.py` | 対応表・CVAT・代表回路のシナリオ、正解率の分け方、正解つき合成回路での論理の検証、評価の基準値との比較 |
 | 性能 | `tests/test_speedups.py` | 高速化した計算が元の計算と同じ結果を返すこと |
 
+合成回路とスキャン風の合成図面での評価は `make eval`（`analysis/tools/eval_suite.py`）の 1 コマンドで行い、`analysis/eval_baseline.json` の基準値より悪くなれば失敗する（DD-0038。CI では `--quick`）。受け取る図面の正解データはまだ無いため、実図面の精度ではなく、合成データでの退行を見張る。
 回路の理解の正しさは、正解つきの合成回路 60 個で `analysis/tools/validate_circuit_logic.py`・`validate_reading_procedure.py` を
 実行して確かめている（結果は `docs/evidence/`。DD-0032・DD-0033・DD-0035）。
