@@ -687,10 +687,7 @@ def build_predicted_graph_pairs(
         def is_corner(node_id: str, wire_id: str, orientation: str) -> bool:
             """この点で直交する配線も終わっている（線がここで向きを変える角）。角から先へは線が続かないので、
             角からの橋渡しは間隔の狭い隣の平行線へ渡る（ER21277・ER21276 の 11 px おきの横線）。"""
-            node = nodes_by_id.get(node_id)
-            if node is None:
-                return False
-            point = node_point(node)
+            point = node_point(nodes_by_id[node_id])  # 辺の両端のノードは必ずある（無い辺は edge_segments に入れない）
             for other in incident_wire_by_node.get(node_id, set()):
                 segments = edges_by_wire.get(other, [])
                 if not other or other == wire_id or not segments or str(segments[0]["orientation"]) == orientation:
@@ -847,9 +844,7 @@ def build_predicted_graph_pairs(
 
         terminals = []
         for member_key, stop_id in stop_by_member.items():
-            record = record_by_member.get(member_key)
-            if not record:
-                continue
+            record = record_by_member[member_key]  # 停留点はどれも端子の記録から作る
             class_name = str(record.get("class_name") or "")
             if class_name not in terminal_terminal_bridge_classes:
                 continue
@@ -945,11 +940,7 @@ def build_predicted_graph_pairs(
             t, _distance, _projection = point_segment_projection(record["point"], best["start"], best["end"])
             stops_by_edge[str(best["id"])].append((t, stop_id))
             continue
-        if node_id:
-            preferred_wire_id = str(wire_id or record.get("wire_id_hint") or "")
-            for graph_id in graph_ids_for_anchor_node(record, str(node_id), preferred_wire_id or None):
-                add_graph_edge(stop_id, graph_id, "node_anchor")
-            continue
+        # node_id のある端子は上の anchor_node_id で結び終えている。
         if record.get("peer_symbol_id"):
             peer_links.append((stop_id, str(record["peer_symbol_id"])))
             continue

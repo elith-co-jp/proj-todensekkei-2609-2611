@@ -27,9 +27,12 @@ def test_engines_none_missing_fake_and_unknown(monkeypatch):
 
 def test_rapidocr_is_loaded_once():
     ocr._rapidocr.cache_clear()
-    first, engine, warning = ocr.load_symbol_ocr_reader("rapidocr", "en")
-    assert engine == "rapidocr" and warning is None
-    assert ocr.load_symbol_ocr_reader("rapidocr", "en")[0] is first
+    try:
+        first, engine, warning = ocr.load_symbol_ocr_reader("rapidocr", "en")
+        assert engine == "rapidocr" and warning is None
+        assert ocr.load_symbol_ocr_reader("rapidocr", "en")[0] is first
+    finally:
+        ocr._rapidocr.cache_clear()  # ほかのテストが「RapidOCR が無い」場合を試せるよう、覚えた reader を捨てる
 
 
 @pytest.mark.skipif(not REC_MODEL.is_file(), reason="rapidocr の認識モデルが無い")
