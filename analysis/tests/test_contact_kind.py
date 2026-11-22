@@ -48,3 +48,12 @@ def test_single_contact_takes_the_kind_its_bar_shows():
     unclear = [{"id": "k", "class_name": "contact_b", "bbox": dict(BOX)}]
     assert correct_contact_kinds(unclear, np.zeros((60, 60), dtype=np.uint8)) == 0
     assert unclear[0]["class_name"] == "contact_b"
+
+
+def test_bar_side_needs_room_around_the_box_and_a_clear_side():
+    binary = _contact(26) > 0
+    assert bar_side(binary, {"x0": 10, "y0": 0, "x1": 50, "y1": 45}) is None      # 枠の上に線を探す余地が無い
+    assert bar_side(binary, {"x0": 10, "y0": 28, "x1": 50, "y1": 33}) is None     # 枠が低すぎて棒を測れない
+    both = _contact(26)
+    both[20:40, 14] = 255                                                          # 左右の両方に棒
+    assert bar_side(both > 0, BOX) is None

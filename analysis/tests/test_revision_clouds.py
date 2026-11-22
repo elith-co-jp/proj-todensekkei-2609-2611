@@ -75,3 +75,18 @@ def test_detector_sees_the_page_without_the_cloud(tmp_path):
     assert cleaned.getpixel(apex) == 255, "cloud arc erased"
     assert all(cleaned.getpixel((400, y)) < 128 for y in range(380, 550)), "the wire crossing the cloud stays"
 
+
+
+def test_ink_in_the_middle_of_symbols_on_the_cloud_stays(tmp_path):
+    pytest.importorskip("cv2")
+    from analysis.wiring.revision_clouds import detect_clouds, erase_clouds
+    from analysis.wiring.detect import make_binary_mask
+
+    image = Image.open(_page(tmp_path, with_cloud=True)).convert("RGB")
+    clouds = detect_clouds(make_binary_mask(image))
+    apex = (552, 392)
+    small = {"x0": 532, "y0": 372, "x1": 572, "y1": 412}       # 雲の線に重なった小さな記号
+    large = {"x0": 300, "y0": 300, "x1": 800, "y1": 600}       # 大きな枠（盤など）は守らない
+    kept = erase_clouds(image, clouds, [small, large]).convert("L")
+    assert kept.getpixel(apex) < 128
+    assert erase_clouds(image, clouds, [large]).convert("L").getpixel(apex) == 255

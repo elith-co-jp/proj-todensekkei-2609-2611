@@ -266,3 +266,55 @@ def test_wire_end_is_not_bridged_to_the_bus_through_a_coil():
     options = {**OPTIONS, "wire_gap_bridge_outward_only": True}
     assert build_predicted_graph_pairs(payload, [*records, coil], **options) == {("A", "B")}
     assert build_predicted_graph_pairs(payload, [*records, coil], **options, gap_bridge_device_classes={"relay_coil"}) == set()
+
+
+def test_dot_roles_for_horizontal_terminals_page_edges_and_better_duplicates(monkeypatch):
+    import numpy as np
+    from PIL import Image, ImageDraw
+
+    from analysis.wiring import dot_roles
+    from analysis.wiring.dot_roles import Dot, DotRules, assign_dot_roles, wire_arms
+
+    image = Image.new("L", (400, 200), 255)
+    draw = ImageDraw.Draw(image)
+    draw.line((20, 100, 180, 100), fill=0, width=2)           # 横の線が黒丸を通り、上下に番号の文字
+    draw.ellipse((95, 95, 105, 105), fill=0)
+    for y in (72, 116):
+        draw.rectangle((94, y, 106, y + 10), outline=0, width=2)
+    binary = (np.asarray(image) < 128).astype(np.uint8) * 255
+
+    def box(cx, cy, half):
+        return {"x0": cx - half, "y0": cy - half, "x1": cx + half, "y1": cy + half}
+
+    symbols = [
+        {"id": "weak", "class_name": "junction", "bbox": box(100, 100, 7), "confidence": 0.4},
+        {"id": "strong", "class_name": "junction", "bbox": box(101, 100, 7), "confidence": 0.9},
+    ]
+    assign_dot_roles(binary, symbols)
+    roles = {s["id"]: s["dot_role"] for s in symbols}
+    assert roles["strong"]["role"] == "terminal" and not roles["strong"]["suppressed"]
+    assert roles["weak"]["suppressed"] and roles["weak"]["duplicate_of"] == "strong"
+
+    edge = wire_arms(binary > 0, Dot(1.0, 100.0, 6), DotRules())
+    assert edge["left"] is False
+    monkeypatch.setattr(dot_roles, "ENABLED", False)
+    assert dot_roles.annotate_dots(image.convert("RGB"), symbols) is None
+
+
+def test_junction_detections_on_the_same_spot_are_kept_once():
+    from PIL import Image, ImageDraw
+
+    from analysis.wiring.dot_roles import select_junction_detections
+
+    image = Image.new("RGB", (240, 120), "white")
+    draw = ImageDraw.Draw(image)
+    draw.line((90, 60, 150, 60), fill="black", width=2)
+    draw.line((120, 60, 120, 105), fill="black", width=2)
+    draw.ellipse((116, 56, 124, 64), fill="black")
+
+    def detection(identifier, x, confidence):
+        return {"id": identifier, "class_key": "junction", "cx": x / 240, "cy": 0.5, "w": 0.04, "h": 0.08,
+                "confidence": confidence}
+
+    candidates = [detection("first", 120, 0.9), detection("same", 123, 0.8), detection("probe", 121, 0.08)]
+    assert [c["id"] for c in select_junction_detections(image, candidates, requested_confidence=0.5)] == ["first"]

@@ -90,3 +90,21 @@ def test_line_toward_the_contacts_other_terminal_runs_through_it(bridge):
     payload["symbols"][0]["terminals"] = payload["symbols"][0]["terminals"][:1]
     payload["symbols"][0]["terminals"].append({"ref": "c-P9", "name": None, "point": [330, 232]})
     assert bridge(payload, _page(225)) == []
+
+
+def test_helpers_for_lone_terminals_empty_rows_and_far_contacts():
+    import numpy as np
+
+    from analysis.wiring import faint_lines as fl
+
+    coil = _symbol("k", "relay_coil", (0, 0, 40, 40), [(20, 5)])
+    assert fl._leaves_device(coil, coil["terminals"][0], (0, -1)) is True     # 相手の端子が無い
+    ink = np.ones((20, 20), dtype=bool)
+    assert fl._row_coverage(ink, 5, 10, 10) == 0.0
+    assert fl._row_coverage(ink, 0, 0, 10) == 0.0
+    b = _symbol("b", "contact_b", (100, 100, 140, 160), [(120, 110), (120, 150)])
+    far = _symbol("a", "contact_a", (500, 100, 540, 160), [(520, 110), (520, 150)])
+    low = _symbol("l", "contact_a", (150, 400, 190, 460), [(170, 410), (170, 450)])
+    contacts = [(s, fl._vertical_pair(s)) for s in (b, far, low)]
+    page = np.zeros((600, 700), dtype=bool)
+    assert fl._bypass(page, (120, 150), 1, 160, b, contacts, 1.0) is None     # 離れすぎ・高さが重ならない
