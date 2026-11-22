@@ -105,13 +105,6 @@ def delete_set(db: Session, set_id: int) -> None:
     db.commit()
 
 
-def set_project_ids(db: Session, set_id: int) -> list[int]:
-    ids = [m.project_id for m in _get(db, set_id).members]
-    if not ids:
-        raise ValueError("図面セットに図面がありません")
-    return ids
-
-
 def _pages(db: Session, project_ids: list[int] | None = None) -> list[dict[str, Any]]:
     if project_ids is None:
         project_ids = [pid for (pid,) in db.query(AnnotationProject.id)]

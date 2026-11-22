@@ -369,9 +369,7 @@ class Checker:
                 number = normalize((c or {}).get("wire_no") or "").replace(" ", "")
                 if not number:
                     continue
-                node = node_of.get(w["from"])
-                if node is None:
-                    continue
+                node = node_of[w["from"]]  # 配線の両端は必ず回路のノードに入る（circuit_model.build_circuit）
                 compared += 1
                 by_number[number].add(node)
                 if not circuit_whatif._is_bus(node):
@@ -519,10 +517,8 @@ class Checker:
         members: Counter[str] = Counter(self.circuit.node_of.values())
         compared = 0
         for e in self.circuit.elements:
-            s = self.symbols.get((e.project_id, e.symbol_ref)) or {}
-            terms = s.get("terminals") or []
-            if len(terms) != 2:
-                continue
+            s = self.symbols[(e.project_id, e.symbol_ref)]
+            terms = s["terminals"]  # 素子は端子が 2 個の記号だけから作る（circuit_model.build_circuit）
             compared += 1
             lone = [t for t in terms if members[self.circuit.node_of.get((e.project_id, e.symbol_ref, t["ref"]))] == 1]
             if len(lone) == 2:

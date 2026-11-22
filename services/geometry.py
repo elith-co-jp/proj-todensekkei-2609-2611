@@ -13,19 +13,6 @@ def clamp01(v: float) -> float:
     return 0.0 if v < 0.0 else (min(v, 1.0))
 
 
-def normalize_box(x1: float, y1: float, x2: float, y2: float, w: int, h: int) -> tuple[float, float, float, float]:
-    """ピクセル座標の矩形（左上・右下）を正規化 (cx, cy, bw, bh) に変換する。"""
-    if w <= 0 or h <= 0:
-        raise ValueError("画像サイズが不正です")
-    left, right = (x1, x2) if x1 <= x2 else (x2, x1)
-    top, bottom = (y1, y2) if y1 <= y2 else (y2, y1)
-    cx = clamp01(((left + right) / 2.0) / w)
-    cy = clamp01(((top + bottom) / 2.0) / h)
-    bw = max(MIN_SIZE, min(1.0, (right - left) / w))
-    bh = max(MIN_SIZE, min(1.0, (bottom - top) / h))
-    return cx, cy, bw, bh
-
-
 def denormalize_box(cx: float, cy: float, bw: float, bh: float, w: int, h: int) -> tuple[float, float, float, float]:
     """正規化 (cx, cy, bw, bh) をピクセル座標の (x1, y1, x2, y2) に戻す。"""
     px, py = cx * w, cy * h

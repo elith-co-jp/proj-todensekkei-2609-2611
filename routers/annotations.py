@@ -143,9 +143,7 @@ async def create_project(
     files: list[UploadFile] = File(...),
     db: Session = Depends(get_db),
 ):
-    """画像または PDF をアップロードし、1 ページ = 1 プロジェクトとして登録する。"""
-    if not files:
-        raise HTTPException(400, "画像が含まれていません")
+    """画像または PDF をアップロードし、1 ページ = 1 プロジェクトとして登録する。files が無ければ FastAPI が 422 を返す。"""
     created = []
     turned: list[dict[str, int]] = []
     for f in files:
