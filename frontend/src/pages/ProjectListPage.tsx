@@ -238,8 +238,8 @@ export default function ProjectListPage() {
     })
   }
 
+  // 確認ダイアログは 1 件以上選んだときだけ開ける
   const removeChecked = async () => {
-    if (checked.size === 0) return
     setBusy(true)
     setBusyLabel({
       message: '選択した図面を削除しています',

@@ -61,14 +61,14 @@ export default function WhatIfPanel({ projectIds, summary, inputs, energized }: 
         {devices.map((d) => <option key={d} value={d}>{d}</option>)}
       </select>
       <div className="flex flex-wrap gap-2">
-        <button type="button" className="btn btn-sm" onClick={() => void showImpact()} disabled={busy || !device}>
+        <button type="button" className="btn btn-sm" onClick={() => void showImpact()} disabled={busy}>
           <Network size={12} /> 波及範囲
         </button>
-        <button type="button" className="btn btn-sm" onClick={() => void force(true)} disabled={busy || !device}
+        <button type="button" className="btn btn-sm" onClick={() => void force(true)} disabled={busy}
           title="今の状態から、この機器を動作させたときの変化（溶着・誤動作の確認）">
           <Power size={12} /> 強制 ON
         </button>
-        <button type="button" className="btn btn-sm" onClick={() => void force(false)} disabled={busy || !device}
+        <button type="button" className="btn btn-sm" onClick={() => void force(false)} disabled={busy}
           title="今の状態から、この機器が動かなくなったときの変化（断線・故障の確認）">
           <PowerOff size={12} /> 強制 OFF
         </button>

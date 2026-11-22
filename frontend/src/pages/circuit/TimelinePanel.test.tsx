@@ -103,4 +103,28 @@ describe('TimelinePanel', () => {
     fireEvent.click(view.getAllByLabelText('行を削除')[0])
     expect(view.getAllByLabelText('時刻（秒）')).toHaveLength(1)
   })
+
+  it('edits only the chosen row, and shows unknown states and warnings', async () => {
+    api.circuitTimeline.mockResolvedValue({
+      timers: [],
+      timeline: [{
+        ...timeline.timeline[0],
+        changes: {
+          ...noChange,
+          coils: [{ device: 'X1', before: null, after: true }],
+          loads: [{ project_id: 7, symbol_ref: 'L7', label: '', device: null, page: null, before: false, after: true }],
+        },
+        warnings: ['タイマーの時間が分かりません'],
+      }],
+    })
+    const view = render(<TimelinePanel projectIds={[7]} summary={summary} />)
+    fireEvent.click(view.getByRole('button', { name: /行を追加/ }))
+    fireEvent.change(view.getAllByLabelText('時刻（秒）')[1], { target: { value: '4' } })
+    expect((view.getAllByLabelText('時刻（秒）')[0] as HTMLInputElement).value).toBe('1')
+    fireEvent.click(view.getByRole('button', { name: /実行/ }))
+    expect(await view.findByText('リレー X1: — → ON')).toBeTruthy()
+    expect(view.getByText('負荷 L7: OFF → ON')).toBeTruthy()
+    expect(view.getByText(/タイマーの時間が分かりません/)).toBeTruthy()
+  })
 })
+

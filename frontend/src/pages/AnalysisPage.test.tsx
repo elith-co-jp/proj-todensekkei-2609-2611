@@ -205,4 +205,103 @@ describe('AnalysisPage', () => {
     expect(region?.getAttribute('x')).toBe('250')
     expect(region?.getAttribute('width')).toBe('500')
   })
+
+  it('読み込めなければ理由を出し、別の図面へ移った後に返った古い応答は捨てる', async () => {
+    api.getProject.mockRejectedValueOnce(new Error('図面がありません'))
+    const view = openPage()
+    expect((await view.findByRole('alert')).textContent).toBe('図面がありません')
+    view.unmount()
+
+    api.getProject.mockRejectedValueOnce('文字列の失敗')
+    const second = openPage()
+    await waitFor(() => expect(second.getByRole('alert').textContent).toBe('文字列の失敗'))
+    second.unmount()
+
+    let resolveOld: (value: unknown) => void = () => undefined
+    let rejectOld: (reason: unknown) => void = () => undefined
+    api.getStructure.mockReturnValueOnce(new Promise((resolve) => { resolveOld = resolve }))
+    const third = openPage()
+    await act(() => third.router.navigate('/projects/2/analysis'))
+    expect(await third.findByText('図面2')).toBeTruthy()
+    await act(async () => resolveOld({ project_id: 1, result }))
+    expect(third.getByText('図面2')).toBeTruthy()
+    third.unmount()
+
+    api.getStructure.mockReturnValueOnce(new Promise((_, reject) => { rejectOld = reject }))
+    const fourth = openPage()
+    await act(() => fourth.router.navigate('/projects/2/analysis'))
+    await fourth.findByText('図面2')
+    await act(async () => rejectOld(new Error('古い失敗')))
+    expect(fourth.queryByRole('alert')).toBeNull()
+  })
+
+  it('構造 JSON を書き出せなければ理由を出し、移動後の失敗は出さない', async () => {
+    api.exportStructure.mockRejectedValueOnce(new Error('書き出せません')).mockRejectedValueOnce('文字列')
+    const view = openPage()
+    await view.findByRole('heading', { name: '解析結果' })
+    fireEvent.click(view.getByRole('button', { name: '構造JSON' }))
+    expect((await view.findByRole('alert')).textContent).toBe('書き出せません')
+    fireEvent.click(view.getByRole('button', { name: '構造JSON' }))
+    await waitFor(() => expect(view.getByRole('alert').textContent).toBe('文字列'))
+
+    let rejectLate: (reason: unknown) => void = () => undefined
+    api.exportStructure.mockReturnValueOnce(new Promise((_, reject) => { rejectLate = reject }))
+    fireEvent.click(view.getByRole('button', { name: '構造JSON' }))
+    await act(() => view.router.navigate('/projects/2/analysis'))
+    await view.findByText('図面2')
+    await act(async () => rejectLate(new Error('遅い失敗')))
+    expect(view.queryByRole('alert')).toBeNull()
+    expect((view.getByRole('button', { name: '構造JSON' }) as HTMLButtonElement).disabled).toBe(false)
+  })
+
+  it('未解析の図面はそう示し、解析の警告を並べる', async () => {
+    api.getPredictions.mockResolvedValue({ count: 0, detections: [] })
+    api.getStructure.mockResolvedValueOnce({ project_id: 1, result: null })
+    const view = openPage()
+    expect(await view.findByText('未解析')).toBeTruthy()
+    expect(view.getByRole('button', { name: '解析を実行' })).toBeTruthy()
+    view.unmount()
+
+    api.getStructure.mockResolvedValueOnce({ project_id: 1, result: { ...result, warnings: ['ラベルを読めません'] } })
+    const warned = openPage()
+    expect(await warned.findByText('ラベルを読めません')).toBeTruthy()
+  })
+
+  it('再解析の中止に失敗しても画面は落ちず、別の図面へ移った後の完了では読み直さない', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    try {
+      const view = openPage()
+      await view.findByRole('heading', { name: '解析結果' })
+      fireEvent.click(view.getByRole('button', { name: '再解析' }))
+      await view.findByRole('status', { name: '解析の進み具合' })
+      api.cancelAnalysisJob.mockRejectedValueOnce(new Error('止められません'))
+      fireEvent.click(view.getByRole('button', { name: '中止' }))
+      await waitFor(() => expect(api.cancelAnalysisJob).toHaveBeenCalled())
+      expect(view.queryByRole('alert')).toBeNull()
+
+      // 完了の後の読み直し中に別の図面へ移ったら、古い結果も失敗も出さない
+      let resolveReload: (value: unknown) => void = () => undefined
+      api.getStructure.mockReturnValueOnce(new Promise((resolve) => { resolveReload = resolve }))
+      api.getAnalysisJob.mockResolvedValue({ ...runningJob, status: 'done', done: 1 })
+      await act(() => vi.advanceTimersByTimeAsync(1000))
+      await act(() => view.router.navigate('/projects/2/analysis'))
+      await view.findByText('図面2')
+      await act(async () => resolveReload({ project_id: 1, result }))
+      expect(view.getByText('図面2')).toBeTruthy()
+      expect(view.queryByText('解析結果を保存しました')).toBeNull()
+
+      fireEvent.click(view.getByRole('button', { name: '再解析' }))
+      await view.findByRole('status', { name: '解析の進み具合' })
+      let rejectReload: (reason: unknown) => void = () => undefined
+      api.getStructure.mockReturnValueOnce(new Promise((_, reject) => { rejectReload = reject }))
+      await act(() => vi.advanceTimersByTimeAsync(1000))
+      await act(() => view.router.navigate('/projects/1/analysis'))
+      await view.findByText('図面1')
+      await act(async () => rejectReload(new Error('古い失敗')))
+      expect(view.queryByRole('alert')).toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })
+

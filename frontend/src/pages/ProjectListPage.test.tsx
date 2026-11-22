@@ -121,6 +121,20 @@ describe('ProjectListPage', () => {
     expect(queryAllByText('ABの結果')).toHaveLength(1)
   })
 
+  it('遅れて失敗した旧検索のエラーで後発の結果を消さない', async () => {
+    let rejectFirst: (reason: Error) => void = () => undefined
+    apiMocks.listProjects.mockImplementation((query?: string) =>
+      query === 'A' ? new Promise<ProjectRow[]>((_, reject) => { rejectFirst = reject }) : Promise.resolve([projectRow(2, `${query}の結果`)]))
+    const view = renderPage()
+    const search = await view.findByPlaceholderText('ID・名称・シート番号で検索')
+    fireEvent.change(search, { target: { value: 'A' } })
+    await waitFor(() => expect(apiMocks.listProjects).toHaveBeenCalledWith('A'), { timeout: 1000 })
+    fireEvent.change(search, { target: { value: 'AB' } })
+    expect(await view.findByText('ABの結果', {}, { timeout: 1000 })).toBeTruthy()
+    await act(async () => rejectFirst(new Error('古い失敗')))
+    expect(view.queryByRole('alert')).toBeNull()
+  })
+
   it('状態タブで絞り込み、表示形式の選択を保存する', async () => {
     apiMocks.listProjects.mockResolvedValue([
       projectRow(1, '作業中の図面', 'draft'),
@@ -305,4 +319,210 @@ describe('ProjectListPage', () => {
       await waitFor(() => expect(view.queryByRole('button', { name: /登録した 2 件/ })).toBeNull())
     })
   })
+
+  describe('登録・選択・削除・書き出し', () => {
+    const rows = () => [projectRow(1, '図面A'), projectRow(2, '図面B', 'review'), projectRow(3, '図面C', 'done')]
+
+    it('作業状況の数字と完了率を出し、図面が無ければ 0% にする', async () => {
+      apiMocks.stats.mockResolvedValue({
+        project_count: 4, symbol_count: 12, connection_count: 7, by_status: { draft: 1, review: 1, done: 2 }, by_class: {},
+      })
+      const view = renderPage()
+      const bar = await view.findByRole('progressbar', { name: '完了率' })
+      expect(bar.getAttribute('aria-valuenow')).toBe('50')
+      expect(view.getByText('作業中 1 ・ レビュー待ち 1')).toBeTruthy()
+      view.unmount()
+
+      apiMocks.stats.mockResolvedValue({ project_count: 0, symbol_count: 0, connection_count: 0, by_status: {}, by_class: {} })
+      const empty = renderPage()
+      expect((await empty.findByRole('progressbar', { name: '完了率' })).getAttribute('aria-valuenow')).toBe('0')
+      expect(empty.getByText('作業中 0 ・ レビュー待ち 0')).toBeTruthy()
+      // 図面が無いときは登録を促し、ボタンでファイル選択を開く
+      const click = vi.spyOn(HTMLInputElement.prototype, 'click').mockImplementation(() => undefined)
+      fireEvent.click(empty.getAllByRole('button', { name: /図面を登録/ })[0])
+      fireEvent.click(empty.getAllByRole('button', { name: /図面を登録/ })[1])
+      expect(click).toHaveBeenCalledTimes(2)
+      empty.unmount()
+
+      // 完了の内訳が無い集計でも 0% として出す
+      apiMocks.stats.mockResolvedValue({ project_count: 3, symbol_count: 0, connection_count: 0, by_status: {}, by_class: {} })
+      const noDone = renderPage()
+      expect((await noDone.findByRole('progressbar', { name: '完了率' })).getAttribute('aria-valuenow')).toBe('0')
+    })
+
+    it('一覧を読めなければ理由を出し、更新で読み直す', async () => {
+      apiMocks.listProjects.mockRejectedValueOnce(new Error('サーバーに繋がりません')).mockRejectedValueOnce('文字列の失敗')
+      const view = renderPage()
+      expect((await view.findByRole('alert')).textContent).toContain('サーバーに繋がりません')
+      fireEvent.click(view.getByRole('button', { name: /更新/ }))
+      await waitFor(() => expect(view.getByRole('alert').textContent).toContain('文字列の失敗'))
+      apiMocks.listProjects.mockResolvedValue(rows())
+      fireEvent.click(view.getByRole('button', { name: /更新/ }))
+      expect(await view.findByText('図面A')).toBeTruthy()
+      expect(view.queryByRole('alert')).toBeNull()
+    })
+
+    it('登録すると件数を出し、推論できるなら登録した図面の AI 解析を勧める', async () => {
+      apiMocks.createProjects.mockResolvedValue({ count: 2, project_ids: [8, 9] })
+      apiMocks.mlStatus.mockResolvedValue({ ultralytics: true, active_model: 'best.pt' })
+      const view = renderPage()
+      await waitFor(() => expect(apiMocks.listProjects).toHaveBeenCalled())
+      const input = view.container.querySelector('input[type="file"]') as HTMLInputElement
+      // 何も選ばずに閉じたときは何もしない
+      fireEvent.change(input, { target: { files: [] } })
+      expect(apiMocks.createProjects).not.toHaveBeenCalled()
+      const file = new File(['%PDF'], 'a.pdf', { type: 'application/pdf' })
+      fireEvent.change(input, { target: { files: [file] } })
+      expect(await view.findByText('2 件の図面を登録しました')).toBeTruthy()
+      expect(apiMocks.createProjects).toHaveBeenCalledWith([file])
+      expect(view.getByRole('button', { name: /登録した 2 件/ })).toBeTruthy()
+    })
+
+    it('推論の状態が分からない・モデルが無いときは AI 解析を勧めない', async () => {
+      apiMocks.createProjects.mockResolvedValue({ count: 1, project_ids: [8] })
+      apiMocks.mlStatus.mockRejectedValueOnce(new Error('x')).mockResolvedValueOnce({ ultralytics: true, active_model: null })
+      const view = renderPage()
+      await waitFor(() => expect(apiMocks.listProjects).toHaveBeenCalled())
+      const input = view.container.querySelector('input[type="file"]') as HTMLInputElement
+      for (let round = 0; round < 2; round += 1) {
+        fireEvent.change(input, { target: { files: [new File(['x'], 'a.png')] } })
+        expect(await view.findByText('1 件の図面を登録しました')).toBeTruthy()
+        expect(view.queryByRole('button', { name: /登録した/ })).toBeNull()
+      }
+      expect(apiMocks.mlStatus).toHaveBeenCalledTimes(2)
+    })
+
+    it('登録に失敗したら理由を出す', async () => {
+      apiMocks.createProjects.mockRejectedValueOnce(new Error('PDF を読めません')).mockRejectedValueOnce(42)
+      const view = renderPage()
+      await waitFor(() => expect(apiMocks.listProjects).toHaveBeenCalled())
+      const input = view.container.querySelector('input[type="file"]') as HTMLInputElement
+      fireEvent.change(input, { target: { files: [new File(['x'], 'a.pdf')] } })
+      expect((await view.findByRole('alert')).textContent).toContain('PDF を読めません')
+      fireEvent.change(input, { target: { files: [new File(['x'], 'a.pdf')] } })
+      await waitFor(() => expect(view.getByRole('alert').textContent).toContain('42'))
+    })
+
+    it('Shift で範囲選択し、選んだ図面を書き出し・回路検証へ渡す', async () => {
+      apiMocks.listProjects.mockResolvedValue(rows())
+      apiMocks.exportBulk.mockResolvedValue({ name: 'drawings.zip', size: 2048 })
+      const view = renderPage()
+      await view.findByText('図面A')
+      // 一つ目を選ばずに Shift で押したら、普通の選択として扱う
+      fireEvent.click(view.getByRole('checkbox', { name: '図面Aを選択' }), { shiftKey: true })
+      fireEvent.click(view.getByRole('checkbox', { name: '図面Cを選択' }), { shiftKey: true })
+      expect((view.getByRole('checkbox', { name: '図面Bを選択' }) as HTMLInputElement).checked).toBe(true)
+      expect(view.getByRole('link', { name: /回路検証（3 件）/ }).getAttribute('href')).toBe('/circuit?ids=1,2,3')
+      // もう一度押すと外れる
+      fireEvent.click(view.getByRole('checkbox', { name: '図面Bを選択' }))
+      expect((view.getByRole('checkbox', { name: '図面Bを選択' }) as HTMLInputElement).checked).toBe(false)
+
+      fireEvent.click(view.getByRole('button', { name: /書き出し（2 件）/ }))
+      expect(await view.findByText('drawings.zip を書き出しました（2.0 KB）')).toBeTruthy()
+      expect(apiMocks.exportBulk).toHaveBeenCalledWith({ ids: [1, 3] })
+
+      // 絞り込みで基点が見えなくなったら Shift でも一件だけ切り替える
+      fireEvent.click(view.getByRole('checkbox', { name: '図面Aを選択' }))
+      fireEvent.click(view.getByRole('button', { name: /^レビュー待ち/ }))
+      fireEvent.click(view.getByRole('checkbox', { name: '図面Bを選択' }), { shiftKey: true })
+      expect((view.getByRole('checkbox', { name: '図面Bを選択' }) as HTMLInputElement).checked).toBe(true)
+    })
+
+    it('書き出しに失敗したら理由を出す', async () => {
+      apiMocks.exportBulk.mockRejectedValueOnce(new Error('容量不足')).mockRejectedValueOnce('文字列')
+      const view = renderPage()
+      await waitFor(() => expect(apiMocks.listProjects).toHaveBeenCalled())
+      fireEvent.click(await view.findByRole('button', { name: /書き出し（全件）/ }))
+      expect((await view.findByRole('alert')).textContent).toContain('容量不足')
+      fireEvent.click(view.getByRole('button', { name: /書き出し（全件）/ }))
+      await waitFor(() => expect(view.getByRole('alert').textContent).toContain('文字列'))
+    })
+
+    it('削除は確認してから行い、キャンセル・失敗・成功を扱う', async () => {
+      apiMocks.listProjects.mockResolvedValue(rows())
+      apiMocks.bulkDelete.mockRejectedValueOnce(new Error('使用中です')).mockRejectedValueOnce('x').mockResolvedValueOnce({ deleted: 1 })
+      const view = renderPage()
+      await view.findByText('図面A')
+      const remove = view.getByRole('button', { name: /^削除$/ })
+      expect((remove as HTMLButtonElement).disabled).toBe(true)
+      fireEvent.click(view.getByRole('checkbox', { name: '図面Aを選択' }))
+      fireEvent.click(remove)
+      const dialog = view.getByRole('dialog')
+      expect(dialog.textContent).toContain('1件の図面')
+      fireEvent.click(view.getByRole('button', { name: 'キャンセル' }))
+      expect(view.queryByRole('dialog')).toBeNull()
+
+      fireEvent.click(remove)
+      fireEvent.click(view.getByRole('button', { name: /削除する/ }))
+      expect((await view.findAllByText('使用中です')).length).toBeGreaterThan(0)
+      fireEvent.click(view.getByRole('button', { name: /削除する/ }))
+      await waitFor(() => expect(view.getByRole('dialog').textContent).toContain('x'))
+      fireEvent.click(view.getByRole('button', { name: /削除する/ }))
+      expect(await view.findByText('選択した図面を削除しました')).toBeTruthy()
+      expect(view.queryByRole('dialog')).toBeNull()
+      expect(apiMocks.bulkDelete).toHaveBeenLastCalledWith([1])
+    })
+
+    it('サムネイルが読めなければ図面の記号に置き換え、表・スマホ表示でも選べる', async () => {
+      apiMocks.listProjects.mockResolvedValue([
+        { ...projectRow(1, '図面A', 'unknown'), sheet_no: 'S-1', page_no: 3, analysis_wire_count: 4, analysis_connection_count: null },
+      ])
+      const view = renderPage()
+      await view.findByText('図面A')
+      expect(view.getByText(/シート S-1/)).toBeTruthy()
+      expect(view.getAllByText('unknown').length).toBeGreaterThan(0)
+      expect(view.getByText('AI配線 4').getAttribute('title')).not.toContain('接続')
+      const img = view.container.querySelector('img') as HTMLImageElement
+      fireEvent.error(img)
+      expect(view.container.querySelector('img')).toBeNull()
+
+      fireEvent.click(view.getByRole('button', { name: '表で表示' }))
+      const boxes = view.getAllByRole('checkbox', { name: '図面Aを選択' })
+      expect(boxes).toHaveLength(2)
+      fireEvent.click(boxes[1])
+      expect((boxes[0] as HTMLInputElement).checked).toBe(true)
+      fireEvent.click(boxes[0])
+      expect((boxes[1] as HTMLInputElement).checked).toBe(false)
+      fireEvent.click(view.getByRole('button', { name: 'カード表示' }))
+      expect(view.container.querySelector('table')).toBeNull()
+    })
+
+    it('条件に合う図面が無いときは絞り込みの結果として伝える', async () => {
+      const view = renderPage()
+      expect(await view.findByText('図面がありません。PDFまたは画像を登録してください。')).toBeTruthy()
+      fireEvent.click(view.getByRole('button', { name: /^完了/ }))
+      expect(view.getByText('条件に一致する図面がありません。')).toBeTruthy()
+      fireEvent.click(view.getByRole('button', { name: '表で表示' }))
+      expect(view.getAllByText('条件に一致する図面がありません。')).toHaveLength(2)
+      fireEvent.click(view.getByRole('button', { name: /^すべて/ }))
+      expect(view.getAllByText('図面がありません。PDFまたは画像を登録してください。')).toHaveLength(2)
+    })
+
+    it('表示形式を保存できない環境でも切り替えられる', async () => {
+      const getItem = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+        throw new Error('denied')
+      })
+      vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+        throw new Error('denied')
+      })
+      const view = renderPage()
+      await waitFor(() => expect(apiMocks.listProjects).toHaveBeenCalled())
+      expect(getItem).toHaveBeenCalled()
+      fireEvent.click(view.getByRole('button', { name: '表で表示' }))
+      expect(view.container.querySelector('table')).toBeTruthy()
+    })
+
+    it('解析の開始・中止に失敗したら理由を出す', async () => {
+      apiMocks.startAnalysisJob.mockRejectedValueOnce(new Error('モデルがありません')).mockResolvedValueOnce(job())
+      apiMocks.getAnalysisJob.mockResolvedValue(job())
+      apiMocks.cancelAnalysisJob.mockRejectedValue('止められません')
+      const view = renderPage()
+      fireEvent.click(await view.findByRole('button', { name: /AI 解析（全件）/ }))
+      expect((await view.findByRole('alert')).textContent).toContain('モデルがありません')
+      fireEvent.click(view.getByRole('button', { name: /AI 解析（全件）/ }))
+      fireEvent.click(await view.findByRole('button', { name: '中止' }))
+      await waitFor(() => expect(view.getByRole('alert').textContent).toContain('止められません'))
+    })
+  })
 })
+
