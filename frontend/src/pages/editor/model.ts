@@ -48,8 +48,9 @@ export function buildAnnotationPayload(symbols: SymbolBox[], connections: Connec
 
 export type AnnotationPayload = ReturnType<typeof buildAnnotationPayload>
 
+// 配列はキーと値の組ではないので外す（属性に配列が入った下書きを正しいものとして復元しない）
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
 function isNullableString(value: unknown): value is string | null {

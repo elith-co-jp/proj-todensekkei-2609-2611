@@ -65,7 +65,8 @@ export function useEditorShortcuts(opts: {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const el = e.target as HTMLElement
-      if (/input|textarea|select/i.test(el?.tagName ?? '')) return
+      // window 自体に届いたキーは tagName が無い
+      if (/input|textarea|select/i.test(el.tagName ?? '')) return
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
         e.preventDefault()
         void saveNow()

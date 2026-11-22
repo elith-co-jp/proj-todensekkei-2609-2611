@@ -3,9 +3,9 @@ import { Plus, Trash2 } from 'lucide-react'
 
 import type { AttributeDef, Attributes, AttributeValue } from '../../types'
 
-function parse(def: AttributeDef | undefined, raw: string): AttributeValue {
+function parse(def: AttributeDef, raw: string): AttributeValue {
   if (raw.trim() === '') return null
-  if (def?.type === 'number') {
+  if (def.type === 'number') {
     const n = Number(raw.replace(/,/g, ''))
     return Number.isFinite(n) ? n : raw
   }

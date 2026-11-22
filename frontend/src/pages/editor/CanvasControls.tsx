@@ -4,7 +4,7 @@ import { MODES } from './model'
 import type { Mode } from './model'
 
 export function ModeBadge({ mode }: { mode: Mode }) {
-  const activeMode = MODES.find((item) => item.id === mode) ?? MODES[0]
+  const activeMode = MODES.find((item) => item.id === mode)!
   const ActiveIcon = activeMode.icon
   return (
     <div className="pointer-events-none absolute left-3 top-3 z-10 flex items-center gap-2 rounded-xl border border-white/70 bg-white/85 px-3 py-2 text-xs font-bold text-slate-700 shadow-lg shadow-slate-900/10 backdrop-blur sm:left-4 sm:top-4">
