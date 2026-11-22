@@ -26,6 +26,7 @@ from sqlalchemy.orm import Session
 from database import TRAINING_DIR, SessionLocal
 from models import AnnotationProject, MlModel, TrainingRun, utc_now_naive
 from runtime import is_frozen, resource_base
+from services import busy
 from services.annotation_service import classes_ordered, image_path
 from services.export_service import build_label_content, project_image_stem
 from services.inference_service import ultralytics_available
@@ -353,6 +354,12 @@ def _read_metrics(run_dir) -> dict | None:
 
 
 def _run_training(run_id: int, holdout: bool) -> None:
+    # 学習中は EXE の自動終了を待たせる（画面を閉じても学習は続く）
+    with busy.working("training"):
+        _train(run_id, holdout)
+
+
+def _train(run_id: int, holdout: bool) -> None:
     db = SessionLocal()
     log_buf = io.StringIO()
     try:

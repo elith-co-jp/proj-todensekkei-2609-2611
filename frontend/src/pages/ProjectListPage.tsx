@@ -21,9 +21,11 @@ import {
 } from 'lucide-react'
 
 import { api } from '../api/client'
+import { AnalysisJobProgress } from '../components/AnalysisJobProgress'
 import { LoadingOverlay } from '../components/LoadingOverlay'
+import { analysisJobMessage, useAnalysisJob } from '../hooks/useAnalysisJob'
 import { useModalFocus } from '../hooks/useModalFocus'
-import type { ProjectRow, Stats } from '../types'
+import type { AnalysisJob, ProjectRow, Stats } from '../types'
 import { STATUS_LABEL } from '../types'
 
 const STATUS_CLASS: Record<string, string> = {
@@ -275,49 +277,39 @@ export default function ProjectListPage() {
     }
   }
 
-  const inferChecked = async () => {
-    setBusy(true)
-    setError(null)
-    setBusyLabel({
-      message: '図面を解析しています',
-      hint: 'シンボル・配線・接続関係を処理しています。',
-    })
-    try {
-      const r = await api.runAnalysis(Array.from(checked))
-      setMsg(
-        `解析完了: シンボル ${r.detection_count} 件、配線 ${r.results.reduce((n, page) => n + (page.wire_count ?? 0), 0)} 本。${r.results.flatMap((page) => page.warnings ?? []).length ? '一部のラベル読み取りに問題があります。解析結果を確認してください。' : ''}`,
-      )
-      setJustRegistered(null)
+  // 解析は裏のジョブで 1 枚ずつ進め、図面ごとに保存する（DD-0039）。画面はふさがず、進み具合と中止を出す
+  const onAnalysisFinished = useCallback(
+    async (finished: AnalysisJob) => {
+      // 一覧を読み直してから出す（読み直しが成功するとエラーの表示を消すため）
       await load()
+      const { ok, text } = analysisJobMessage(finished)
+      if (ok) {
+        setMsg(text)
+        setError(null)
+      } else {
+        setError(text)
+      }
+    },
+    [load],
+  )
+  const analysis = useAnalysisJob(onAnalysisFinished)
+
+  const startAnalysis = async (ids: number[]) => {
+    setError(null)
+    setMsg(null)
+    try {
+      await analysis.start(ids)
+      setJustRegistered(null)
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught))
-    } finally {
-      setBusy(false)
-      setBusyLabel(null)
     }
   }
 
-  /** 登録直後の図面にそのまま推論をかける */
-  const inferRegistered = async () => {
-    if (!justRegistered || justRegistered.length === 0) return
-    setBusy(true)
-    setError(null)
-    setBusyLabel({
-      message: '図面を解析しています',
-      hint: 'シンボル・配線・接続関係を処理しています。',
-    })
+  const cancelAnalysis = async () => {
     try {
-      const r = await api.runAnalysis(justRegistered)
-      setMsg(
-        `解析完了: シンボル ${r.detection_count} 件、配線 ${r.results.reduce((n, page) => n + (page.wire_count ?? 0), 0)} 本。${r.results.flatMap((page) => page.warnings ?? []).length ? '一部のラベル読み取りに問題があります。解析結果を確認してください。' : ''}`,
-      )
-      setJustRegistered(null)
-      await load()
+      await analysis.cancel()
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught))
-    } finally {
-      setBusy(false)
-      setBusyLabel(null)
     }
   }
 
@@ -452,6 +444,12 @@ export default function ProjectListPage() {
         </section>
       )}
 
+      {analysis.job && analysis.running && (
+        <div className="mb-5">
+          <AnalysisJobProgress job={analysis.job} onCancel={() => void cancelAnalysis()} />
+        </div>
+      )}
+
       {(msg || error) && (
         <div
           className={`notice mb-5 ${
@@ -467,8 +465,8 @@ export default function ProjectListPage() {
             <button
               type="button"
               className="btn btn-sm flex-none border-emerald-300 bg-white text-emerald-700 hover:bg-emerald-100"
-              onClick={() => void inferRegistered()}
-              disabled={busy}
+              onClick={() => void startAnalysis(justRegistered)}
+              disabled={busy || analysis.running}
             >
               <Sparkles size={13} /> AI 解析（登録した {justRegistered.length} 件）
             </button>
@@ -482,7 +480,7 @@ export default function ProjectListPage() {
             <h2 className="text-base font-semibold text-slate-900">登録済みの図面</h2>
             <p className="mt-0.5 text-[11px] text-slate-500">チェックはShiftキーで範囲選択できます</p>
           </div>
-          <button type="button" className="btn btn-sm" onClick={() => void inferChecked()} disabled={busy}>
+          <button type="button" className="btn btn-sm" onClick={() => void startAnalysis(Array.from(checked))} disabled={busy || analysis.running}>
             <Sparkles size={14} /> AI 解析（{checked.size ? `${checked.size} 件` : '全件'}）
           </button>
           <button type="button" className="btn btn-sm" onClick={() => void exportChecked()} disabled={busy}>
@@ -503,7 +501,8 @@ export default function ProjectListPage() {
               setError(null)
               setDeleteDialogOpen(true)
             }}
-            disabled={busy || checked.size === 0}
+            disabled={busy || analysis.running || checked.size === 0}
+            title={analysis.running ? "解析中は削除できません" : undefined}
           >
             <Trash2 size={14} /> 削除
           </button>

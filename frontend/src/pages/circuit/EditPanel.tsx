@@ -167,7 +167,9 @@ function PreviewView({ preview }: { preview: CircuitEditPreview }) {
   }
   const c = preview.circuit
   const v = preview.validation
-  const changed = (preview.behaviour ?? []).filter((b) => b.coils.length || b.loads.length || b.warnings.length)
+  const changed = (preview.behaviour ?? []).filter(
+    (b) => b.coils.length || b.loads.length || b.warnings.length || (b.resolved_warnings ?? []).length,
+  )
   const circuitLines = c ? [
     c.relays_added.length && `リレーが増える: ${c.relays_added.join('、')}`,
     c.relays_removed.length && `リレーが無くなる: ${c.relays_removed.join('、')}`,
@@ -194,7 +196,10 @@ function PreviewView({ preview }: { preview: CircuitEditPreview }) {
                 <td className="pr-2">{b.inputs}</td>
                 <td className="pr-2">{b.coils.map((x) => `${x.device} ${onOff(x.before)}→${onOff(x.after)}`).join('、')}</td>
                 <td>{b.loads.map((x) => `${x.label ?? x.symbol_ref} ${onOff(x.before)}→${onOff(x.after)}`).join('、')}
-                  {b.warnings.length > 0 && <span className="text-amber-700"> ⚠ {b.warnings.join(' / ')}</span>}</td>
+                  {b.warnings.length > 0 && <span className="text-amber-700"> ⚠ {b.warnings.join(' / ')}</span>}
+                  {(b.resolved_warnings ?? []).length > 0 && (
+                    <span className="text-emerald-700"> ✓ 解消: {b.resolved_warnings!.join(' / ')}</span>
+                  )}</td>
               </tr>
             ))}
           </tbody>

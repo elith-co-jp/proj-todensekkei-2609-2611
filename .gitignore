@@ -29,3 +29,8 @@ dist/
 *.onnx
 *.engine
 :memory:.ses
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+frontend/coverage/

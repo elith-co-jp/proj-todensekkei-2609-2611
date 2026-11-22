@@ -1,0 +1,68 @@
+{
+  "coils": [
+    {
+      "contacts": [
+        {
+          "kind": "a",
+          "project_id": 1,
+          "symbol_ref": "TA"
+        }
+      ],
+      "device": "2T TM1",
+      "symbols": [
+        {
+          "project_id": 1,
+          "symbol_ref": "TC"
+        }
+      ]
+    }
+  ],
+  "diagnostics": [
+    {
+      "kind": "bus_guessed",
+      "message": "PER/NER の文字が無いため、上の母線端を P、下を N と推定しました",
+      "page": "timer",
+      "project_id": 1,
+      "symbol_ref": "N"
+    },
+    {
+      "kind": "bus_guessed",
+      "message": "PER/NER の文字が無いため、上の母線端を P、下を N と推定しました",
+      "page": "timer",
+      "project_id": 1,
+      "symbol_ref": "P"
+    }
+  ],
+  "element_count": 4,
+  "engine": "builtin",
+  "inputs": [
+    {
+      "contacts": [
+        {
+          "kind": "a",
+          "project_id": 1,
+          "symbol_ref": "PB"
+        }
+      ],
+      "device": "PB1"
+    }
+  ],
+  "node_count": 4,
+  "pages": [
+    {
+      "id": 1,
+      "name": "timer"
+    }
+  ],
+  "sheet_links": [],
+  "supplies": [
+    "P"
+  ],
+  "timers": [
+    {
+      "delay_s": 5.0,
+      "device": "2T TM1",
+      "mode": "on_delay"
+    }
+  ]
+}

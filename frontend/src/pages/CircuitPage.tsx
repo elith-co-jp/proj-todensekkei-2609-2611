@@ -271,7 +271,7 @@ export default function CircuitPage() {
                 </div>
                 {result && (
                   <p className="mt-2 text-[10px] text-slate-400">
-                    {ENGINE_LABEL[result.engine]}・{result.steps} 回で収束
+                    電気の計算: {ENGINE_LABEL[result.engine]}・{result.steps} 回
                   </p>
                 )}
               </section>
@@ -290,7 +290,7 @@ export default function CircuitPage() {
           label: '条件',
           caption: '成立条件の逆引きと、影響の順引き。',
           icon: Route,
-          render: () => <TracePanel projectIds={projectIds} />,
+          render: () => <TracePanel projectIds={projectIds} inputs={inputs} />,
         },
         {
           key: 'whatif',
@@ -424,7 +424,7 @@ export default function CircuitPage() {
             onClick={() => openTab(t.key)}
           >
             <Icon size={16} />
-            <span className={vertical ? 'sr-only' : 'text-center'}>{t.label}</span>
+            <span className={vertical ? 'sr-only' : 'whitespace-nowrap text-center tracking-tighter'}>{t.label}</span>
             {t.badge ? (
               <span className={`absolute right-0.5 top-0.5 min-w-4 rounded-full px-1 text-[9px] leading-4 ${
                 active ? 'bg-white text-blue-700' : t.tone === 'warn' ? 'bg-amber-500 text-white' : 'bg-slate-500 text-white'

@@ -25,7 +25,6 @@ import type {
   ClassStats,
   HardDrawings,
   InferenceImportResult,
-  InferenceRunResponse,
   MlModel,
   MlStatus,
   PredictionSummary,
@@ -41,7 +40,7 @@ import type {
   DeviceIndex,
 } from '../types'
 
-import { DEFAULT_DETECTION_CONF } from './defaults'
+import { DEFAULT_CONNECTOR_CONF, DEFAULT_DETECTION_CONF } from './defaults'
 
 export const BASE = import.meta.env.VITE_API_BASE ?? ''
 
@@ -197,22 +196,8 @@ export const api = {
 
   modelDownloadUrl: (id: number) => `${BASE}/api/ml/models/${id}/download`,
 
-  runInference: (projectIds: number[], conf = DEFAULT_DETECTION_CONF, connectorConf: number | null = null) =>
-    req<InferenceRunResponse>('/api/ml/inference/run', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ project_ids: projectIds, conf, connector_conf: connectorConf }),
-    }),
-
-  runAnalysis: (projectIds: number[], conf = DEFAULT_DETECTION_CONF, connectorConf: number | null = null) =>
-    req<InferenceRunResponse>('/api/ml/analysis/run', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ project_ids: projectIds, conf, connector_conf: connectorConf }),
-    }),
-
   // 全図面の解析を裏で回す（DD-0039）。進み具合は getAnalysisJob で取りに行く
-  startAnalysisJob: (projectIds: number[], conf = DEFAULT_DETECTION_CONF, connectorConf: number | null = null) =>
+  startAnalysisJob: (projectIds: number[], conf = DEFAULT_DETECTION_CONF, connectorConf: number | null = DEFAULT_CONNECTOR_CONF) =>
     req<AnalysisJob>('/api/ml/analysis/jobs', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

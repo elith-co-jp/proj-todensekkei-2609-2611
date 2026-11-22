@@ -436,6 +436,7 @@ export type CircuitEditPreview = {
     coils: { device: string; before: boolean | null; after: boolean | null }[]
     loads: { project_id: number; symbol_ref: string; label: string | null; before: boolean | null; after: boolean | null }[]
     warnings: string[]
+    resolved_warnings?: string[]
   }[]
   scenarios?: number
   impact?: { device: string; devices: string[]; loads: string[] }[]

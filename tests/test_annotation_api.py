@@ -9,7 +9,7 @@ from tests.conftest import SAMPLE_ANNOTATION, create_project, make_pdf
 
 
 def test_health(client):
-    assert client.get("/api/health").json() == {"status": "ok", "desktop": False}
+    assert client.get("/api/health").json() == {"status": "ok", "desktop": False, "busy": []}
 
 
 def test_desktop_control_endpoints_are_disabled_by_default(client):

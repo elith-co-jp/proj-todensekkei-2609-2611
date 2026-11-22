@@ -487,9 +487,12 @@ def preview(pages: list[dict[str, Any]], ops: list[dict[str, Any]], *,
                  for k in sorted(set(a["loads"]) | set(b["loads"]))
                  if (a["loads"].get(k) or (None, None))[1] != (b["loads"].get(k) or (None, None))[1]]
         new_warnings = [w for w in b["warnings"] if w not in a["warnings"]]
-        if coils or loads or new_warnings:
+        # 発振などの警告が消えたのも動作の違い（コイルの状態が同じでも「違いはありません」にしない）
+        resolved_warnings = [w for w in a["warnings"] if w not in b["warnings"]]
+        if coils or loads or new_warnings or resolved_warnings:
             label = "、".join(f"{k}={'ON' if v else 'OFF'}" for k, v in scenario.items() if v) or "すべての入力 OFF"
-            behaviour.append({"inputs": label, "coils": coils, "loads": loads, "warnings": new_warnings})
+            behaviour.append({"inputs": label, "coils": coils, "loads": loads, "warnings": new_warnings,
+                              "resolved_warnings": resolved_warnings})
 
     # 波及範囲: 変えた記号の器具（接点・コイル）と、変更で増減した器具から、変更後の回路でたどる。
     impact = []

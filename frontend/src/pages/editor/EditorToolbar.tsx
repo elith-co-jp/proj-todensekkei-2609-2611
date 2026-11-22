@@ -40,7 +40,7 @@ export function EditorToolbar({
   onToggleInspector: () => void
 }) {
   return (
-    <div className="thin-scroll flex flex-none items-center gap-2 overflow-x-auto border-b border-white/10 bg-slate-900 px-3 py-2 sm:px-4">
+    <div className="flex flex-none flex-wrap items-center gap-2 border-b border-white/10 bg-slate-900 px-3 py-2 sm:px-4">
       <div role="toolbar" aria-label="アノテーションモード" className="flex items-center gap-1.5">
         {MODES.map(({ id, label, key, icon: Icon }) => (
           <button
@@ -72,7 +72,7 @@ export function EditorToolbar({
             }`}
           >
             <Icon size={16} />
-            <span className="hidden md:inline">{label}</span>
+            <span className="hidden xl:inline">{label}</span>
             <span className={`kbd border-0 ${mode === id ? 'bg-slate-950/10 text-slate-800' : 'bg-black/25 text-slate-400'}`}>
               {key}
             </span>
@@ -88,7 +88,7 @@ export function EditorToolbar({
           style={{ background: colorOf(classKey) }}
         />
         <select
-          className="min-h-10 w-48 rounded-xl border border-white/10 bg-white/[0.06] px-3 text-xs font-semibold text-white outline-none transition focus:border-cyan-400 md:w-60"
+          className="min-h-10 w-48 rounded-xl border border-white/10 bg-white/[0.06] px-3 text-xs font-semibold text-white outline-none transition focus:border-cyan-400 xl:w-60"
           value={classKey}
           onChange={(event) => onClassKeyChange(event.target.value)}
         >
@@ -115,7 +115,7 @@ export function EditorToolbar({
         title="アノテーションの種類ごとに表示を切り替えます"
       >
         <Layers size={16} />
-        <span className="hidden md:inline">レイヤー</span>
+        <span className="hidden xl:inline">レイヤー</span>
         {hiddenAnnotationCount > 0 && (
           <span
             className="rounded-full bg-amber-400/20 px-1.5 font-mono text-[10px] text-amber-200"

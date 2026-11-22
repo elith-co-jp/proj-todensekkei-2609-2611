@@ -160,7 +160,7 @@ export function aiImportNotice(result: AiImportResult) {
   if (result.source === null) {
     return regionNote
       ? `取り込める検出がありませんでした${regionNote}`
-      : 'この図面の推論結果がありません。「AI 学習」で推論を実行してください'
+      : 'この図面の解析結果がありません。図面一覧の「AI 解析」を実行してください'
   }
   const terminalCount =
     result.terminals.length + result.symbols.reduce((n, s) => n + s.terminals.length, 0)

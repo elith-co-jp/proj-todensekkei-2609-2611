@@ -88,7 +88,7 @@ def export_rows(pages: list[dict[str, Any]], circuit: Circuit, *, drawing_set: s
                         f"器具番号 {dev}")
             else:
                 row(contact["project_id"], element, COIL_CONTACT, contact.get("label", ""), src.get("ref_sheet") or "",
-                    t.SOURCE_LABEL[src["source"]], src.get("reason") or "")
+                    t.source_label(src), src.get("reason") or "")
     return rows
 
 

@@ -1,0 +1,208 @@
+{
+  "timeline": [
+    {
+      "changes": {
+        "coils": [],
+        "contacts": [],
+        "loads": []
+      },
+      "coils": {
+        "2T TM1": false
+      },
+      "inputs": {},
+      "label": "初期状態",
+      "loads": [
+        {
+          "device": null,
+          "energized": false,
+          "label": "RL",
+          "project_id": 1,
+          "symbol_ref": "L"
+        },
+        {
+          "device": "2T TM1",
+          "energized": false,
+          "label": "2T TM1",
+          "project_id": 1,
+          "symbol_ref": "TC"
+        }
+      ],
+      "t": 0.0,
+      "timers": {
+        "2T TM1": {
+          "due": null,
+          "output": false
+        }
+      },
+      "warnings": []
+    },
+    {
+      "changes": {
+        "coils": [
+          {
+            "after": true,
+            "before": false,
+            "device": "2T TM1"
+          }
+        ],
+        "contacts": [
+          {
+            "after": true,
+            "before": false,
+            "device": "PB1",
+            "kind": "a",
+            "page": "timer",
+            "project_id": 1,
+            "symbol_ref": "PB"
+          }
+        ],
+        "loads": [
+          {
+            "after": true,
+            "before": false,
+            "device": "2T TM1",
+            "label": "2T TM1",
+            "page": "timer",
+            "project_id": 1,
+            "symbol_ref": "TC"
+          }
+        ]
+      },
+      "coils": {
+        "2T TM1": true
+      },
+      "inputs": {
+        "PB1": true
+      },
+      "label": "PB1=ON",
+      "loads": [
+        {
+          "device": null,
+          "energized": false,
+          "label": "RL",
+          "project_id": 1,
+          "symbol_ref": "L"
+        },
+        {
+          "device": "2T TM1",
+          "energized": true,
+          "label": "2T TM1",
+          "project_id": 1,
+          "symbol_ref": "TC"
+        }
+      ],
+      "t": 1.0,
+      "timers": {
+        "2T TM1": {
+          "due": 6.0,
+          "output": false
+        }
+      },
+      "warnings": []
+    },
+    {
+      "changes": {
+        "coils": [],
+        "contacts": [
+          {
+            "after": true,
+            "before": false,
+            "device": "2T TM1",
+            "kind": "a",
+            "page": "timer",
+            "project_id": 1,
+            "symbol_ref": "TA"
+          }
+        ],
+        "loads": [
+          {
+            "after": true,
+            "before": false,
+            "device": null,
+            "label": "RL",
+            "page": "timer",
+            "project_id": 1,
+            "symbol_ref": "L"
+          }
+        ]
+      },
+      "coils": {
+        "2T TM1": true
+      },
+      "inputs": {
+        "PB1": true
+      },
+      "label": "2T TM1 の時間が経過",
+      "loads": [
+        {
+          "device": null,
+          "energized": true,
+          "label": "RL",
+          "project_id": 1,
+          "symbol_ref": "L"
+        },
+        {
+          "device": "2T TM1",
+          "energized": true,
+          "label": "2T TM1",
+          "project_id": 1,
+          "symbol_ref": "TC"
+        }
+      ],
+      "t": 6.0,
+      "timers": {
+        "2T TM1": {
+          "due": null,
+          "output": true
+        }
+      },
+      "warnings": []
+    },
+    {
+      "changes": {
+        "coils": [],
+        "contacts": [],
+        "loads": []
+      },
+      "coils": {
+        "2T TM1": true
+      },
+      "inputs": {
+        "PB1": true
+      },
+      "label": "終了",
+      "loads": [
+        {
+          "device": null,
+          "energized": true,
+          "label": "RL",
+          "project_id": 1,
+          "symbol_ref": "L"
+        },
+        {
+          "device": "2T TM1",
+          "energized": true,
+          "label": "2T TM1",
+          "project_id": 1,
+          "symbol_ref": "TC"
+        }
+      ],
+      "t": 10.0,
+      "timers": {
+        "2T TM1": {
+          "due": null,
+          "output": true
+        }
+      },
+      "warnings": []
+    }
+  ],
+  "timers": [
+    {
+      "delay_s": 5.0,
+      "device": "2T TM1",
+      "mode": "on_delay"
+    }
+  ],
+  "unknown": []
+}

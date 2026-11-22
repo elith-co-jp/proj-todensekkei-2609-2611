@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { ArrowLeftRight, Download, FileSpreadsheet, Loader2, Search } from 'lucide-react'
 
@@ -47,15 +47,20 @@ function ExplainTree({ node, depth = 0 }: { node: TraceExplain; depth?: number }
   )
 }
 
-type Props = { projectIds: number[] }
+type Props = { projectIds: number[]; inputs?: Record<string, boolean> }
+
+/** 「操作」タブの ON / OFF を、入力の状態の初期値にする（ON は動作、OFF は非動作、触っていない入力は不明）。 */
+function initialStates(inputs: Record<string, boolean> | undefined): Record<string, Tri> {
+  return Object.fromEntries(Object.entries(inputs ?? {}).map(([k, v]) => [k, v ? 'on' : 'off']))
+}
 
 /** 展開接続図を読む手順: 逆引き（このコイル・出力が動く条件は？）と順引き（この器具が変わったら何に影響する？）。DD-0035 */
-export default function TracePanel({ projectIds }: Props) {
+export default function TracePanel({ projectIds, inputs }: Props) {
   const [targets, setTargets] = useState<TraceTargets | null>(null)
   const [mode, setMode] = useState<'backward' | 'forward'>('backward')
   const [target, setTarget] = useState('')
   const [device, setDevice] = useState('')
-  const [states, setStates] = useState<Record<string, Tri>>({})
+  const [states, setStates] = useState<Record<string, Tri>>(() => initialStates(inputs))
   const [backward, setBackward] = useState<TraceBackward | null>(null)
   const [forward, setForward] = useState<TraceForward | null>(null)
   const [busy, setBusy] = useState(false)
@@ -84,6 +89,19 @@ export default function TracePanel({ projectIds }: Props) {
   const traceBack = () => run(async () => setBackward(await api.traceBackward(projectIds, target, stateValues())))
   const traceForward = () => run(async () => setForward(await api.traceForward(projectIds, device, stateValues())))
   const inputDevices = (targets?.devices ?? []).filter((d) => d.source !== 'relay')
+
+  // 入力の状態を変えたら、出ている結果を計算し直す（古い結果を残さない）
+  const firstStates = useRef(true)
+  useEffect(() => {
+    if (firstStates.current) {
+      firstStates.current = false
+      return
+    }
+    if (mode === 'backward' && backward && target) void traceBack()
+    else if (mode === 'forward' && forward && device) void traceForward()
+    // states の変化だけで計算し直す（対象を変えたときは「条件算出」「影響追跡」を押す）
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [states])
 
   return (
     <section className="card mt-5 p-4 sm:p-5" aria-label="条件">
@@ -139,12 +157,12 @@ export default function TracePanel({ projectIds }: Props) {
           <div className="mt-1 grid gap-1 sm:grid-cols-2">
             {inputDevices.map((d) => (
               <label key={d.device} className="flex items-center gap-2">
-                <span className="w-40 truncate" title={d.reason}>{d.device}</span>
+                <span className="min-w-0 flex-1 break-all" title={d.reason}>{d.device}</span>
                 <select className="input input-sm" aria-label={`${d.device} の状態`} value={states[d.device] ?? 'unknown'}
                   onChange={(e) => setStates({ ...states, [d.device]: e.target.value as Tri })}>
                   {(Object.keys(TRI_LABEL) as Tri[]).map((k) => <option key={k} value={k}>{TRI_LABEL[k]}</option>)}
                 </select>
-                <span className="text-slate-400">{d.source_label}</span>
+                <span className="whitespace-nowrap text-slate-400">{d.source_label}</span>
               </label>
             ))}
           </div>

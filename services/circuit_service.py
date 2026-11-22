@@ -397,7 +397,7 @@ def trace_targets(db: Session, project_ids: list[int]) -> dict[str, Any]:
     tracer = circuit_trace.Tracer(circuit, pages)
     return {"loads": [{"name": name, **ref} for name, ref in tracer.all_loads()],
             "devices": [{k: v for k, v in src.items() if k not in ("contacts", "coils")}
-                        | {"source_label": circuit_trace.SOURCE_LABEL[src["source"]], "contact_count": len(src.get("contacts", []))}
+                        | {"source_label": circuit_trace.source_label(src), "contact_count": len(src.get("contacts", []))}
                         for _, src in sorted(tracer.sources.items())]}
 
 
