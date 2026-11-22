@@ -98,8 +98,8 @@ export default function TimelinePanel({ projectIds, summary }: Props) {
             <li key={i} className="rounded-lg bg-slate-50 p-1.5">
               <span className="mr-1 rounded bg-white px-1 font-mono text-[10px] text-slate-500">{s.t} 秒</span>
               <span className="font-bold text-slate-700">{s.label}</span>
-              {[...s.changes.coils.map((c) => `リレー ${c.device}: ${onOff(c.before)} → ${onOff(c.after)}`),
-                ...s.changes.loads.filter((x) => !x.device).map((x) => `負荷 ${x.label || x.symbol_ref}: ${onOff(x.before)} → ${onOff(x.after)}`)]
+              {[...(s.changes?.coils ?? []).map((c) => `リレー ${c.device}: ${onOff(c.before)} → ${onOff(c.after)}`),
+                ...(s.changes?.loads ?? []).filter((x) => !x.device).map((x) => `負荷 ${x.label || x.symbol_ref}: ${onOff(x.before)} → ${onOff(x.after)}`)]
                 .map((line) => <div key={line} className="ml-2 text-slate-600">{line}</div>)}
               {Object.entries(s.timers).filter(([, v]) => v.due != null).map(([d, v]) => (
                 <div key={d} className="ml-2 text-slate-400">{d} は {v.due} 秒に動く予定</div>

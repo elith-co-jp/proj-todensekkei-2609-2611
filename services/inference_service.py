@@ -66,9 +66,7 @@ def _record_predictions(
     clear_predictions(db, project.id)
     counts = {"symbol": 0, "region": 0}
     for d in detections:
-        cx, cy, w, h = sanitize_box(d["cx"], d["cy"], d["w"], d["h"])
-        if w <= 0 or h <= 0:
-            continue
+        cx, cy, w, h = sanitize_box(d["cx"], d["cy"], d["w"], d["h"])  # 幅・高さは MIN_SIZE 以上になる
         kind = detection_kind(w, h)
         db.add(
             Prediction(
@@ -139,8 +137,6 @@ def _detect(detector, page, conf: float, connector_conf: float | None, class_by_
             if cls.key == "connector" and connector_conf is not None and score is not None and score < connector_conf:
                 continue
             cx, cy, w, h = sanitize_box(cx, cy, w, h)
-            if w <= 0 or h <= 0:
-                continue
             detection = {
                 "class_id": cls.id, "class_key": cls.key, "class_label": cls.label,
                 "cx": cx, "cy": cy, "w": w, "h": h,

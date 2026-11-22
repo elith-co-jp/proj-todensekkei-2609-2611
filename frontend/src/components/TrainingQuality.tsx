@@ -36,7 +36,8 @@ export function PerClassComparison({ run }: { run: TrainingRun }) {
   const baseline = run.baseline_per_class ?? {}
   const keys = Array.from(new Set([...Object.keys(baseline), ...Object.keys(current)]))
   if (keys.length === 0) return null
-  const row = (key: string): ClassMetric | undefined => current[key] ?? baseline[key]
+  // keys は current と baseline のどちらかにある
+  const row = (key: string): ClassMetric => (current[key] ?? baseline[key])!
   return (
     <div className="overflow-x-auto rounded-2xl border border-slate-200">
       <table className="w-full min-w-[520px] text-xs" aria-label="クラス別の評価">
@@ -56,8 +57,8 @@ export function PerClassComparison({ run }: { run: TrainingRun }) {
             const delta = now !== undefined && before !== undefined ? now - before : null
             return (
               <tr key={key} className="border-t border-slate-100">
-                <td className="px-3 py-1.5 font-bold text-slate-700">{row(key)?.label ?? key}</td>
-                <td className="px-3 py-1.5 text-right font-mono text-slate-500">{row(key)?.instances ?? '—'}</td>
+                <td className="px-3 py-1.5 font-bold text-slate-700">{row(key).label || key}</td>
+                <td className="px-3 py-1.5 text-right font-mono text-slate-500">{row(key).instances}</td>
                 <td className="px-3 py-1.5 text-right font-mono text-slate-800">{now?.toFixed(3) ?? '—'}</td>
                 <td className="px-3 py-1.5 text-right font-mono text-slate-500">{before?.toFixed(3) ?? '—'}</td>
                 <td className="px-3 py-1.5 text-right font-mono">

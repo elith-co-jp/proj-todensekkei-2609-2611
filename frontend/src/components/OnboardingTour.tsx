@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
-import { Check, ChevronLeft, ChevronRight, CloudCog, FileUp, ScanSearch, X, ZoomIn } from 'lucide-react'
+import { Check, ChevronLeft, ChevronRight, CircuitBoard, CloudCog, FileUp, ScanSearch, Sparkles, X, ZoomIn } from 'lucide-react'
+
+import { useModalFocus } from '../hooks/useModalFocus'
 
 import { LogoMark } from './Logo'
 
@@ -9,6 +11,12 @@ const STEPS = [
     body: '図面一覧の「図面を登録」からPDFを選ぶと、全ページが自動で画像化されます。',
     note: '各ページは個別の作業行として追加されます。',
     icon: FileUp,
+  },
+  {
+    title: 'AI 解析で下書きを作る',
+    body: '図面一覧の「AI 解析」で、シンボル・配線・接続を図面ごとに読み取ります。裏で 1 枚ずつ進み、途中で中止もできます。',
+    note: '結果は「解析結果」で確かめ、エディタの「AI 取込」で取り込んでから直します。',
+    icon: Sparkles,
   },
   {
     title: '4つのモードで入力',
@@ -28,46 +36,23 @@ const STEPS = [
     note: 'ブラウザ標準の拡大縮小はそのまま利用できます。',
     icon: ZoomIn,
   },
+  {
+    title: '回路検証で動きを確かめる',
+    body: '「回路検証」で図面を選んで回路を作ると、入力の ON / OFF・条件・波及範囲・タイマー・変更の試行を確かめられます。',
+    note: '検査の指摘から「編集」でエディタに移り、直してから戻って確かめ直せます。',
+    icon: CircuitBoard,
+  },
 ] as const
 
 export function OnboardingTour({ open, onClose }: { open: boolean; onClose: () => void }) {
   const [step, setStep] = useState(0)
   const dialogRef = useRef<HTMLElement | null>(null)
-  const closeButtonRef = useRef<HTMLButtonElement | null>(null)
 
+  // 開くたびに最初の段から。フォーカスの閉じ込め・Esc で閉じる・背面のスクロール止めは他のダイアログと同じ
   useEffect(() => {
-    if (!open) return
-    setStep(0)
-    const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose()
-      if (event.key !== 'Tab' || !dialogRef.current) return
-      const focusable = Array.from(
-        dialogRef.current.querySelectorAll<HTMLElement>(
-          'button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
-        ),
-      )
-      if (focusable.length === 0) return
-      const first = focusable[0]
-      const last = focusable[focusable.length - 1]
-      if (event.shiftKey && document.activeElement === first) {
-        event.preventDefault()
-        last.focus()
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault()
-        first.focus()
-      }
-    }
-    window.addEventListener('keydown', onKey)
-    const previousOverflow = document.body.style.overflow
-    document.body.style.overflow = 'hidden'
-    window.requestAnimationFrame(() => closeButtonRef.current?.focus())
-    return () => {
-      window.removeEventListener('keydown', onKey)
-      document.body.style.overflow = previousOverflow
-      previouslyFocused?.focus()
-    }
-  }, [open, onClose])
+    if (open) setStep(0)
+  }, [open])
+  useModalFocus({ open, containerRef: dialogRef, onClose })
 
   if (!open) return null
 
@@ -95,7 +80,7 @@ export function OnboardingTour({ open, onClose }: { open: boolean; onClose: () =
               </h2>
             </div>
           </div>
-          <button ref={closeButtonRef} className="btn btn-sm" onClick={onClose} aria-label="ツアーを閉じる">
+          <button data-autofocus className="btn btn-sm" onClick={onClose} aria-label="ツアーを閉じる">
             <X size={15} />
           </button>
         </div>

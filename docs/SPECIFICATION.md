@@ -63,7 +63,8 @@ Docker Compose は `frontend`（Nginx）、`backend`（FastAPI + Poppler）、`d
 | 役割 | 図面の登録、進捗確認、一括出力・削除 |
 | 主な操作 | 「図面を登録」で PDF または画像をアップロード（複数可）／PDF は全ページを自動分割／名称またはサムネイルで編集画面へ／チェックボックスは Shift で範囲選択／状態タブ（すべて・作業中・レビュー待ち・完了）で絞り込み／カード表示と表表示の切り替え（ブラウザに保存） |
 | 表示 | 登録図面数・シンボル数・配線数・完了数と完了率の KPI、作業の流れ（登録→AI 解析→確認・修正→回路検証→書き出し）、図面ごとのサムネイル・シンボル／端子／配線件数と状態。保存済みの件数と AI の結果（「AI検出 N」「AI配線 M」）を分けて表示し、凡例で意味を示す |
-| 利用 API | `GET /api/projects` `GET /api/projects/{id}/thumbnail` `GET /api/stats` `POST /api/projects` `POST /api/projects/bulk-delete` `POST /api/export` |
+| AI 解析 | 「AI 解析（全件／N 件）」と登録直後の「AI 解析（登録した N 件）」は裏のジョブ（DD-0039）で 1 枚ずつ解析し、一覧の上に進み具合（何枚目・いまの図面）と中止を出す。図面ごとに保存し、失敗した図面は飛ばす。コネクタのしきい値は AI 学習画面と同じ既定（0.6）。解析結果画面の「再解析」も同じジョブを使う |
+| 利用 API | `GET /api/projects` `GET /api/projects/{id}/thumbnail` `GET /api/stats` `POST /api/projects` `POST /api/projects/bulk-delete` `POST /api/export` `POST /api/ml/analysis/jobs` |
 
 一覧・入出力・ヘルプで共通のサイドバーは展開／折りたたみ可能。編集画面は図面領域を
 最大化する専用フォーカスレイアウトとし、一覧へ戻る導線を編集ヘッダーに表示する。
@@ -74,6 +75,8 @@ Docker Compose は `frontend`（Nginx）、`backend`（FastAPI + Poppler）、`d
 ナビゲーションは「作業」（図面一覧→回路検証→入出力）と「AI・ヘルプ」（AI 学習・ヘルプ）の 2 つに分け、項目ごとの色つきアイコンで見分け、案内はアイコン・説明を横に並べたグレーのバナーで示す。
 AI 改善サイクルの5段階は番号と線でつながった流れとして表示する。
 画像やロゴは流用しない。編集画面のキャンバスは作業領域を優先する。
+初回のツアーは 6 段（PDF 登録・入力モード・自動保存・ズーム・AI 解析・回路検証）。画面の描画に失敗したときと、存在しない URL では、
+日本語のエラー画面（「画面を表示できませんでした」／「ページが見つかりません」、図面一覧へ戻る・再読み込み）を出す。
 
 ### 3.2 アノテーションエディタ（`/projects/:id`）
 
@@ -147,7 +150,7 @@ ZIP を選択してインポートすると、`bundle.json` の有無で復元�
 
 ### 3.4 ヘルプ（`/guide`）
 
-5 ステップの手順書とキーボード操作一覧、複数人で分担する場合のデータ受け渡し手順。
+5 ステップの手順書とキーボード操作一覧、複数人で分担する場合のデータ受け渡し手順。「AI 解析と回路検証の使い方」の節で、AI 解析・AI 取込・回路検証の各タブ・図面セットを説明する。
 実際の図面は掲載せず、匿名の操作画面モックで PDF 登録、描画モード、自動保存、図面ズームを説明する。
 
 ### 3.5 AI 学習（`/ml`、AI 改善サイクル）
@@ -254,6 +257,7 @@ ZIP を選択してインポートすると、`bundle.json` の有無で復元�
 | `POST` | `/api/export` | `{ids}` で ZIP（全画像を train に出力） |
 | `POST` | `/api/import` | multipart `archive`（`.zip`）。`{mode, project_ids, count}` |
 | `GET` | `/api/stats` | 件数集計（`by_origin` に manual / inference の内訳を含む） |
+| `GET` | `/api/health` | `{status, desktop, busy}`。`busy` は終わるまで EXE を閉じない処理の一覧（`analysis`: 解析のジョブ・同期の解析、`training`: 学習） |
 
 ### AI 改善サイクル
 
@@ -299,7 +303,7 @@ ZIP を選択してインポートすると、`bundle.json` の有無で復元�
 | `POST` | `/api/circuit/skidl` | `{project_ids[]}`。実行すると KiCad のネットリストを書き出す SKiDL のスクリプト（DD-0028） |
 | `POST` | `/api/circuit/what-if` | `{project_ids[], inputs, energized, change}`。`change` は `inputs`（入力の切り替え）・`devices`（機器の動作の固定）・`contacts`（接点の溶着 / 接触不良）・`open`（断線）・`short`（短絡）。変わるリレー・負荷・接点を返す（DD-0029） |
 | `POST` | `/api/circuit/sequence` | what-if と同じ形に `steps[]`（`label`・`inputs`、最大 50）。操作の手順を順に解き、各手順で変わったところを返す |
-| `POST` | `/api/circuit/timeline` | what-if と同じ形に `events[]`（`at` 秒・`label`・`inputs`、最大 100）、`delays`（器具番号 → 秒）、`until`。タイマーを含む時間の流れ（DD-0033） |
+| `POST` | `/api/circuit/timeline` | what-if と同じ形に `events[]`（`at` 秒・`label`・`inputs`、最大 100）、`delays`（器具番号 → 秒）、`until`。タイマーを含む時間の流れ（DD-0033）。各記録の `changes` は初期状態・終了の記録も含めて常に `{coils[], loads[], contacts[]}` |
 | `POST` | `/api/circuit/impact` | `{project_ids[], device}`。その機器が動いたら影響しうるリレー・負荷と、その機器を動かしうる機器（DD-0029） |
 | `POST` | `/api/circuit/trace` | `{project_ids[], mode, target / symbol / device, states, energized, external}`。`mode=backward` は成立条件と成立・不成立・判定不能（枝ごとの根拠つき）、`forward` は影響先（DD-0035） |
 | `POST` | `/api/circuit/trace/targets` | `{project_ids[]}`。逆引きの対象（コイル・負荷）と順引きの起点（器具と出どころ） |
@@ -360,7 +364,7 @@ ZIP を選択してインポートすると、`bundle.json` の有無で復元�
 
 | 項目 | 内容 |
 |------|------|
-| 運用形態 | 各 PC で動く Windows 単一 EXE を第一とする（サーバは `127.0.0.1` だけで待ち受け、データは EXE と同じフォルダの `data/`）。1 ファイルの EXE は約 913 MB で起動に 10〜13 秒、必要なときだけ作るフォルダ形式（ZIP 約 372 MB）は 1.5〜2 秒で起動する（DD-0040）。Docker Compose（共有サーバ）でも動く |
+| 運用形態 | 各 PC で動く Windows 単一 EXE を第一とする（サーバは `127.0.0.1` だけで待ち受け、データは EXE と同じフォルダの `data/`）。EXE は画面からの合図が 5 分途切れると自分で終わるが、解析のジョブ・学習・同期の解析の間は終わるまで待つ（`GET /api/health` の `busy`。DD-0045）。1 ファイルの EXE は約 913 MB で起動に 10〜13 秒、必要なときだけ作るフォルダ形式（ZIP 約 372 MB）は 1.5〜2 秒で起動する（DD-0040）。Docker Compose（共有サーバ）でも動く |
 | 認証 | なし（ローカル運用前提）。必要ならセッション認証を追加する |
 | 外部通信 | なし（`LABEL_LLM_URL` を設定したときだけ、その URL へ記号・文字の切り出し画像を送る）。CORS は `SEQANNO_CORS_ORIGINS` で明示したオリジンのみ。ブラウザ発のリクエストは `Origin` がローカル（localhost/127.0.0.1/::1）または許可オリジン以外の場合 403 で拒否（localhost CSRF 対策） |
 | アップロード上限 | PDF 256 MiB・500ページ／画像 1 枚 64 MiB／ZIP 展開後 2 GiB・20,000 ファイル・圧縮率 25 倍 |
@@ -377,6 +381,9 @@ ZIP を選択してインポートすると、`bundle.json` の有無で復元�
 
 `python3 -m pytest`（`tests/` と `analysis/tests/`）、画面は `cd frontend && npm test`（vitest）と `npm run build`（型検査）で実行する。
 PR と main への push ごとに `.github/workflows/ci.yml` が pytest・ruff・画面の型検査とテストを回す（DD-0037）。`make test` で同じものをまとめて実行できる。
+製品のコードは、バックエンド（`pyproject.toml` の `[tool.coverage]`。研究用の `analysis/tools` などは除く）・画面（`vite.config.ts`）とも
+行・分岐の網羅率 100% を CI で求める（`make coverage`。DD-0045）。外部の部品（PDF・OCR のモデル・SQLite・ngspice・HTTP）は本物で試し、
+置き換えるのは YOLO など重い外部のエンジンだけ。画面のテストが使う API の応答の見本は、`tests/test_api_contract.py` で実際の API と突き合わせる。
 主なテストファイルと観点は次のとおり。
 
 | 区分 | ファイル | 観点 |
@@ -388,6 +395,7 @@ PR と main への push ごとに `.github/workflows/ci.yml` が pytest・ruff�
 | 回路 | `tests/test_circuit_model.py`・`test_circuit_api.py`・`test_circuit_interop.py`・`test_circuit_whatif.py`・`test_circuit_timing.py`・`test_circuit_trace.py`・`test_sheet_links.py`・`test_consistency.py`・`test_circuit_edit.py`・`test_drawing_sets.py` | 回路の組み立て・シミュレーション、Lcapy・SKiDL・SPICE、もしも・手順・波及範囲、タイマー、逆引き・順引き（3 値の判定）、行先札、整合性チェック、図面の変更と取り消し、押しボタン・ダイオード、図面セット |
 | 正解のやり取り・評価 | `tests/test_exchange_api.py`・`test_reading_metrics.py`・`test_logic_validation.py`・`test_synthetic_scan_data.py`、`analysis/tests/test_eval_suite.py` | 対応表・CVAT・代表回路のシナリオ、正解率の分け方、正解つき合成回路での論理の検証、評価の基準値との比較 |
 | 性能 | `tests/test_speedups.py` | 高速化した計算が元の計算と同じ結果を返すこと |
+| 境界・失敗・契約 | `tests/test_*_cases.py`・`test_api_error_paths.py`・`test_api_contract.py`・`test_pdf_service.py`・`test_desktop_mode.py`・`test_runtime_failures.py`、`analysis/tests/test_*_cases.py`・`test_name_ocr_reader.py`・`test_ocr_loading.py` | 各機能の境目の値と失敗の返し方、画面の API の呼び先と応答の形、PyMuPDF と Poppler での PDF の画像化、EXE の起動・自動終了、解析中の OCR の失敗、本物の認識モデルでの名称の読み取り |
 
 合成回路とスキャン風の合成図面での評価は `make eval`（`analysis/tools/eval_suite.py`）の 1 コマンドで行い、`analysis/eval_baseline.json` の基準値より悪くなれば失敗する（DD-0038。CI では `--quick`）。受け取る図面の正解データはまだ無いため、実図面の精度ではなく、合成データでの退行を見張る。
 回路の理解の正しさは、正解つきの合成回路 60 個で `analysis/tools/validate_circuit_logic.py`・`validate_reading_procedure.py` を

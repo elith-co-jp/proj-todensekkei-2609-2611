@@ -92,9 +92,7 @@ def build_label_content(db: Session, project: AnnotationProject, *, skip_wire_be
     cls_by_id = {c.id: c for c in classes_ordered(db)}
     lines = []
     for s in sorted(project.symbols, key=lambda s: s.ref):
-        cls = cls_by_id.get(s.class_id)
-        if cls is None:
-            continue
+        cls = cls_by_id[s.class_id]  # 記号の種類は外部キーでクラスマスタにある
         if skip_wire_bends and cls.key == "other" and (s.label or "").strip() == WIRE_BEND_LABEL:
             continue
         lines.append(f"{cls.yolo_index} {s.cx:.6f} {s.cy:.6f} {s.w:.6f} {s.h:.6f}")

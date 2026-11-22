@@ -125,6 +125,10 @@ def test_timeline_api(client):
     body = res.json()
     assert [s["t"] for s in body["timeline"]] == [0, 1, 6, 10]
     assert body["timeline"][2]["changes"]["contacts"][0]["after"] is True
+    # 初期状態・終了の記録も、画面が読む形（coils・loads・contacts の配列）で返す（以前は {} で画面が落ちた）
+    for snap in body["timeline"]:
+        assert {k: type(v) for k, v in snap["changes"].items()} == {"coils": list, "loads": list, "contacts": list}
+    assert body["timeline"][0]["label"] == "初期状態" and body["timeline"][-1]["label"] == "終了"
     bad = client.post("/api/circuit/timeline", json={"project_ids": [pid], "delays": {"NOPE": 1}})
     assert bad.status_code == 400
 

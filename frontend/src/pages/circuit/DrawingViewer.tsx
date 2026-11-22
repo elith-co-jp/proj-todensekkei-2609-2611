@@ -59,8 +59,9 @@ export default function DrawingViewer({
   const left = insets?.left ?? 0
 
   const fit = useCallback(() => {
-    const stage = stageRef.current
-    if (!stage || !width || !height) return
+    // 図面の枠（stageRef）は最初の描画で付くので、effect とボタンから呼ぶときには必ずある
+    const stage = stageRef.current!
+    if (!width || !height) return
     const w = Math.max(stage.clientWidth - left - right - 32, 80)
     const h = Math.max(stage.clientHeight - top - bottom - 32, 80)
     const scale = Math.min(w / width, h / height)
@@ -79,8 +80,8 @@ export default function DrawingViewer({
 
   // 選んだ記号を中心に、周りの回路が読める程度（記号の約 12 倍の範囲）まで拡大する
   useEffect(() => {
-    const stage = stageRef.current
-    if (!focus || !stage || !width || !height) return
+    const stage = stageRef.current!
+    if (!focus || !width || !height) return
     const w = Math.max(stage.clientWidth - left - right - 32, 80)
     const h = Math.max(stage.clientHeight - top - bottom - 32, 80)
     const fitScale = Math.min(w / width, h / height)
@@ -98,8 +99,8 @@ export default function DrawingViewer({
 
   // 画面の大きさが変わったら、全体表示のままなら合わせ直す
   useEffect(() => {
-    const stage = stageRef.current
-    if (!stage || typeof ResizeObserver === 'undefined') return
+    const stage = stageRef.current!
+    if (typeof ResizeObserver === 'undefined') return
     const observer = new ResizeObserver(() => {
       if (fitted.current) fit()
     })
@@ -116,8 +117,7 @@ export default function DrawingViewer({
   }, [])
 
   const zoomCenter = (factor: number) => {
-    const stage = stageRef.current
-    if (!stage) return
+    const stage = stageRef.current!
     zoomAt(factor, left + (stage.clientWidth - left - right) / 2, top + (stage.clientHeight - top - bottom) / 2)
   }
   const zoomCenterRef = useRef(zoomCenter)
@@ -125,10 +125,9 @@ export default function DrawingViewer({
 
   // ページのスクロールを止めるため、ホイールは passive でない登録にする
   useEffect(() => {
-    const stage = stageRef.current
-    if (!stage) return
+    const stage = stageRef.current!
     const onWheel = (event: WheelEvent) => {
-      if ((event.target as Element | null)?.closest('[data-overlay-ui]')) return
+      if ((event.target as Element).closest('[data-overlay-ui]')) return
       event.preventDefault()
       const rect = stage.getBoundingClientRect()
       zoomAt(Math.exp(-event.deltaY * 0.0015), event.clientX - rect.left, event.clientY - rect.top)

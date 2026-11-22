@@ -63,8 +63,8 @@ type ToolTab = {
   label: string
   caption: string
   icon: typeof CircuitBoard
+  /** 要確認の件数（警告の色で出す） */
   badge?: number
-  tone?: 'warn'
   render: () => ReactNode
 }
 
@@ -73,7 +73,7 @@ const STEPS = ['図面選択', '回路作成', '動作確認'] as const
 /** 道具のパネルを図面の上に重ねる幅（xl 以上）かどうか */
 function useWideScreen() {
   const query = '(min-width: 1280px)'
-  const [wide, setWide] = useState(() => typeof window !== 'undefined' && typeof window.matchMedia === 'function' && window.matchMedia(query).matches)
+  const [wide, setWide] = useState(() => typeof window.matchMedia === 'function' && window.matchMedia(query).matches)
   useEffect(() => {
     if (typeof window.matchMedia !== 'function') return
     const media = window.matchMedia(query)
@@ -139,8 +139,8 @@ export default function CircuitPage() {
     }
   }
 
+  // 呼ぶ側（作成ボタン・ids・再作成）は 1 枚以上の図面を渡す
   const build = async (target = selected) => {
-    if (target.length === 0) return
     setBusy(true)
     try {
       const s = await api.buildCircuit(target)
@@ -271,7 +271,7 @@ export default function CircuitPage() {
                 </div>
                 {result && (
                   <p className="mt-2 text-[10px] text-slate-400">
-                    {ENGINE_LABEL[result.engine]}・{result.steps} 回で収束
+                    電気の計算: {ENGINE_LABEL[result.engine]}・{result.steps} 回
                   </p>
                 )}
               </section>
@@ -290,7 +290,7 @@ export default function CircuitPage() {
           label: '条件',
           caption: '成立条件の逆引きと、影響の順引き。',
           icon: Route,
-          render: () => <TracePanel projectIds={projectIds} />,
+          render: () => <TracePanel projectIds={projectIds} inputs={inputs} />,
         },
         {
           key: 'whatif',
@@ -312,7 +312,6 @@ export default function CircuitPage() {
           caption: '回路にできなかった箇所、シート間接続、解析結果の整合性を見る。',
           icon: ShieldCheck,
           badge: issueCount,
-          tone: 'warn',
           render: () => (
             <div className="space-y-4">
               <section className="card p-4" aria-label="回路にできなかった箇所">
@@ -378,6 +377,7 @@ export default function CircuitPage() {
         },
       ]
     : []
+  // 回路を組む前（tabs が空）は使わない。組んだ後はどれかのタブが必ずある
   const activeTab = tabs.find((t) => t.key === tab) ?? tabs[0]
   const overlayPanel = wide || fullscreen
   const inputDevices = useMemo(() => new Set(summary?.inputs.map((i) => i.device) ?? []), [summary])
@@ -408,7 +408,7 @@ export default function CircuitPage() {
     >
       {tabs.map((t) => {
         const Icon = t.icon
-        const active = t.key === activeTab?.key && (panelOpen || !overlayPanel)
+        const active = t.key === activeTab.key && (panelOpen || !overlayPanel)
         return (
           <button
             key={t.key}
@@ -424,10 +424,10 @@ export default function CircuitPage() {
             onClick={() => openTab(t.key)}
           >
             <Icon size={16} />
-            <span className={vertical ? 'sr-only' : 'text-center'}>{t.label}</span>
+            <span className={vertical ? 'sr-only' : 'whitespace-nowrap text-center tracking-tighter'}>{t.label}</span>
             {t.badge ? (
               <span className={`absolute right-0.5 top-0.5 min-w-4 rounded-full px-1 text-[9px] leading-4 ${
-                active ? 'bg-white text-blue-700' : t.tone === 'warn' ? 'bg-amber-500 text-white' : 'bg-slate-500 text-white'
+                active ? 'bg-white text-blue-700' : 'bg-amber-500 text-white'
               }`}>
                 {t.badge}
               </span>
@@ -438,7 +438,7 @@ export default function CircuitPage() {
     </div>
   )
 
-  const toolContent = activeTab && (
+  const toolContent = () => (
     <div id="circuit-tool-panel" role="tabpanel" aria-labelledby={`circuit-tab-${activeTab.key}`} className="[&_section.card]:mt-0">
       <p className="mb-3 px-1 text-[11px] leading-5 text-slate-500">{activeTab.caption}</p>
       {activeTab.render()}
@@ -651,7 +651,7 @@ export default function CircuitPage() {
             </div>
 
             <div data-overlay-ui className="pointer-events-none absolute bottom-3 right-3 top-3 flex items-start gap-2 [&>*]:pointer-events-auto">
-              {overlayPanel && panelOpen && activeTab && (
+              {overlayPanel && panelOpen && (
                 <div
                   className="flex max-h-full flex-col overflow-hidden rounded-2xl border border-white/70 bg-white/95 shadow-2xl shadow-slate-900/20 backdrop-blur"
                   style={{ width: PANEL_WIDTH }}
@@ -659,7 +659,7 @@ export default function CircuitPage() {
                   <div className="flex items-center gap-2 border-b border-slate-100 p-1.5">
                     <div className="min-w-0 flex-1">{tabBar(false)}</div>
                   </div>
-                  <div className="thin-scroll min-h-0 flex-1 overflow-auto p-3">{toolContent}</div>
+                  <div className="thin-scroll min-h-0 flex-1 overflow-auto p-3">{toolContent()}</div>
                 </div>
               )}
               <div className="flex flex-col gap-1 rounded-2xl border border-white/70 bg-white/90 p-1 shadow-lg shadow-slate-900/10 backdrop-blur">
@@ -702,7 +702,7 @@ export default function CircuitPage() {
       {!overlayPanel && (
         <div className="min-w-0">
           <div className="card mb-3 p-1">{tabBar(false)}</div>
-          {toolContent}
+          {toolContent()}
         </div>
       )}
     </div>

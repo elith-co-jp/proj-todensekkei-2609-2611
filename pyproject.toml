@@ -23,3 +23,23 @@ extend-select = ["B", "UP", "SIM"]
 "tests/conftest.py" = ["E402"]
 # 凍結 exe 用ランチャ: 例外を潰す意図的なパターンがある
 "desktop.py" = ["S110", "SIM115"]
+
+[tool.coverage.run]
+# 製品として動くコード（API・サービス・解析の実行部分）を数える。CI は pytest --cov で 100% を求める（DD-0045）。
+source = ["."]
+omit = [
+    "tests/*",
+    "analysis/tests/*",
+    # 研究用の道具（評価・データ作り・調査の画面）。製品の EXE には入らない
+    "analysis/tools/*",
+    "analysis/ui/*",
+    "analysis/synthetic_circuits/*",
+    "scripts/*",
+    ".venv/*",
+    "frontend/*",
+]
+
+[tool.coverage.report]
+fail_under = 100
+show_missing = true
+skip_covered = true

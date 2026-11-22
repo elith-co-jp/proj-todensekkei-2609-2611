@@ -1,12 +1,13 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { ArrowLeft, Cable, ChevronLeft, ChevronRight, Download, Pencil, Sparkles, Square, SquareDashed } from 'lucide-react'
 
 import { api } from '../api/client'
-import { LoadingOverlay } from '../components/LoadingOverlay'
+import { AnalysisJobProgress } from '../components/AnalysisJobProgress'
 import { PageJump } from '../components/PageJump'
 import PredictionDrawing from '../components/PredictionDrawing'
-import type { ProjectDetail, ProjectPredictions, ProjectRow, StructureResult } from '../types'
+import { analysisJobMessage, useAnalysisJob } from '../hooks/useAnalysisJob'
+import type { AnalysisJob, ProjectDetail, ProjectPredictions, ProjectRow, StructureResult } from '../types'
 import { getProjectNavigation } from '../utils/workspace'
 
 type PageData = {
@@ -20,7 +21,6 @@ export default function AnalysisPage() {
   const projectId = Number(useParams().id)
   const [data, setData] = useState<PageData | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [busy, setBusy] = useState(false)
   const [downloading, setDownloading] = useState(false)
   const [showSymbols, setShowSymbols] = useState(true)
   const [showWires, setShowWires] = useState(true)
@@ -41,7 +41,6 @@ export default function AnalysisPage() {
     setData(null)
     setError(null)
     setNotice(null)
-    setBusy(false)
     setDownloading(false)
     void fetchPage(projectId).then((result) => {
       if (request === generation.current) setData(result)
@@ -51,21 +50,33 @@ export default function AnalysisPage() {
     return () => { generation.current++ }
   }, [projectId])
 
-  const run = async () => {
+  // 再解析も裏のジョブで行う（DD-0039）。一覧・AI 学習の画面と同じしきい値・同じ保存のしかたにする
+  const onAnalysisFinished = useCallback(async (finished: AnalysisJob) => {
     const request = generation.current
-    setBusy(true)
-    setError(null)
-    setNotice(null)
+    const { ok, text } = analysisJobMessage(finished)
+    if (!ok) {
+      setError(text)
+      return
+    }
     try {
-      await api.runAnalysis([projectId])
       const result = await fetchPage(projectId)
       if (request !== generation.current) return
       setData(result)
-      setNotice('解析結果を保存しました')
+      setNotice(finished.status === 'cancelled' ? text : '解析結果を保存しました')
     } catch (caught) {
       if (request === generation.current) setError(caught instanceof Error ? caught.message : String(caught))
-    } finally {
-      if (request === generation.current) setBusy(false)
+    }
+  }, [projectId])
+  const analysis = useAnalysisJob(onAnalysisFinished)
+  const busy = analysis.running
+
+  const run = async () => {
+    setError(null)
+    setNotice(null)
+    try {
+      await analysis.start([projectId])
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught))
     }
   }
 
@@ -94,8 +105,12 @@ export default function AnalysisPage() {
 
   return (
     <div className="flex h-dvh min-h-[480px] flex-col bg-white text-slate-800">
-      {busy && <LoadingOverlay message="図面を解析しています" hint="シンボル・配線・接続関係を処理しています。" />}
-      <div className="flex min-h-0 flex-1 flex-col" aria-hidden={busy} inert={busy ? true : undefined}>
+      {analysis.job && busy && (
+        <div className="fixed bottom-4 right-4 z-[80] w-80 shadow-lg">
+          <AnalysisJobProgress job={analysis.job} onCancel={() => void analysis.cancel().catch(() => undefined)} />
+        </div>
+      )}
+      <div className="flex min-h-0 flex-1 flex-col">
         <header className="flex flex-wrap items-center gap-3 border-b border-slate-200 px-4 py-3">
           <Link to="/" className="icon-button flex-none" title="図面一覧に戻る" aria-label="図面一覧に戻る"><ArrowLeft size={19} /></Link>
           <div className="min-w-0 flex-1 basis-40">

@@ -48,8 +48,9 @@ export function buildAnnotationPayload(symbols: SymbolBox[], connections: Connec
 
 export type AnnotationPayload = ReturnType<typeof buildAnnotationPayload>
 
+// 配列はキーと値の組ではないので外す（属性に配列が入った下書きを正しいものとして復元しない）
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
 function isNullableString(value: unknown): value is string | null {
@@ -160,7 +161,7 @@ export function aiImportNotice(result: AiImportResult) {
   if (result.source === null) {
     return regionNote
       ? `取り込める検出がありませんでした${regionNote}`
-      : 'この図面の推論結果がありません。「AI 学習」で推論を実行してください'
+      : 'この図面の解析結果がありません。図面一覧の「AI 解析」を実行してください'
   }
   const terminalCount =
     result.terminals.length + result.symbols.reduce((n, s) => n + s.terminals.length, 0)

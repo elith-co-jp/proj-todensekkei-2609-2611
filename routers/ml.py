@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 from database import SessionLocal, get_db
 from models import AnnotationProject, MlModel, TrainingRun
 from routers.common import get_project_or_404, safe_upload_name
-from services import analysis_jobs, inference_service
+from services import analysis_jobs, busy, inference_service
 from schemas import AnnotationUpdatePayload, InferenceRunRequest, TrainingDecisionPayload, TrainingRunRequest
 from services.ai_import_service import import_payload
 from services.inference_service import (
@@ -155,22 +155,23 @@ def _run_inference(payload: InferenceRunRequest, db: Session, *, include_structu
         raise HTTPException(404, "対象に存在しない図面が含まれています")
     if not _inference_lock.acquire(blocking=False):
         raise HTTPException(409, "別の解析を実行中です。完了してから再実行してください。")
-    try:
-        if include_structure:
-            results = run_inference(db, model, projects, conf=payload.conf,
-                                    connector_conf=payload.connector_conf, include_structure=True)
-        else:
-            results = run_inference(db, model, projects, conf=payload.conf,
-                                    connector_conf=payload.connector_conf)
-    except RuntimeError as exc:
-        db.rollback()
-        raise HTTPException(400, str(exc)) from exc
-    except Exception as exc:
-        db.rollback()
-        _logger.exception("Inference failed")
-        raise HTTPException(500, "解析に失敗しました。保存済みの結果は変更されていません。") from exc
-    finally:
-        _inference_lock.release()
+    with busy.working("analysis"):
+        try:
+            if include_structure:
+                results = run_inference(db, model, projects, conf=payload.conf,
+                                        connector_conf=payload.connector_conf, include_structure=True)
+            else:
+                results = run_inference(db, model, projects, conf=payload.conf,
+                                        connector_conf=payload.connector_conf)
+        except RuntimeError as exc:
+            db.rollback()
+            raise HTTPException(400, str(exc)) from exc
+        except Exception as exc:
+            db.rollback()
+            _logger.exception("Inference failed")
+            raise HTTPException(500, "解析に失敗しました。保存済みの結果は変更されていません。") from exc
+        finally:
+            _inference_lock.release()
     return {
         "model": serialize_model(model),
         "conf": payload.conf,
@@ -398,15 +399,14 @@ def decide_training_run(
     run = db.query(TrainingRun).filter(TrainingRun.id == run_id).one_or_none()
     if run is None:
         raise HTTPException(404, "学習ジョブが見つかりません")
-    if run.status != "success" or run.result_model_id is None:
+    if run.status != "success":
         raise HTTPException(400, "採用判定できるのは完了した学習ジョブのみです")
     if run.decision != "pending":
         raise HTTPException(400, "この学習ジョブはすでに判定済みです")
-    model = (
-        db.query(MlModel).filter(MlModel.id == run.result_model_id).one_or_none()
-    )
-    if model is None:
+    # モデルを消すと外部キー（ON DELETE SET NULL）で参照が空になる。以前は「完了した学習ジョブのみ」と誤って断っていた。
+    if run.result_model_id is None:
         raise HTTPException(400, "成果物のモデルが削除されているため判定できません")
+    model = db.query(MlModel).filter(MlModel.id == run.result_model_id).one()
     if payload.decision == "adopt":
         activate(db, model)
         run.decision = "adopted"

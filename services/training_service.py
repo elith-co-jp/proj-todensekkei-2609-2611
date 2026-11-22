@@ -16,6 +16,7 @@ import contextlib
 import csv
 import io
 import json
+import shutil
 import threading
 import traceback
 from pathlib import Path
@@ -26,6 +27,7 @@ from sqlalchemy.orm import Session
 from database import TRAINING_DIR, SessionLocal
 from models import AnnotationProject, MlModel, TrainingRun, utc_now_naive
 from runtime import is_frozen, resource_base
+from services import busy
 from services.annotation_service import classes_ordered, image_path
 from services.export_service import build_label_content, project_image_stem
 from services.inference_service import ultralytics_available
@@ -324,8 +326,6 @@ def adoption_review(metrics: dict | None, baseline: dict | None, eval_scope: dic
 
 def _baseline_label(db: Session, base: str) -> str:
     """比較対象モデルの表示名。登録済みモデルなら名称+バージョン、それ以外はファイル名。"""
-    if not base:
-        return "初期モデル"
     known = db.query(MlModel).filter(MlModel.sha256 == Path(base).stem).first()
     if known is not None:
         return f"{known.name} v{known.version}"
@@ -353,12 +353,21 @@ def _read_metrics(run_dir) -> dict | None:
 
 
 def _run_training(run_id: int, holdout: bool) -> None:
+    # 学習中は EXE の自動終了を待たせる（画面を閉じても学習は続く）
+    with busy.working("training"):
+        _train(run_id, holdout)
+
+
+def _train(run_id: int, holdout: bool) -> None:
     db = SessionLocal()
     log_buf = io.StringIO()
     try:
         run = db.query(TrainingRun).filter(TrainingRun.id == run_id).one()
         projects = resolve_training_projects(db, json.loads(run.project_ids_json), only_done=False)
         run_dir = TRAINING_DIR / f"run_{run.id}"
+        # DB を作り直すと学習の番号が 1 から振り直される。前の DB の同じ番号の結果（best.pt・results.csv）を
+        # 今回の成果物と取り違えないよう、学習の出力先を空にしてから始める。
+        shutil.rmtree(run_dir / "train", ignore_errors=True)
         run_dir.mkdir(parents=True, exist_ok=True)
 
         data_yaml, eval_scope = _write_dataset(db, run_dir, projects, holdout)
@@ -400,9 +409,8 @@ def _run_training(run_id: int, holdout: bool) -> None:
             print(f"[training-run-{run.id}] evaluate candidate {best}", file=log_buf)
             eval_metrics = _eval_weights(best, data_yaml, run.imgsz, labels)
             print(f"[training-run-{run.id}] evaluate baseline {base}", file=log_buf)
-            baseline_metrics = (
-                _eval_weights(Path(base), data_yaml, run.imgsz, labels) if base else None
-            )
+            # base は必ず決まっている（指定・採用中のモデル・初期モデルのどれか）。
+            baseline_metrics = _eval_weights(Path(base), data_yaml, run.imgsz, labels)
 
         digest, size = store_model_bytes(best.read_bytes(), f"run_{run.id}_best.pt")
         metrics = eval_metrics or _read_metrics(run_dir)

@@ -180,10 +180,8 @@ def drop_glyph_marks(items: Iterable[TextItem], zones: list[dict[str, Any]] | No
     out: list[TextItem] = []
     for item in items:
         if "本" in item["text"] and not (zones and zone_of(item["box"], zones) == "relay_table"):
-            text = _GLYPH_HON.sub(" ", item["text"]).strip()
-            if not text:
-                continue
-            item = {**item, "text": text}
+            # 消す「本」は英数字かハイフンに隣り合うので、消したあとも必ず文字が残る。
+            item = {**item, "text": _GLYPH_HON.sub(" ", item["text"]).strip()}
         out.append(item)
     return out
 

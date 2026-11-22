@@ -269,3 +269,24 @@ def test_validation_tool_on_synthetic_circuits():
     s = summarize([check_seed(seed, trials=3) for seed in range(3)])
     assert s["condition_ok"] == s["loads"] and s["decided_ok"] == s["decided"]
     assert s["unknown_wrong"] == 0 and s["missing_wrong"] == 0 and s["effects_ok"] == s["effects"]
+
+
+def test_scenarios_with_unknown_names_string_states_and_pages_without_cases():
+    pages = [self_holding_page()]
+    circuit = build_circuit(pages)
+    scenarios = [
+        {"id": "F", "question": "影響", "origin": "NOPE", "affected": []},
+        {"id": "A", "question": "影響", "origin": "STOP", "affected": ["X", "GHOST"]},
+        {"id": "B", "target": "NOPE2"},
+        {"id": "S", "target": "X", "cases": [{"states": {"STOP": "0", "PB1": "動作"}, "expected": "成立"}]},
+        {"id": "P", "target": "X", "pages": ["1"]},
+    ]
+    rows = {r["id"]: r for r in circuit_scenarios.evaluate(circuit, pages, scenarios)["scenarios"]}
+    assert rows["F"]["checks"][0]["check"] == "origin_found" and not rows["F"]["ok"]
+    assert rows["A"]["unknown_names"] == ["GHOST"]
+    assert rows["B"]["checks"][0]["check"] == "target_found"
+    assert rows["S"]["ok"], rows["S"]
+    assert rows["P"]["checks"][0]["check"] == "pages"
+    assert circuit_scenarios.load("- id: S1\n  target: X\n") == (None, [{"id": "S1", "target": "X"}])
+    with pytest.raises(ValueError, match="scenarios の配列"):
+        circuit_scenarios.load("drawing_set: DS01\n")

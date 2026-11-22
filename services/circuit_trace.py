@@ -41,6 +41,14 @@ MISSING_REFERENCE = "missing_reference"  # 参照先のシートを受け取っ�
 UNRESOLVED = "unresolved"        # 参照先にコイルが無い・器具番号が読めない
 SOURCE_LABEL = {RELAY: "リレー（図面内にコイル）", INPUT: "外部入力（図面範囲外）",
                 MISSING_REFERENCE: "参照先欠落", UNRESOLVED: "未解決"}
+PUSH_BUTTON_LABEL = "押しボタン（入力）"
+
+
+def source_label(src: dict[str, Any]) -> str:
+    """出どころの表示名。図面上の押しボタンは「図面範囲外」ではないので、押しボタン（入力）と出す。"""
+    if src.get("source", INPUT) == INPUT and src.get("push_button"):
+        return PUSH_BUTTON_LABEL
+    return SOURCE_LABEL[src.get("source", INPUT)]
 
 _SHEET = re.compile(SHEET_REF)
 _TRUTHY = {"1", "true", "yes", "y", "on", "はい", "外部", "外部入力", "io", "i/o"}
@@ -104,6 +112,8 @@ def device_sources(circuit: Circuit, pages: list[dict[str, Any]] | None = None,
         found: dict[str, Any]
         if canonical_device(dev) in declared or str(attrs.get("external_io") or "").strip().lower() in _TRUTHY:
             found = {"source": INPUT, "reason": "外部入力（I/O）と指定されている"}
+        elif symbol.get("class_key") == "push_button":
+            found = {"source": INPUT, "push_button": True, "reason": "図面上の押しボタン（人が操作する入力）"}
         elif "（器具番号なし）" in dev:
             found = {"source": UNRESOLVED, "reason": "接点の器具番号が読めない"}
         else:
@@ -233,9 +243,7 @@ def factor(terms: list[frozenset[Literal]]) -> dict[str, Any]:
     rest = [t - common for t in terms]
     parts = [_lit(d, k) for d, k in sorted(common)]
     if any(not t for t in rest):
-        tail = None  # くくり出した残りのどれかが空 → 残りは常に成立
-    elif len(rest) == 1:
-        parts += [_lit(d, k) for d, k in sorted(rest[0])]
+        # くくり出した残りのどれかが空 → 残りは常に成立。枝が 1 本なら残りは必ず空なので、ここで終わる。
         tail = None
     else:
         counts = Counter(x for t in rest for x in t)
@@ -243,12 +251,11 @@ def factor(terms: list[frozenset[Literal]]) -> dict[str, Any]:
         if n == 1:
             tail = {"op": "or", "args": [_and([_lit(d, k) for d, k in sorted(t)]) for t in sorted(rest, key=sorted)]}
         else:
+            # pick を含まない枝は必ずある（全部の枝にあれば common に入って rest から消えている）。
             with_x = [t - {pick} for t in rest if pick in t]
             without = [t for t in rest if pick not in t]
-            args = [_and([_lit(*pick), factor(with_x)])]
-            if without:
-                args.append(factor(without))
-            tail = args[0] if len(args) == 1 else {"op": "or", "args": _flatten("or", args)}
+            args = [_and([_lit(*pick), factor(with_x)]), factor(without)]
+            tail = {"op": "or", "args": _flatten("or", args)}
     if tail is not None:
         parts.append(tail)
     return _and(parts)
@@ -642,7 +649,7 @@ class Tracer:
                     else:
                         out["relays"].append(node(dev, depth + 1))
                 else:
-                    out["inputs"].append({"device": dev, "source": kind, "source_label": SOURCE_LABEL[kind],
+                    out["inputs"].append({"device": dev, "source": kind, "source_label": source_label(src),
                                           "reason": src.get("reason"), "ref_sheet": src.get("ref_sheet")})
             return out
 

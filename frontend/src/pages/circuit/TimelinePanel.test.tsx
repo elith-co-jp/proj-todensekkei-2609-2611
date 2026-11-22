@@ -4,6 +4,8 @@ import { cleanup, fireEvent, render, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { CircuitSummary, CircuitTimeline } from '../../types'
+import realSummary from '../../test/fixtures/circuit-summary-timer.json'
+import realTimeline from '../../test/fixtures/circuit-timeline.json'
 import TimelinePanel from './TimelinePanel'
 
 const api = vi.hoisted(() => ({ circuitTimeline: vi.fn() }))
@@ -53,6 +55,47 @@ describe('TimelinePanel', () => {
     expect(view.getByText('負荷 RL: OFF → ON')).toBeTruthy()
   })
 
+  it('renders the real API response including the empty initial/end records (tests/test_api_contract.py)', async () => {
+    api.circuitTimeline.mockResolvedValue(realTimeline)
+    const view = render(<TimelinePanel projectIds={[1]} summary={realSummary as unknown as CircuitSummary} />)
+    fireEvent.click(view.getByRole('button', { name: /実行/ }))
+    await waitFor(() => expect(view.getByText('終了')).toBeTruthy())
+    expect(view.getByText('初期状態')).toBeTruthy()
+    expect(view.getByText('リレー 2T TM1: OFF → ON')).toBeTruthy()
+    expect(view.getByText('負荷 RL: OFF → ON')).toBeTruthy()
+  })
+
+  it('still renders records whose changes are missing (older servers)', async () => {
+    api.circuitTimeline.mockResolvedValue({ timers: [], timeline: [{ ...timeline.timeline[0], changes: {} }] })
+    const view = render(<TimelinePanel projectIds={[7]} summary={summary} />)
+    fireEvent.click(view.getByRole('button', { name: /実行/ }))
+    await waitFor(() => expect(view.getByText('初期状態')).toBeTruthy())
+  })
+
+  it('shows the API error and edits the rows', async () => {
+    api.circuitTimeline.mockRejectedValueOnce(new Error('タイマー NOPE が回路にありません')).mockRejectedValueOnce('文字列の失敗')
+    const view = render(<TimelinePanel projectIds={[7]} summary={summary} />)
+    fireEvent.change(view.getByLabelText('時刻（秒）'), { target: { value: '2.5' } })
+    fireEvent.change(view.getByLabelText('ON/OFF'), { target: { value: 'off' } })
+    fireEvent.change(view.getByLabelText('入力'), { target: { value: 'PB1' } })
+    fireEvent.change(view.getByLabelText('終了（秒）'), { target: { value: '30' } })
+    fireEvent.click(view.getByRole('button', { name: /実行/ }))
+    expect((await view.findByRole('alert')).textContent).toBe('タイマー NOPE が回路にありません')
+    expect(api.circuitTimeline).toHaveBeenCalledWith([7], [{ at: 2.5, inputs: { PB1: false } }], {}, 30)
+    fireEvent.click(view.getByRole('button', { name: /実行/ }))
+    await waitFor(() => expect(view.getByRole('alert').textContent).toBe('文字列の失敗'))
+  })
+
+  it('renders nothing without inputs and adds the first row from 0 s when all rows were removed', () => {
+    const empty = render(<TimelinePanel projectIds={[7]} summary={{ ...summary, inputs: [], timers: undefined }} />)
+    expect(empty.container.innerHTML).toBe('')
+    empty.unmount()
+    const view = render(<TimelinePanel projectIds={[7]} summary={{ ...summary, timers: undefined }} />)
+    fireEvent.click(view.getByLabelText('行を削除'))
+    fireEvent.click(view.getByRole('button', { name: /行を追加/ }))
+    expect((view.getByLabelText('時刻（秒）') as HTMLInputElement).value).toBe('1')
+  })
+
   it('adds and removes operations', () => {
     const view = render(<TimelinePanel projectIds={[7]} summary={summary} />)
     fireEvent.click(view.getByRole('button', { name: /行を追加/ }))
@@ -60,4 +103,28 @@ describe('TimelinePanel', () => {
     fireEvent.click(view.getAllByLabelText('行を削除')[0])
     expect(view.getAllByLabelText('時刻（秒）')).toHaveLength(1)
   })
+
+  it('edits only the chosen row, and shows unknown states and warnings', async () => {
+    api.circuitTimeline.mockResolvedValue({
+      timers: [],
+      timeline: [{
+        ...timeline.timeline[0],
+        changes: {
+          ...noChange,
+          coils: [{ device: 'X1', before: null, after: true }],
+          loads: [{ project_id: 7, symbol_ref: 'L7', label: '', device: null, page: null, before: false, after: true }],
+        },
+        warnings: ['タイマーの時間が分かりません'],
+      }],
+    })
+    const view = render(<TimelinePanel projectIds={[7]} summary={summary} />)
+    fireEvent.click(view.getByRole('button', { name: /行を追加/ }))
+    fireEvent.change(view.getAllByLabelText('時刻（秒）')[1], { target: { value: '4' } })
+    expect((view.getAllByLabelText('時刻（秒）')[0] as HTMLInputElement).value).toBe('1')
+    fireEvent.click(view.getByRole('button', { name: /実行/ }))
+    expect(await view.findByText('リレー X1: — → ON')).toBeTruthy()
+    expect(view.getByText('負荷 L7: OFF → ON')).toBeTruthy()
+    expect(view.getByText(/タイマーの時間が分かりません/)).toBeTruthy()
+  })
 })
+

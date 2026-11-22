@@ -11,6 +11,7 @@ import os
 import threading
 import time
 from contextlib import asynccontextmanager
+from pathlib import Path
 from urllib.parse import urlsplit
 
 from fastapi import FastAPI, HTTPException, Request
@@ -21,7 +22,7 @@ from fastapi.staticfiles import StaticFiles
 from database import init_db
 from routers import annotations, attributes, circuit, drawing_sets, exchange, ml
 from runtime import resource_base
-from services import analysis_jobs
+from services import analysis_jobs, busy
 
 _DESKTOP_MODE = os.environ.get("SEQANNO_DESKTOP") == "1"
 _DESKTOP_IDLE_TIMEOUT_SECONDS = max(
@@ -44,6 +45,19 @@ def _shutdown_process_later(delay_seconds: float = 0.5) -> None:
     timer.start()
 
 
+def _busy_work() -> list[str]:
+    """画面を閉じていても終わるまで待つ処理（裏の解析のジョブ・学習・同期の解析）。"""
+    work = busy.active()
+    if analysis_jobs.running():
+        work = sorted({*work, "analysis"})
+    return work
+
+
+def _should_exit(idle_seconds: float) -> bool:
+    """画面からの合図が途切れて、裏で待つべき処理も無ければ終わる。"""
+    return idle_seconds >= _DESKTOP_IDLE_TIMEOUT_SECONDS and not _busy_work()
+
+
 def _start_desktop_watchdog() -> None:
     global _desktop_watchdog_started
     with _desktop_lock:
@@ -56,8 +70,8 @@ def _start_desktop_watchdog() -> None:
             time.sleep(min(15, max(5, _DESKTOP_IDLE_TIMEOUT_SECONDS / 3)))
             with _desktop_lock:
                 idle_seconds = time.monotonic() - _desktop_last_heartbeat
-            # 裏で解析中（DD-0039）なら、画面を閉じていても終わるまで待つ
-            if idle_seconds >= _DESKTOP_IDLE_TIMEOUT_SECONDS and not analysis_jobs.running():
+            # 裏で解析中（DD-0039）・学習中なら、画面を閉じていても終わるまで待つ
+            if _should_exit(idle_seconds):
                 os._exit(0)
 
     thread = threading.Thread(target=watch, name="desktop-idle-watchdog", daemon=True)
@@ -124,7 +138,7 @@ async def _reject_foreign_origins(request: Request, call_next):
 def health() -> dict:
     if _DESKTOP_MODE:
         _touch_desktop_heartbeat()
-    return {"status": "ok", "desktop": _DESKTOP_MODE}
+    return {"status": "ok", "desktop": _DESKTOP_MODE, "busy": _busy_work()}
 
 
 @app.post("/api/desktop/heartbeat")
@@ -143,19 +157,23 @@ def desktop_shutdown() -> dict:
     return {"status": "shutting_down"}
 
 
-# ビルド済みフロントエンド（frontend/dist）があれば配信する。
-# exe 化時は同梱リソースの基準（resource_base）から探す。
-_DIST = resource_base() / "frontend" / "dist"
-if _DIST.exists():
-    app.mount("/assets", StaticFiles(directory=_DIST / "assets"), name="assets")
+def _mount_frontend(target: FastAPI, dist: Path) -> None:
+    """ビルド済みフロントエンド（frontend/dist）があれば配信する。exe 化時は同梱リソースの基準から探す。"""
+    if not dist.exists():
+        return
+    target.mount("/assets", StaticFiles(directory=dist / "assets"), name="assets")
 
-    @app.get("/{full_path:path}")
+    @target.get("/{full_path:path}")
     def spa(full_path: str):
         # dist 直下の静的ファイル（favicon・ロゴ等）は実体を返し、
         # それ以外は SPA として index.html にフォールバックする。
         if full_path:
-            dist_root = _DIST.resolve()
+            dist_root = dist.resolve()
             candidate = (dist_root / full_path).resolve()
             if candidate.is_file() and dist_root in candidate.parents:
                 return FileResponse(candidate)
-        return FileResponse(_DIST / "index.html")
+        return FileResponse(dist / "index.html")
+
+
+_DIST = resource_base() / "frontend" / "dist"
+_mount_frontend(app, _DIST)

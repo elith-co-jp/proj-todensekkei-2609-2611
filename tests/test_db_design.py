@@ -73,6 +73,7 @@ def test_old_database_is_brought_up_to_date(client):
         cursor = raw.cursor()
         cursor.execute("PRAGMA foreign_keys=OFF")
         cursor.execute("DROP INDEX uq_connection_ref_per_project")
+        cursor.execute("CREATE INDEX ix_connections_id ON connections (id)")  # 主キーに重ねて作っていた古い索引
         cursor.execute("UPDATE structure_predictions SET wire_count = NULL, connection_count = NULL")
         cursor.execute("UPDATE connections SET ref = NULL WHERE wire_no = '610'")
         cursor.execute("UPDATE connections SET ref = 'W-0002' WHERE wire_no = '611'")
@@ -92,7 +93,8 @@ def test_old_database_is_brought_up_to_date(client):
     assert len(refs) == 3 and None not in refs and len(set(refs)) == 3
     assert _rows("symbol_terminals", "symbol_id = 9999") == 0
     assert _rows("connections", "from_symbol_id = 9999") == 0
-    assert "uq_connection_ref_per_project" in {i["name"] for i in inspect(database.engine).get_indexes("connections")}
+    indexes = {i["name"] for i in inspect(database.engine).get_indexes("connections")}
+    assert "uq_connection_ref_per_project" in indexes and "ix_connections_id" not in indexes
 
 
 

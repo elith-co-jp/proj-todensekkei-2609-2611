@@ -3,33 +3,10 @@ import ReactDOM from 'react-dom/client'
 import { createHashRouter, RouterProvider } from 'react-router-dom'
 
 import './index.css'
-import App from './App'
-import ProjectListPage from './pages/ProjectListPage'
-import EditorPage from './pages/EditorPage'
-import ExportPage from './pages/ExportPage'
-import GuidePage from './pages/GuidePage'
-import MlOpsPage from './pages/MlOpsPage'
-import AnalysisPage from './pages/AnalysisPage'
-import CircuitPage from './pages/CircuitPage'
-
-const router = createHashRouter([
-  {
-    path: '/',
-    element: <App />,
-    children: [
-      { index: true, element: <ProjectListPage /> },
-      { path: 'projects/:id', element: <EditorPage /> },
-      { path: 'projects/:id/analysis', element: <AnalysisPage /> },
-      { path: 'export', element: <ExportPage /> },
-      { path: 'ml', element: <MlOpsPage /> },
-      { path: 'circuit', element: <CircuitPage /> },
-      { path: 'guide', element: <GuidePage /> },
-    ],
-  },
-])
+import { routes } from './routes'
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    <RouterProvider router={router} />
+    <RouterProvider router={createHashRouter(routes)} />
   </React.StrictMode>,
 )

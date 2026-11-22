@@ -24,7 +24,8 @@ export default function EditPanel({ projectIds, onApplied }: Props) {
   const [title, setTitle] = useState('')
   const [reason, setReason] = useState('')
   const [preview, setPreview] = useState<CircuitEditPreview | null>(null)
-  const [tried, setTried] = useState<string | null>(null)
+  // 試した JSON と、その操作。適用は試したものと同じ内容のときだけできる
+  const [tried, setTried] = useState<{ text: string; ops: CircuitEditOp[] } | null>(null)
   const [history, setHistory] = useState<CircuitChangeSet[]>([])
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -48,7 +49,8 @@ export default function EditPanel({ projectIds, onApplied }: Props) {
       if (!ops) throw new Error('操作の配列（または {"ops": [...]}）を入れてください')
       return ops as CircuitEditOp[]
     } catch (e) {
-      setError(`JSON を読めません: ${e instanceof Error ? e.message : String(e)}`)
+      // JSON.parse の SyntaxError と上の Error のどちらか
+      setError(`JSON を読めません: ${(e as Error).message}`)
       return null
     }
   }
@@ -70,15 +72,15 @@ export default function EditPanel({ projectIds, onApplied }: Props) {
     if (!ops) return
     void act(async () => {
       setPreview(await api.circuitEditPreview(projectIds, ops))
-      setTried(text)
+      setTried({ text, ops })
     })
   }
 
+  // 適用ボタンは canApply（試行が通り、その後 JSON を変えていない）のときだけ押せる
   const apply = () => {
-    const ops = parse()
-    if (!ops || !preview?.ok) return
+    const { ops } = tried!
     void act(async () => {
-      await api.circuitEditApply(projectIds, ops, title || '図面の変更', reason || null, preview.base_hash)
+      await api.circuitEditApply(projectIds, ops, title || '図面の変更', reason || null, preview!.base_hash)
       setPreview(null)
       setTried(null)
       await loadHistory()
@@ -99,7 +101,7 @@ export default function EditPanel({ projectIds, onApplied }: Props) {
       onApplied?.()
     })
 
-  const canApply = !!preview?.ok && tried === text && !busy
+  const canApply = !!preview?.ok && tried?.text === text && !busy
 
   return (
     <section className="card mt-4 p-4" aria-label="図面の変更">
@@ -167,7 +169,9 @@ function PreviewView({ preview }: { preview: CircuitEditPreview }) {
   }
   const c = preview.circuit
   const v = preview.validation
-  const changed = (preview.behaviour ?? []).filter((b) => b.coils.length || b.loads.length || b.warnings.length)
+  const changed = (preview.behaviour ?? []).filter(
+    (b) => b.coils.length || b.loads.length || b.warnings.length || (b.resolved_warnings ?? []).length,
+  )
   const circuitLines = c ? [
     c.relays_added.length && `リレーが増える: ${c.relays_added.join('、')}`,
     c.relays_removed.length && `リレーが無くなる: ${c.relays_removed.join('、')}`,
@@ -194,7 +198,10 @@ function PreviewView({ preview }: { preview: CircuitEditPreview }) {
                 <td className="pr-2">{b.inputs}</td>
                 <td className="pr-2">{b.coils.map((x) => `${x.device} ${onOff(x.before)}→${onOff(x.after)}`).join('、')}</td>
                 <td>{b.loads.map((x) => `${x.label ?? x.symbol_ref} ${onOff(x.before)}→${onOff(x.after)}`).join('、')}
-                  {b.warnings.length > 0 && <span className="text-amber-700"> ⚠ {b.warnings.join(' / ')}</span>}</td>
+                  {b.warnings.length > 0 && <span className="text-amber-700"> ⚠ {b.warnings.join(' / ')}</span>}
+                  {(b.resolved_warnings ?? []).length > 0 && (
+                    <span className="text-emerald-700"> ✓ 解消: {b.resolved_warnings!.join(' / ')}</span>
+                  )}</td>
               </tr>
             ))}
           </tbody>

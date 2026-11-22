@@ -114,6 +114,8 @@ class YoloExportRequest(BaseModel):
 # ---------- AI 改善サイクル（推論・学習） ----------
 # 検出の確信度のしきい値の既定値。図面単位の交差検証で F1 が最も高かった値（DD-0007）。
 DEFAULT_DETECTION_CONF = 0.5
+# コネクタだけに使うしきい値の既定。ER 系 30 枚で見落としを増やさず誤検出を減らした値（DD-0007 §4.20、frontend/src/api/defaults.ts と同じ）
+DEFAULT_CONNECTOR_CONF = 0.6
 
 
 class InferenceRunRequest(BaseModel):
@@ -121,7 +123,7 @@ class InferenceRunRequest(BaseModel):
 
     project_ids: list[int] = []  # 空 = 全プロジェクト
     conf: float = Field(default=DEFAULT_DETECTION_CONF, ge=0.0, le=1.0)
-    connector_conf: float | None = Field(default=None, ge=0.0, le=1.0)
+    connector_conf: float | None = Field(default=DEFAULT_CONNECTOR_CONF, ge=0.0, le=1.0)
 
 
 class TrainingRunRequest(BaseModel):

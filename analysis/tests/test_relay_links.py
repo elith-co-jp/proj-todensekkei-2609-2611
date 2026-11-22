@@ -105,3 +105,15 @@ def test_document_export_refreshes_connection_names_after_relay_number_correctio
     document_structure([coil_page, contact_page])
     assert target["terminals"][0]["name"] == "12"
     assert contact_page["from_to"]["connections"][0]["from"]["terminal_name"] == "12"
+
+
+def test_unreadable_positions_terminals_and_empty_cells():
+    from analysis.relay_links import apply_row, match_rows, table_numbers
+
+    grid = drawing_grid(border_labels(), 1700, 1200)
+    rows = [{"device": "33HB", "terminal": "5-9-1", "contact": "a", "sheet": "本", "position": "1?D"}]
+    assert match_rows(rows, [0], [contact("c1", "33HB", 10, 3, ["9", "5"])], grid) == {}
+    assert table_numbers({"terminal": "5-9", "contact": "a"}) == []
+    assert table_numbers({"terminal": "5-9-1", "contact": ""}) == []
+    link = apply_row(rows[0], 0, {"symbol_id": None, "device_match": False, "unique": False}, None)
+    assert link["symbol_id"] is None and link["reasons"] == ["行列の位置に接点がない"]

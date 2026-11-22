@@ -339,9 +339,7 @@ def build_circuit(pages: list[dict[str, Any]], bus_texts: dict[int, list[dict[st
     names: dict[Any, str] = {}
     count = 0
     node_of: dict[Key, str] = {}
-    for key in list(parent):
-        if not isinstance(key, tuple) or len(key) != 3:
-            continue
+    for key in list(parent):  # 鍵はすべて（図面, 記号, 端子）の 3 つ組（端子・配線の端・札の節点）
         root = find(key)
         if root not in names:
             if root in bus_root:

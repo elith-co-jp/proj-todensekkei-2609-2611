@@ -211,8 +211,6 @@ export default function ExportPage() {
         </div>
       )}
 
-      <AttributeJsonPanel projectIds={ids.size ? Array.from(ids) : rows.map((r) => r.id)} />
-
       <div className="grid gap-5 xl:grid-cols-2">
         <div className="space-y-5">
           <div className="card overflow-hidden">
@@ -221,9 +219,9 @@ export default function ExportPage() {
               <div><div className="text-[9px] font-bold uppercase tracking-wider text-slate-400">Export</div><h2 className="text-sm font-black">作業データを書き出す</h2></div>
             </div>
             <div className="space-y-4 p-4 sm:p-5">
-              <label className="block">
+              <div className="block">
                 <span className="mb-1 flex flex-wrap items-center gap-2 text-[11px] text-slate-500">
-                  <span>対象（未選択なら全件）— 選択 {ids.size} / {rows.length} 枚</span>
+                  <span>{ids.size ? `対象: 選んだ ${ids.size} 枚` : `対象: 全 ${rows.length} 枚（未選択のため）`}</span>
                   <span className="flex-1" />
                   <button type="button" className="btn btn-sm" onClick={selectAll} disabled={busy || rows.length === 0 || ids.size === rows.length}>
                     全選択
@@ -251,7 +249,7 @@ export default function ExportPage() {
                     <div className="px-3 py-4 text-center text-xs text-slate-400">図面がありません</div>
                   )}
                 </div>
-              </label>
+              </div>
               <button
                 className="btn btn-accent w-full justify-center"
                 onClick={() => void doExport()}
@@ -348,6 +346,11 @@ export default function ExportPage() {
             </div>
           </div>
         </div>
+      </div>
+
+      {/* 主な書き出し・読み込みのあとに、属性だけの JSON の入出力を置く */}
+      <div className="mt-5">
+        <AttributeJsonPanel projectIds={ids.size ? Array.from(ids) : rows.map((r) => r.id)} selected={ids.size > 0} />
       </div>
       </div>
     </div>

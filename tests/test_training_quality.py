@@ -115,7 +115,8 @@ def test_class_stats_counts_done_drawings_and_marks_thin_classes(client):
 def test_hard_drawings_rank_done_drawings_by_ai_agreement(client):
     classes = {c["key"]: c["yolo_index"] for c in client.get("/api/classes").json()}
     good, hard = create_project(client, "good.png"), create_project(client, "hard.png")
-    for pid in (good, hard):
+    bare = create_project(client, "bare.png")  # AI の検出が無い完了の図面は並べない
+    for pid in (good, hard, bare):
         _annotate(client, pid, [("relay_coil", 0.2, 0.2), ("contact_a", 0.6, 0.6)])
     lines = {
         good: [f"{classes['relay_coil']} 0.2 0.2 0.05 0.05 0.9", f"{classes['contact_a']} 0.6 0.6 0.05 0.05 0.9"],

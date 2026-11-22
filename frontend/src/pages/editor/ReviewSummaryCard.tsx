@@ -62,14 +62,13 @@ export function ReviewSummaryCard({
     if (visible && serverSynced) void load()
   }, [load, serverSynced, visible])
 
-  const line = summary ? statusLine(summary) : null
   const throughCount = summary?.coils?.issues.filter((issue) => issue.kind === 'through').length ?? 0
 
+  // ボタンは onSplitCoilWires があるときだけ出す
   const split = async () => {
-    if (!onSplitCoilWires) return
     setSplitting(true)
     try {
-      await onSplitCoilWires()
+      await onSplitCoilWires!()
     } finally {
       setSplitting(false)
     }
@@ -96,7 +95,7 @@ export function ReviewSummaryCard({
         </p>
       )}
       {!summary && !error && <p className="mt-2 text-slate-500">読み込み中…</p>}
-      {summary && line && (
+      {summary && (
         <>
           {summary.imported ? (
             <p className="mt-2 font-semibold text-slate-800">
@@ -138,7 +137,7 @@ export function ReviewSummaryCard({
               )}
             </div>
           )}
-          <p className={`mt-2 ${line.tone}`}>{line.text}</p>
+          <p className={`mt-2 ${statusLine(summary).tone}`}>{statusLine(summary).text}</p>
         </>
       )}
     </section>

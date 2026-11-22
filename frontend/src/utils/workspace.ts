@@ -22,10 +22,9 @@ function draftStorageKey(kind: ProjectSaveKind, projectId: number): string {
   return `${DRAFT_STORAGE_PREFIX}:${kind}:${projectId}`
 }
 
-function resolveSessionStorage(storage?: Storage): Storage | null {
-  if (storage) return storage
-  if (typeof window === 'undefined') return null
-  return window.sessionStorage
+// window.sessionStorage は使えない環境（プライベートモード等）では読むだけで例外になる。呼ぶ側は try で囲む
+function resolveSessionStorage(storage?: Storage): Storage {
+  return storage ?? window.sessionStorage
 }
 
 export function persistProjectSave<T>(
@@ -36,12 +35,7 @@ export function persistProjectSave<T>(
   const storageKey = draftStorageKey(kind, save.projectId)
   inMemoryDrafts.set(storageKey, save)
   try {
-    const resolvedStorage = resolveSessionStorage(storage)
-    if (!resolvedStorage) {
-      volatileDraftKeys.add(storageKey)
-      return false
-    }
-    resolvedStorage.setItem(storageKey, JSON.stringify(save))
+    resolveSessionStorage(storage).setItem(storageKey, JSON.stringify(save))
     volatileDraftKeys.delete(storageKey)
     return true
   } catch {
@@ -77,18 +71,18 @@ export function loadPersistedProjectSave<T>(
 
   try {
     const resolvedStorage = resolveSessionStorage(storage)
-    const raw = resolvedStorage?.getItem(storageKey)
+    const raw = resolvedStorage.getItem(storageKey)
     if (!raw) return null
     const candidate = parseCandidate(JSON.parse(raw))
     if (!candidate) {
-      resolvedStorage?.removeItem(storageKey)
+      resolvedStorage.removeItem(storageKey)
       return null
     }
     inMemoryDrafts.set(storageKey, candidate)
     return candidate
   } catch {
     try {
-      resolveSessionStorage(storage)?.removeItem(storageKey)
+      resolveSessionStorage(storage).removeItem(storageKey)
     } catch {
       // 読み取り自体を拒否する環境では、画面外メモリの退避だけを使う。
     }
@@ -105,7 +99,7 @@ export function clearPersistedProjectSave(
   inMemoryDrafts.delete(storageKey)
   volatileDraftKeys.delete(storageKey)
   try {
-    resolveSessionStorage(storage)?.removeItem(storageKey)
+    resolveSessionStorage(storage).removeItem(storageKey)
   } catch {
     // ストレージが利用できない環境でも、API保存処理は継続する。
   }

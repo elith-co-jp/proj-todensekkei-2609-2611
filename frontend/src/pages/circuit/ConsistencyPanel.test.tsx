@@ -60,4 +60,30 @@ describe('ConsistencyPanel', () => {
     expect(onApplied).toHaveBeenCalled()
     expect(view.getByText('矛盾は見つかりませんでした')).toBeTruthy()
   })
+
+  it('矛盾だけを一括で直し、要確認は 1 件ずつに残す。失敗は理由を出す', async () => {
+    const warning = { ...issue, id: 'w1', severity: 'warning' as const, title: '要確認の項目', locations: [{ project_id: 7, symbol_ref: null, page: 'P' }] }
+    const noFix = { ...issue, id: 'n1', title: '直し方の無い矛盾', fix: null }
+    api.checkConsistency.mockResolvedValueOnce({ ...found, issues: [issue, warning, noFix] })
+    api.applyConsistencyFixes.mockResolvedValueOnce({ ...fixed, applied: [] })
+    api.checkConsistency.mockRejectedValueOnce(new Error('サーバーエラー')).mockRejectedValueOnce('文字列')
+    const view = render(<MemoryRouter><ConsistencyPanel projectIds={[7]} /></MemoryRouter>)
+    fireEvent.click(view.getByRole('button', { name: /チェック実行/ }))
+    fireEvent.click(await view.findByRole('button', { name: '一括修正（1）' }))
+    await waitFor(() => expect(api.applyConsistencyFixes).toHaveBeenCalledWith([7], ['abc']))
+    await waitFor(() => expect(view.queryByRole('button', { name: /一括修正/ })).toBeNull())
+    expect(view.queryByText(/件を修正し/)).toBeNull()
+    expect(view.getByText('一致')).toBeTruthy()
+
+    fireEvent.click(view.getByRole('button', { name: /再チェック/ }))
+    expect((await view.findByRole('alert')).textContent).toBe('サーバーエラー')
+    fireEvent.click(view.getByRole('button', { name: /再チェック/ }))
+    await waitFor(() => expect(view.getByRole('alert').textContent).toBe('文字列'))
+  })
+
+  it('図面を選んでいなければチェックできない', () => {
+    const view = render(<MemoryRouter><ConsistencyPanel projectIds={[]} /></MemoryRouter>)
+    expect((view.getByRole('button', { name: /チェック実行/ }) as HTMLButtonElement).disabled).toBe(true)
+  })
 })
+

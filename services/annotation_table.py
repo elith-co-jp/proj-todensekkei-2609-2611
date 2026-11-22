@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import csv
 import io
-import json
 from collections import defaultdict
 from typing import Any
 
@@ -88,7 +87,7 @@ def export_rows(pages: list[dict[str, Any]], circuit: Circuit, *, drawing_set: s
                         f"器具番号 {dev}")
             else:
                 row(contact["project_id"], element, COIL_CONTACT, contact.get("label", ""), src.get("ref_sheet") or "",
-                    t.SOURCE_LABEL[src["source"]], src.get("reason") or "")
+                    t.source_label(src), src.get("reason") or "")
     return rows
 
 
@@ -261,7 +260,3 @@ def compare(gold_rows: list[dict[str, str]], machine_rows: list[dict[str, str]])
             kinds[r["種別"]][1] += int(r["要素ID"] in mine_text)
     result["要素"] = {k: {"gold": v[0], "found": v[1]} for k, v in sorted(kinds.items())}
     return result
-
-
-def to_json(rows: list[dict[str, str]]) -> str:
-    return json.dumps(rows, ensure_ascii=False, indent=1)

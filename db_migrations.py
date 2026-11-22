@@ -10,7 +10,7 @@ import json
 from collections.abc import Callable
 
 from sqlalchemy import Connection as DbConnection
-from sqlalchemy import Engine, Index, inspect, text
+from sqlalchemy import Engine, inspect, text
 
 # 列の追加（表, 列, 型と既定値）。古い DB から順に足してきたもの。
 ADDED_COLUMNS: list[tuple[str, str, str]] = [
@@ -105,9 +105,8 @@ def assign_connection_refs(conn: DbConnection) -> None:
     for project_id in projects:
         rows = conn.execute(text("SELECT id, ref FROM connections WHERE project_id = :p ORDER BY id"), {"p": project_id}).all()
         refs = connection_refs([row.ref for row in rows])
+        # 選んだ図面には必ず空か重複の参照名があり、connection_refs はそれを振り直すので changed は空にならない
         changed = [{"id": row.id, "ref": ref} for row, ref in zip(rows, refs, strict=True) if row.ref != ref]
-        if not changed:
-            continue
         # 振り直す途中で一時的に重複しないよう、いったん外してから入れる。
         conn.execute(text("UPDATE connections SET ref = NULL WHERE id = :id"), changed)
         conn.execute(text("UPDATE connections SET ref = :ref WHERE id = :id"), changed)
@@ -130,7 +129,8 @@ def drop_redundant_indexes(conn: DbConnection) -> None:
     for table in Base.metadata.sorted_tables:
         names = {index["name"] for index in inspector.get_indexes(table.name)}
         if (name := f"ix_{table.name}_id") in names:
-            Index(name, table.c.id).drop(conn)
+            # Index(name, table.c.id) で消すと、その索引が表の定義（metadata）に足され、次の create_all が作り直してしまう
+            conn.execute(text(f'DROP INDEX "{name}"'))
 
 
 STEPS: list[Callable[[DbConnection], None]] = [

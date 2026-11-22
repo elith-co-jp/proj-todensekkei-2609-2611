@@ -78,4 +78,56 @@ describe('WhatIfPanel', () => {
     fireEvent.click(view.getByRole('button', { name: /回路コード出力/ }))
     expect(api.downloadCircuitCode).toHaveBeenCalledWith([7])
   })
+
+  it('動かす機器が無ければ何も出さない', () => {
+    const view = render(<MemoryRouter><WhatIfPanel projectIds={[7]} summary={{ ...summary, inputs: [], coils: [] }} inputs={{}} energized={{}} /></MemoryRouter>)
+    expect(view.container.innerHTML).toBe('')
+  })
+
+  it('変化が無い・状態が分からない・上流がある・失敗したときの出し方', async () => {
+    api.circuitWhatIf.mockResolvedValueOnce({ ...whatIf, changes: { coils: [], loads: [], contacts: [] }, warnings: ['短絡のおそれ'] })
+    api.circuitWhatIf.mockResolvedValueOnce({
+      ...whatIf,
+      changes: {
+        coils: [{ device: 'X R100', before: null, after: false }],
+        loads: [
+          { project_id: 7, symbol_ref: 'L2', label: '', device: null, page: null, before: true, after: false },
+          { project_id: 7, symbol_ref: 'XC', label: 'X R100', device: 'X R100', page: 'P', before: true, after: false },
+        ],
+        contacts: [],
+      },
+    })
+    api.circuitImpact.mockResolvedValueOnce({ ...impact, devices: [], loads: [], upstream: ['MCB1', 'PB0'] })
+    api.circuitImpact.mockResolvedValueOnce({
+      ...impact, loads: [{ project_id: 7, symbol_ref: 'L9', label: '', depth: 1, device: null, via: 'PB1', page: null }],
+    })
+    api.circuitImpact.mockRejectedValueOnce(new Error('解析できません')).mockRejectedValueOnce('文字列')
+    const view = render(
+      <MemoryRouter>
+        <WhatIfPanel projectIds={[7]} summary={summary} inputs={{}} energized={{}} />
+      </MemoryRouter>,
+    )
+    fireEvent.click(view.getByRole('button', { name: /強制 OFF/ }))
+    expect(await view.findByText('PB1 を強制 OFF したとき')).toBeTruthy()
+    expect(view.getByText('リレー・負荷の状態は変わりません')).toBeTruthy()
+    expect(view.getByText('短絡のおそれ')).toBeTruthy()
+
+    fireEvent.click(view.getByRole('button', { name: /強制 OFF/ }))
+    await waitFor(() => expect(view.getByLabelText('もしもの結果').textContent).toContain('L2'))
+    const result = view.getByLabelText('もしもの結果').textContent!
+    expect(result).toContain('— → OFF')
+    expect(result).not.toContain('XC')
+
+    fireEvent.click(view.getByRole('button', { name: /波及範囲/ }))
+    expect(await view.findByText('上流の機器: MCB1、PB0')).toBeTruthy()
+    expect(view.getByText('ありません')).toBeTruthy()
+    fireEvent.click(view.getByRole('button', { name: /波及範囲/ }))
+    await waitFor(() => expect(view.getByLabelText('波及範囲').textContent).toContain('L9（PB1 の接点から）'))
+
+    fireEvent.click(view.getByRole('button', { name: /波及範囲/ }))
+    expect((await view.findByRole('alert')).textContent).toBe('解析できません')
+    fireEvent.click(view.getByRole('button', { name: /波及範囲/ }))
+    await waitFor(() => expect(view.getByRole('alert').textContent).toBe('文字列'))
+  })
 })
+

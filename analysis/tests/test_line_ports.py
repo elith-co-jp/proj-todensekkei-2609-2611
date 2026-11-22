@@ -102,3 +102,41 @@ def test_connector_beside_the_line_is_not_joined():
     ports = line_ports(coil, mask, wires, [coil, connector])
     assert [(p["wire_id_hint"], p["symbol_id_hint"]) for p in ports] == [(None, None), ("bottom", None)]
 
+
+
+def test_contact_ports_from_sparse_dots_or_leads_and_nothing_found():
+    """接点の枠の外に線が見えないとき、まばらな点線（DD-0023）か、枠の中の引き出し線で端子を決める。"""
+    from PIL import Image
+
+    from analysis.wiring.params import DEFAULT
+    from analysis.wiring.ports import (
+        TraceHit, _dotted_column, _faint_column, _ink_run, _lead_column, _pass_through_on_line, _trace_to_wire,
+        point_ink_ratio,
+    )
+
+    mask, wires, _coil = _page()
+    mask[40:81, 99:102] = mask[120:161, 99:102] = False
+    contact = {"id": "k", "class_name": "contact_a", "bbox": {"x0": 90, "y0": 80, "x1": 150, "y1": 120}}
+    faint = mask.copy()
+    for y in (45, 55, 66, 125, 140, 150):
+        faint[y:y + 2, 100] = True                   # 5〜15 px おきの点
+    dotted = line_ports(contact, mask, wires, [contact], faint)
+    assert [p["point"][1] for p in dotted] == [80.0, 120.0] and all(abs(p["point"][0] - 100) <= 1 for p in dotted)
+    assert line_ports(contact, mask, wires, [contact], mask.copy()) == []
+    leads = mask.copy()
+    leads[80:92, 100] = leads[108:121, 100] = True     # 枠の中の上下の引き出し線
+    ported = line_ports(contact, leads, wires, [contact], mask.copy())
+    assert [p["point"][1] for p in ported] == [80.0, 120.0] and all(abs(p["point"][0] - 100) <= 1 for p in ported)
+
+    edge = np.zeros((40, 40), dtype=bool)
+    assert _faint_column(edge, 5, 0, 30, 20, DEFAULT.ports, middle_only=False) is None    # 枠の上に余地が無い
+    assert _dotted_column(edge, 5, 0, 30, 20, DEFAULT.ports) is None
+    assert _lead_column(edge, 5, 10, 30, 10, DEFAULT.ports) is None                       # 高さ 0
+    assert _ink_run(np.ones((10, 10), dtype=bool), 8, 5, 1, 0, 20, 2) == 1                # 画像の端で止まる
+    assert point_ink_ratio(Image.new("L", (10, 10), 255), (50, 50), 3) == 0.0
+    assert _pass_through_on_line({"class_name": "relay_coil"}, (0, 0), (0, 1), DEFAULT.ports) is None
+    line = np.zeros((50, 50), dtype=bool)
+    line[:, 10] = True
+    assert _trace_to_wire(line, (10, 40), (0, 1), [], [], [], 2, DEFAULT.ports) == TraceHit()    # 画像の外へ出た
+    short = DEFAULT.ports.__class__(line_trace_max_px=5)
+    assert _trace_to_wire(line, (10, 10), (0, 1), [], [], [], 2, short) == TraceHit()           # たどれる長さの上限

@@ -100,3 +100,19 @@ def test_page_reading_supplies_the_second_row_the_symbol_reading_dropped():
     symbol["text_items"] = symbol["text_items"][:2]
     assert connector_numbers(symbol) == [{"device": "TB6", "number": "46"}]
     assert connector_numbers(symbol, page) == [{"device": "TB6", "number": "46"}, {"device": "CN27", "number": "14"}]
+
+
+def test_connector_names_and_skipped_symbols(monkeypatch):
+    from analysis.wiring import terminal_numbers
+
+    assert connector_numbers(terminal([("CN211", "30"), ("TB13", "3")])) == [
+        {"device": "CN211", "number": "3"}, {"device": "TB13", "number": "3"}]
+    connector = terminal([("TB6", "46"), ("CN27", "14")])
+    connector["terminals"] = [{"ref": "T1", "point": [0, 0]}]
+    hidden = {**contact(LABEL), "dot_role": {"suppressed": True}}
+    counts = attach_terminal_numbers([connector, hidden])
+    assert counts["connectors"] == 1
+    assert connector["terminals"][0]["name"] == "TB6-46 CN27-14"
+    assert "name" not in hidden["terminals"][0]
+    monkeypatch.setattr(terminal_numbers, "ENABLED", False)
+    assert attach_terminal_numbers([connector]) is None

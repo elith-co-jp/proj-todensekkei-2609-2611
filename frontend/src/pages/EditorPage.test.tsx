@@ -530,7 +530,7 @@ describe('EditorPage interactions', () => {
     fireEvent.click(getByRole('button', { name: 'AI 取込' }))
 
     expect(
-      await findByText('この図面の推論結果がありません。「AI 学習」で推論を実行してください'),
+      await findByText('この図面の解析結果がありません。図面一覧の「AI 解析」を実行してください'),
     ).toBeTruthy()
   })
 

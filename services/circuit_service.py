@@ -194,9 +194,6 @@ def circuit_impact(db: Session, project_ids: list[int], device: str) -> dict[str
     return result
 
 
-FIX_CLASSES = frozenset({"contact_a", "contact_b", "relay_coil"})
-
-
 def consistency_check(db: Session, project_ids: list[int]) -> dict[str, Any]:
     """複数の解析方法の結果の矛盾と、精査の結果・直し方（DD-0031）。"""
     pages, texts = _pages(db, project_ids)
@@ -218,20 +215,17 @@ def apply_consistency_fixes(db: Session, project_ids: list[int], issue_ids: list
     classes = class_map_by_key(db)
     applied = []
     for fix in fixes:
+        # 直し方はいまの図面をチェックし直して出したものなので、記号は必ずある。直し方は種類（set_class）かラベル（set_label）
         row = db.query(AnnotationSymbol).filter(AnnotationSymbol.project_id == fix["project_id"],
-                                                AnnotationSymbol.ref == fix["symbol_ref"]).one_or_none()
-        if row is None:
-            continue
+                                                AnnotationSymbol.ref == fix["symbol_ref"]).one()
         if fix["type"] == "set_class":
-            if fix["value"] not in FIX_CLASSES or fix["value"] not in classes:
+            if fix["value"] not in classes:  # クラスマスタからその種類の名前を変えた・消したとき
                 continue
             before = next((k for k, c in classes.items() if c.id == row.class_id), "")
             row.class_id = classes[fix["value"]].id
-        elif fix["type"] == "set_label":
+        else:
             before = row.label or ""
             row.label = str(fix["value"])[:200]
-        else:
-            continue
         note = f"整合性チェック（DD-0031）で {before or '空'} → {fix['value']} に変更"
         row.note = f"{row.note}\n{note}" if row.note else note
         applied.append({**fix, "before": before})
@@ -397,7 +391,7 @@ def trace_targets(db: Session, project_ids: list[int]) -> dict[str, Any]:
     tracer = circuit_trace.Tracer(circuit, pages)
     return {"loads": [{"name": name, **ref} for name, ref in tracer.all_loads()],
             "devices": [{k: v for k, v in src.items() if k not in ("contacts", "coils")}
-                        | {"source_label": circuit_trace.SOURCE_LABEL[src["source"]], "contact_count": len(src.get("contacts", []))}
+                        | {"source_label": circuit_trace.source_label(src), "contact_count": len(src.get("contacts", []))}
                         for _, src in sorted(tracer.sources.items())]}
 
 

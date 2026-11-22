@@ -20,6 +20,7 @@ from services import circuit_whatif
 from services.circuit_model import Circuit
 
 MAX_EVENTS = 500
+NO_CHANGES: dict[str, list[dict[str, Any]]] = {"coils": [], "loads": [], "contacts": []}
 MAX_CHAIN = 50
 EPS = 1e-9
 
@@ -130,11 +131,16 @@ def run_timeline(circuit: Circuit, events: list[dict[str, Any]], *, inputs: dict
             "タイマーは動きませんでした（ぎりぎりの競合。実機では順序が決まらない）" for dev in races]
         timeline.append(snap)
     if until is not None and (not timeline or timeline[-1]["t"] < until):
-        timeline.append({**timeline[-1], "t": round(until, 6), "label": "終了", "changes": {}})
+        timeline.append({**timeline[-1], "t": round(until, 6), "label": "終了", "changes": _no_changes()})
     for snap in timeline:
         snap.pop("_result", None)
-        snap.setdefault("changes", {})
+        snap.setdefault("changes", _no_changes())
     return {"timers": timers, "timeline": timeline, "unknown": options["unknown"]}
+
+
+def _no_changes() -> dict[str, list[dict[str, Any]]]:
+    """変化の無い記録の changes（diff_results と同じ形。画面は coils・loads・contacts を配列として読む）。"""
+    return {k: list(v) for k, v in NO_CHANGES.items()}
 
 
 def state_at(timeline: list[dict[str, Any]], t: float) -> dict[str, Any]:

@@ -85,3 +85,50 @@ def test_stored_lines_are_ignored_for_a_different_image():
     assert vector_pdf.load(424242, "bbb") is None and vector_pdf.load(424242, None) is None
     vector_pdf.remove(424242)
     assert vector_pdf.load(424242, "aaa") is None
+
+
+def test_geometry_helpers_edge_cases():
+    assert vector_pdf._turn_point(10, 20, 600, 400, 180) == (590, 380)
+    assert vector_pdf._seg((0, 0), (0.5, 0.5), 1, False) is None
+    assert vector_pdf._seg((0, 0), (30, 40), 1, False)["orient"] == "d"
+    point = {"x1": 5, "y1": 5, "x2": 5, "y2": 5, "orient": "h"}
+    assert vector_pdf._on_segment(50, 50, point, 1) is None
+    line = {"x1": 0, "y1": 0, "x2": 10, "y2": 0, "orient": "h"}
+    assert vector_pdf._on_segment(20, 0, line, 1) is None
+    assert vector_pdf._intersection(line, dict(line)) is None
+    far = {"x1": 50, "y1": 50, "x2": 50, "y2": 60, "orient": "v"}
+    assert vector_pdf._intersection(line, far) is None
+
+
+def test_quads_curves_blank_texts_and_mixed_pages():
+    doc = pymupdf.open()
+    page = doc.new_page(width=600, height=400)
+    shape = page.new_shape()
+    shape.draw_quad(pymupdf.Rect(100, 100, 140, 130).quad)
+    shape.draw_circle(pymupdf.Point(300, 200), 30)                    # 塗らない円（曲線）は配線にしない
+    for k in range(25):
+        shape.draw_line(pymupdf.Point(50 + 20 * k, 300), pymupdf.Point(50 + 20 * k, 320))
+    shape.finish(color=(0, 0, 0), width=1)
+    shape.commit()
+    page.insert_text((400, 50), "   ", fontsize=8)
+    pix = pymupdf.Pixmap(pymupdf.csRGB, pymupdf.IRect(0, 0, 30, 20), False)
+    pix.clear_with(255)
+    page.insert_image(page.rect, pixmap=pix, overlay=False)
+    result = vector_pdf.extract(doc.tobytes(), dpi=72)[0]
+    assert result["kind"] == "mixed"
+    assert result["texts"] == []
+    quad_edges = [s for s in result["wires"] if 100 <= s["x1"] <= 140 and 100 <= s["y1"] <= 130]
+    assert len(quad_edges) == 4
+
+
+def test_extract_needs_pymupdf(monkeypatch):
+    monkeypatch.setattr(vector_pdf, "_load_pymupdf", lambda: None)
+    with pytest.raises(RuntimeError, match="PyMuPDF"):
+        vector_pdf.extract(b"%PDF")
+
+
+def test_crossing_diagonals_are_neither_joined_nor_crossings():
+    a = vector_pdf._seg((0, 0), (40, 40), 1, False)
+    b = vector_pdf._seg((0, 40), (40, 0), 1, False)
+    graph = vector_pdf.connectivity([a, b], [])
+    assert graph == {"nets": [[0], [1]], "junctions": [], "crossings": []}

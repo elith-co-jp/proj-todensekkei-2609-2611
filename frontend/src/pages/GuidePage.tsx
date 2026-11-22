@@ -71,6 +71,19 @@ const WORKFLOW = [
   },
 ]
 
+// 図面を回路として確かめる流れ（AI 解析 → 取込 → 回路検証の各タブ）
+const CIRCUIT_GUIDE: [string, string][] = [
+  ['AI 解析', '図面一覧の「AI 解析」で、シンボル・配線・接続を読み取ります。裏で 1 枚ずつ進み、図面ごとに保存します。進み具合の帯から中止できます（EXE は解析・学習が終わるまで閉じないでください）。'],
+  ['解析結果・AI 取込', '「解析結果」で読み取った線と記号を図面に重ねて確かめ、エディタの「AI 取込」で取り込んでから直します。'],
+  ['操作', '回路検証で図面を選んで「回路を作成」し、入力（押しボタンなど）を ON / OFF してリレー・負荷の動きを確かめます。'],
+  ['機器', 'コイルと接点の相互参照・電線番号の一覧です。行を押すと図面のその場所へ移ります。Excel に書き出せます。'],
+  ['条件', 'コイル・出力が動く条件（逆引き）と、ある器具が変わると影響する出力（順引き）を出します。入力の状態を変えると計算し直します。'],
+  ['波及', 'ある機器が動いたら影響しうる範囲と、部品が切れた・固着したらどうなるかを試します。'],
+  ['タイマー', '時刻つきの操作を並べて「実行」すると、オンディレー・オフディレーを含む時間の流れを解きます。タイマーの時間も変えて試せます。'],
+  ['検査', '読み取りの矛盾（行先の無い札・合わない器具番号など）を一覧にし、修正案を当てられます。「編集」でエディタの該当の記号に移ります。'],
+  ['変更', '変更（部品の種類・名前・配線）を JSON で書いて試行すると、動作の違い・波及範囲・検査の変化を出します。適用と取り消しもできます。'],
+]
+
 const SHORTCUTS: [string, string][] = [
   ['V', '選択モード'],
   ['B', 'シンボルモード'],
@@ -201,7 +214,7 @@ function SaveAndZoomVisual() {
 
 export default function GuidePage() {
   const [classes, setClasses] = useState<SymbolClass[]>([])
-  const [classError, setClassError] = useState<string | null>(null)
+  const [classError, setClassError] = useState(false)
   const sortedClasses = useMemo(
     () => [...classes].sort((a, b) => a.yolo_index - b.yolo_index),
     [classes],
@@ -214,11 +227,9 @@ export default function GuidePage() {
       .then((nextClasses) => {
         if (!active) return
         setClasses(nextClasses)
-        setClassError(null)
       })
-      .catch((caught) => {
-        if (!active) return
-        setClassError(caught instanceof Error ? caught.message : String(caught))
+      .catch(() => {
+        if (active) setClassError(true)
       })
     return () => {
       active = false
@@ -232,7 +243,7 @@ export default function GuidePage() {
           <div className="eyebrow">Field guide</div>
           <h1 className="page-title">操作<span className="title-accent">ヘルプ</span></h1>
           <p className="page-description">
-            PDF登録からZIP出力まで、アノテーション作業の流れを順番に確認できます。
+            PDF登録からZIP出力まで、アノテーション作業の流れと、AI 解析・回路検証の使い方を確認できます。
           </p>
         </div>
       </header>
@@ -294,6 +305,23 @@ export default function GuidePage() {
         </div>
       </section>
 
+      <section className="card mt-5 overflow-hidden" aria-label="回路検証の使い方">
+        <div className="card-head">
+          <div>
+            <div className="text-[9px] font-bold uppercase tracking-wider text-slate-400">Circuit check</div>
+            <h2 className="text-base font-black text-slate-950">AI 解析と回路検証の使い方</h2>
+          </div>
+        </div>
+        <dl className="divide-y divide-slate-100">
+          {CIRCUIT_GUIDE.map(([name, text]) => (
+            <div key={name} className="grid gap-1 px-4 py-3 sm:grid-cols-[9rem_1fr] sm:px-5">
+              <dt className="text-sm font-black text-slate-900">{name}</dt>
+              <dd className="text-[13px] leading-6 text-slate-700">{text}</dd>
+            </div>
+          ))}
+        </dl>
+      </section>
+
       <div className="mt-5 grid gap-5 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
         <section className="card overflow-hidden">
           <div className="card-head">
@@ -336,7 +364,7 @@ export default function GuidePage() {
               <div className="grid gap-1.5 sm:grid-cols-2">
                 {sortedClasses.map((c) => {
                   const typeNo = c.yolo_index + 1
-                  const hasShortcut = typeNo >= 1 && typeNo <= 9
+                  const hasShortcut = typeNo <= 9  // 数字キー 1〜9 で切り替えられる種別
                   return (
                     <span
                       key={c.key}
