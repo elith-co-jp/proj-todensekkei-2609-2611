@@ -120,3 +120,18 @@ def test_api_json_and_xlsx(client):
     assert x.status_code == 200 and x.content.startswith(b"PK")
     assert client.get("/api/circuit/devices.xlsx?project_ids=a").status_code == 422
     assert client.post("/api/circuit/devices", json={"project_ids": [999999]}).status_code == 400
+
+
+def test_coil_sheet_ignores_branch_number_and_unknown_sheet():
+    """接点の枠の ER21236 は、枝番つきの ER21236-1 の図面のコイルと食い違いにしない。シート番号が分からない図面とは比べない。"""
+    page = self_holding_page()
+    page["sheet_no"] = "ER21236-1"
+    for s in page["symbols"]:
+        if s["ref"] == "XL":
+            s["label"] = "X R100 (ER21236)"
+    kinds = {n["kind"] for n in _device(_index(page), X)["notes"]}
+    assert "coil_sheet_mismatch" not in kinds
+    page["sheet_no"] = None
+    page["name"] = "scan.png"
+    kinds = {n["kind"] for n in _device(_index(page), X)["notes"]}
+    assert "coil_sheet_mismatch" not in kinds

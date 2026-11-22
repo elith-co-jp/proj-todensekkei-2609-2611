@@ -23,7 +23,7 @@ from typing import Any
 from analysis.text_extraction import SHEET_REF
 from analysis.wiring.classes import PASS_THROUGH
 from services import sheet_links
-from services.circuit_model import Circuit, canonical_device, device_key
+from services.circuit_model import PASS_NODE_TERMINAL, Circuit, canonical_device, device_key
 
 RELAY = "relay"
 INPUT = "input"
@@ -114,7 +114,9 @@ def build_index(pages: list[dict[str, Any]], circuit: Circuit) -> dict[str, Any]
                 d = entry(name, LOAD)
                 d["loads"].append({**loc, "class_label": symbol.get("class_label") or symbol.get("class_key") or ""})
 
-    pages_in_set = {s for s in locate.sheets.values() if s}
+    # シート番号は枝番（-3）を除いて比べる（DD-0030 と同じ。ER21236-1 の図面は ER21236 のコイルのシート）
+    base = sheet_links.base_sheet
+    pages_in_set = {base(s) for s in locate.sheets.values() if s}
     for dev, d in devices.items():
         timer = circuit.timers.get(dev)
         d["timer"] = ({**timer, "mode_label": TIMER_LABEL.get(timer.get("mode"), timer.get("mode"))} if timer else None)
@@ -132,13 +134,14 @@ def build_index(pages: list[dict[str, Any]], circuit: Circuit) -> dict[str, Any]
         if variants:
             notes.append({"kind": "label_variants",
                           "message": f"表記が違うものを同じ器具にまとめた: {'、'.join(variants)}（O と 0 などの読み違いの可能性）"})
-        coil_pages = {locate.sheets.get(c["project_id"]) for c in d["coils"]}
+        coil_pages = {base(locate.sheets.get(c["project_id"])) for c in d["coils"]}
         written = sorted({c["coil_sheet"] for c in d["contacts"] if c["coil_sheet"]})
-        if d["role"] == RELAY:
-            if wrong := [s for s in written if s not in coil_pages]:
+        # コイルのページのシート番号が分からなければ比べない
+        if d["role"] == RELAY and "" not in coil_pages:
+            if wrong := [s for s in written if base(s) not in coil_pages]:
                 notes.append({"kind": "coil_sheet_mismatch",
                               "message": f"接点の枠に書かれたコイルのシート {'、'.join(wrong)} と、コイルのあるページが違う"})
-        elif d["role"] == INPUT and (missing := [s for s in written if s in pages_in_set]):
+        elif d["role"] == INPUT and (missing := [s for s in written if base(s) in pages_in_set]):
             notes.append({"kind": "coil_missing_in_set",
                           "message": f"コイルのシート {'、'.join(missing)} を選んでいるのにコイルが見つからない（器具番号の読み違いの可能性）"})
         elif d["role"] == INPUT and written:
@@ -190,7 +193,8 @@ def wire_numbers(pages: list[dict[str, Any]], circuit: Circuit, locate: _Locator
                     continue
                 if (pid, ref) not in w["ends"]:
                     w["ends"][(pid, ref)] = {**locate(pid, ref), "class_label": s.get("class_label") or s.get("class_key") or ""}
-            node = circuit.node_of.get((pid, c["from_symbol_ref"], c.get("from_terminal_ref") or ""))
+            # 端子の無い通り抜けの点に着く配線は、記号そのものが節点（DD-0023）
+            node = circuit.node_of.get((pid, c["from_symbol_ref"], c.get("from_terminal_ref") or PASS_NODE_TERMINAL))
             if node:
                 nodes[key].add(node)
     out = []
