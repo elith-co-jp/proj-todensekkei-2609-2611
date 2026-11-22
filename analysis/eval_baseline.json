@@ -1,5 +1,12 @@
 {
  "full": {
+  "circles.correct.wrong_changes": 0,
+  "circles.correct.wrong_confirmed": 0,
+  "circles.errors": 0,
+  "circles.status_agree": 0.6821,
+  "circles.swapped.errors": 140,
+  "circles.swapped.fixed_rate": 0.2821,
+  "circles.swapped.wrong_confirmed": 0,
   "drawings.clean.circuit_match": 1.0,
   "drawings.clean.errors": 0,
   "drawings.clean.symbol_f1": 1.0,
@@ -23,7 +30,23 @@
   "reading.missing_wrong": 0,
   "reading.unknown_wrong": 0
  },
+ "full+ocr": {
+  "circles.correct.wrong_changes": 0,
+  "circles.correct.wrong_confirmed": 0,
+  "circles.errors": 0,
+  "circles.status_agree": 0.9795,
+  "circles.swapped.errors": 82,
+  "circles.swapped.fixed_rate": 0.5795,
+  "circles.swapped.wrong_confirmed": 0
+ },
  "quick": {
+  "circles.correct.wrong_changes": 0,
+  "circles.correct.wrong_confirmed": 0,
+  "circles.errors": 0,
+  "circles.status_agree": 0.6364,
+  "circles.swapped.errors": 18,
+  "circles.swapped.fixed_rate": 0.1818,
+  "circles.swapped.wrong_confirmed": 0,
   "drawings.clean.circuit_match": 1.0,
   "drawings.clean.errors": 0,
   "drawings.clean.symbol_f1": 1.0,

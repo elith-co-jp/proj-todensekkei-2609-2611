@@ -78,6 +78,19 @@ def test_relay_table_rows_are_read_per_block_and_repaired():
     assert len(rows) == 8
 
 
+def test_relay_table_blocks_merged_by_misread_terminals_keep_each_device():
+    # 2 つ目の器具の端子欄が読めず（8.7.5 → 875）、ブロックが 1 つにまとまっても、行ごとに器具番号を分ける（#39）。
+    items = [
+        item("40HA", 110, 904, 156, 922), item("1-9-5", 186, 904, 233, 924),
+        item("67RR", 110, 999, 154, 1016), item("875", 185, 999, 232, 1017), item("5.8.2", 184, 1025, 231, 1043),
+        item("63UX", 110, 1093, 156, 1111), item("3-8-2", 186, 1094, 231, 1111),
+    ]
+    rows = tx.parse_relay_table(items, 1755, 1241)
+    assert [(r["device"], r["terminal"]) for r in rows] == [
+        ("40HA", "1-9-5"), ("67RR", "5-8-2"), ("63UX", "3-8-2"),
+    ]
+
+
 def test_sheet_references_separate_wire_destinations_from_coil_sheets():
     items = [
         item("(ER21212)", 164, 230, 219, 248),

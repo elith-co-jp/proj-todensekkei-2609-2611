@@ -67,7 +67,7 @@ def erase_dots(image: Image.Image) -> Image.Image:
     return Image.fromarray(rgb)
 
 
-CROP_OCR_CLASSES = {"connector", "contact_a", "contact_b", "relay_coil"}
+CROP_OCR_CLASSES = {"connector", "contact_a", "contact_b", "relay_coil", "lamp"}
 # 拡大 OCR の結果を端子番号の読取（terminal_numbers）にも渡す記号。
 TERMINAL_NUMBER_CLASSES = {"connector", "contact_a", "contact_b"}
 CROP_OCR_VERSION = "crop4x-pad8"
@@ -280,7 +280,8 @@ _TERMINAL_NOISE = re.compile(r"\d{1,2}|.|NO\d?|NC\d?|COM|L\d")
 # コイル・電磁弁は丸の中に器具番号と機器名を 2 行で書き、端子番号は丸の上下の外（枠の上端・下端の近く）に書く。
 # 枠の中心から高さの COIL_NAME_BAND 以内の語は、2 桁の数字（43、30）や 1 文字（F）でも名前の一部（DD-0023）。
 # 端子番号として落としていたので「43 3AM」が「3AM」、「52R F」が「52R」になり、正解のコイルと対応しなかった。
-COIL_NAME_CLASSES = {"relay_coil", "solenoid"}
+# 表示灯も円の中に色記号・器具番号を書く。コイルを表示灯と取り違えて検出しても、器具番号（43 3AM）を落とさない（#39）。
+COIL_NAME_CLASSES = {"relay_coil", "solenoid", "lamp"}
 COIL_NAME_BAND = 0.25
 
 
@@ -512,7 +513,8 @@ def _position(value: str) -> str:
 def _terminal_cells(items: list[TextItem], width: int, height: int) -> list[tuple[str, TextItem]]:
     """端子欄の文字（5-9-1 など）。ハイフンが抜けた読み（591）は同じ図面で正しく読めた端子に寄せる。"""
     area = [i for i in items if _center(i["box"])[1] >= RELAY_TABLE_TOP * height and _center(i["box"])[0] <= RELAY_TABLE_RIGHT * width]
-    values = [(normalize(i["text"]).replace(" ", "").replace("~", "-"), i) for i in area]
+    # スキャンの粗さでハイフンが点に読まれる（8.7.5）。端子欄の書式（数字 3 つ）のときだけハイフンとみなす。
+    values = [(_dotted_terminal(normalize(i["text"]).replace(" ", "").replace("~", "-")), i) for i in area]
     known = {v.replace("-", ""): v for v, _ in values if _TERMINAL_CELL.match(v)}
     cells = []
     for value, item in values:
@@ -521,6 +523,11 @@ def _terminal_cells(items: list[TextItem], width: int, height: int) -> list[tupl
         elif _TERMINAL_LOOSE.match(value) and value.replace("-", "") in known:
             cells.append((known[value.replace("-", "")], item))
     return cells
+
+
+def _dotted_terminal(value: str) -> str:
+    dashed = value.replace(".", "-")
+    return dashed if "." in value and _TERMINAL_CELL.match(dashed) else value
 
 
 def _terminal_columns(cells: list[tuple[str, TextItem]], width: int) -> list[list[tuple[str, TextItem]]]:
@@ -584,10 +591,23 @@ def _block_rows(
          and i["box"][3] - i["box"][1] >= 0.75 * row_h),
         key=lambda i: i["box"][1],
     )
-    device = " ".join(correct_token(_clean_token(normalize(i["text"]).replace(" ", "")), lexicon) for i in device_lines[:2])
+    # 端子欄の読み落としで 2 つの器具のブロックが 1 つにまとまったときは、器具番号の欄を縦の間隔で分け、
+    # 各行には、その行の高さまでに始まった最後の器具番号を使う（#39）。2 行で書いた器具番号（33HB / FV2306）は離れていない。
+    groups: list[list[TextItem]] = []
+    for line in device_lines:
+        if groups and line["box"][1] - groups[-1][-1]["box"][1] <= 2.5 * row_h:
+            groups[-1].append(line)
+        else:
+            groups.append([line])
+    devices = [
+        (group[0]["box"][1],
+         " ".join(correct_token(_clean_token(normalize(i["text"]).replace(" ", "")), lexicon) for i in group[:2]))
+        for group in groups
+    ] or [(top, "")]
     rows = []
     for terminal, item in block:
         y0, y1 = item["box"][1], item["box"][3]
+        device = next((name for start, name in reversed(devices) if start <= y1), devices[0][1])
         row = {"device": device, "terminal": terminal, "contact": "", "sheet": "", "position": ""}
         for cell in sorted(items, key=lambda i: i["box"][0]):
             cx, cy = _center(cell["box"])

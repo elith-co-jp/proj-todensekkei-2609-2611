@@ -386,9 +386,11 @@ PR と main への push ごとに `.github/workflows/ci.yml` が pytest・ruff�
 | AI 改善サイクル | `tests/test_ml_cycle.py`・`test_ai_import.py`・`test_review_summary.py`・`test_training_holdout.py`・`test_training_quality.py`・`test_card_model.py`・`test_region_frames.py`・`test_fetch_base_model.py` | モデル登録・切替・削除、推論の前提エラー、推論結果 ZIP の取込、AI 取込の重複防止、確認状況、評価用図面の分離、採用判定の推奨、カード用モデル、領域枠 |
 | 構造解析 | `tests/test_structure_api.py`・`test_structure_runtime.py`・`test_wire_*.py`・`test_faint_wires.py`・`test_inside_wires.py`・`test_coil_wiring.py`・`test_wiring_recall_gate.py`・`test_vector_pdf.py`、`analysis/tests/` | 配線の検出・グラフ・端子・結び付け、文字・リレー表・シート間参照、再現率の基準、ベクター PDF |
 | 回路 | `tests/test_circuit_model.py`・`test_circuit_api.py`・`test_circuit_interop.py`・`test_circuit_whatif.py`・`test_circuit_timing.py`・`test_circuit_trace.py`・`test_sheet_links.py`・`test_consistency.py`・`test_circuit_edit.py`・`test_drawing_sets.py` | 回路の組み立て・シミュレーション、Lcapy・SKiDL・SPICE、もしも・手順・波及範囲、タイマー、逆引き・順引き（3 値の判定）、行先札、整合性チェック、図面の変更と取り消し、押しボタン・ダイオード、図面セット |
-| 正解のやり取り・評価 | `tests/test_exchange_api.py`・`test_reading_metrics.py`・`test_logic_validation.py`・`test_synthetic_scan_data.py`、`analysis/tests/test_eval_suite.py` | 対応表・CVAT・代表回路のシナリオ、正解率の分け方、正解つき合成回路での論理の検証、評価の基準値との比較 |
+| 正解のやり取り・評価 | `tests/test_exchange_api.py`・`test_reading_metrics.py`・`test_logic_validation.py`・`test_synthetic_scan_data.py`、`analysis/tests/test_eval_suite.py`・`test_circle_eval.py` | 対応表・CVAT・代表回路のシナリオ、正解率の分け方（リレーコイルと表示灯の取り違えを含む）、正解つき合成回路での論理の検証、評価の基準値との比較、表示灯を含む評価用図面 |
 | 性能 | `tests/test_speedups.py` | 高速化した計算が元の計算と同じ結果を返すこと |
 
 合成回路とスキャン風の合成図面での評価は `make eval`（`analysis/tools/eval_suite.py`）の 1 コマンドで行い、`analysis/eval_baseline.json` の基準値より悪くなれば失敗する（DD-0038。CI では `--quick`）。受け取る図面の正解データはまだ無いため、実図面の精度ではなく、合成データでの退行を見張る。
+リレーコイルと表示灯の取り違え（#39）は、表示灯を含むスキャン風の評価用図面で、検出が正しいときと両者をすべて取り違えたときの
+件数を数える（評価の `circles`。文字の手がかりまで測るには `--enable-ocr`。DD-0043）。
 回路の理解の正しさは、正解つきの合成回路 60 個で `analysis/tools/validate_circuit_logic.py`・`validate_reading_procedure.py` を
 実行して確かめている（結果は `docs/evidence/`。DD-0032・DD-0033・DD-0035）。

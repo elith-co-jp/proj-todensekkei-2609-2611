@@ -165,3 +165,12 @@ def test_x_marked_circle_becomes_lamp_and_relay_table_device_stays_relay():
     }
     assert counts == {"reviewed": 3, "確定": 2, "要確認": 1, "changed": 1}
 
+
+
+def test_misread_color_codes_still_count_as_lamp_words():
+    # スキャンの粗さで OL8 → 0L8、RL5 → RLS と読まれる（#39、DD-0043）。器具番号は表示灯の語にしない。
+    for text, word in (("0L8", "OL8"), ("RLS", "RL5"), ("GL1", "GL1"), ("表示灯", "表示灯")):
+        result = classify_circle(CircleEvidence(CircleClass.RELAY_COIL, False, text))
+        assert [cue.text for cue in result.cues] == [word]
+    for text in ("52X", "33HB", "RLX1"):
+        assert classify_circle(CircleEvidence(CircleClass.RELAY_COIL, False, text)).cues == ()

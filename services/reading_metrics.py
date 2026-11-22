@@ -28,6 +28,7 @@ from services import circuit_trace as t
 from services.circuit_model import build_circuit
 
 IOU_MIN = 0.5
+CIRCLE_CLASSES = ("relay_coil", "lamp")
 TERMINAL_MAX = 0.03  # 端子を当てる距離（画像の幅・高さに対する割合）
 
 
@@ -134,6 +135,15 @@ def score_page(gold: dict[str, Any], pred: dict[str, Any]) -> dict[str, Any]:
     for g in gold["symbols"]:
         if g["ref"] not in matched_gold:
             per_class[g["class_key"]][2] += 1
+    # リレーコイルと表示灯の取り違え（#39、DD-0043）。対応した記号のうち、正解がどちらかの円形の記号のもの。
+    circles: Counter = Counter()
+    for s in pred["symbols"]:
+        g = gsym.get(smap.get(s["ref"], ""))
+        if g is None or g["class_key"] not in CIRCLE_CLASSES:
+            continue
+        circles[g["class_key"]] += 1
+        if s["class_key"] in CIRCLE_CLASSES and s["class_key"] != g["class_key"]:
+            circles[f"{g['class_key']}->{s['class_key']}"] += 1
     # 文字
     labels, devices, terminals = [0, 0], [0, 0], [0, 0]
     label_errors = []
@@ -186,9 +196,15 @@ def score_page(gold: dict[str, Any], pred: dict[str, Any]) -> dict[str, Any]:
         "text": {"label_exact": _rate(*labels), "device_exact": _rate(*devices), "terminal_exact": _rate(*terminals),
                  "label_errors": label_errors[:30]},
         "wires": wires,
+        "circles": _circle_summary(circles),
         "corrections": corrections,
         "symbol_map": smap,
     }
+
+
+def _circle_summary(counts: Counter) -> dict[str, Any]:
+    confusion = {k: counts[k] for k in sorted(counts) if "->" in k}
+    return {"gold": {k: counts[k] for k in CIRCLE_CLASSES}, "errors": sum(confusion.values()), "confusion": confusion}
 
 
 def _rate(ok: int, total: int) -> dict[str, Any]:
@@ -281,12 +297,15 @@ def summarize(results: list[dict[str, Any]]) -> dict[str, Any]:
     wires = Counter()
     rel = defaultdict(Counter)
     corrections = pages = missing = 0
+    circles: Counter = Counter()
     for r in results:
         for p in r["pages"]:
             pages += 1
             if p.get("missing"):
                 missing += 1
                 continue
+            circles.update(p["circles"]["gold"])
+            circles.update(p["circles"]["confusion"])
             for k, v in p["symbols"].items():
                 for i, f in enumerate(("tp", "fp", "fn")):
                     sym[k][i] += v[f]
@@ -308,6 +327,7 @@ def summarize(results: list[dict[str, Any]]) -> dict[str, Any]:
         "sheet_links": _prf(rel["sheet_links"]["tp"], rel["sheet_links"]["fp"], rel["sheet_links"]["fn"]),
         "coil_contact": _prf(rel["coil_contact"]["tp"], rel["coil_contact"]["fp"], rel["coil_contact"]["fn"]),
         "contact_sources": _rate(rel["contact_sources"]["ok"], rel["contact_sources"]["total"]),
+        "circles": _circle_summary(circles),
         "corrections": corrections,
     }
     scen = [r["scenarios"]["pred"] for r in results if "scenarios" in r]
@@ -346,6 +366,8 @@ def markdown(report: dict[str, Any]) -> str:
              f"- 線（端子の組）: {pr(s['wires'])}、誤結線 {s['wires']['wrong_connections']}、経路違い {s['wires']['route_differences']}",
              f"- 別ページの参照: {pr(s['sheet_links'])}",
              f"- コイルと接点の対応: {pr(s['coil_contact'])}、接点の出どころの一致 {rate(s['contact_sources'])}",
+             (f"- リレーコイルと表示灯の取り違え: {s['circles']['errors']} 件（正解のリレーコイル {s['circles']['gold']['relay_coil']}・"
+              f"表示灯 {s['circles']['gold']['lamp']}）"),
              f"- 人の修正量の目安: {s['corrections']} 操作"]
     if "scenarios" in s:
         lines.append(f"- 代表回路: {rate(s['scenarios'])}")
