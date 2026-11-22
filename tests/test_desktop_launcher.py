@@ -81,9 +81,9 @@ def test_pick_port_skips_ports_in_use(monkeypatch):
         taken = busy.getsockname()[1]
         monkeypatch.setattr(desktop, "PREFERRED_PORTS", (taken,))
         port = desktop._pick_port()
-    assert port != taken and port > 0  # 候補が全部埋まっていれば OS に選ばせる
-    monkeypatch.setattr(desktop, "PREFERRED_PORTS", (taken, port))
-    assert desktop._pick_port() == port  # 空いている候補があればそれを使う
+        assert port != taken and port > 0  # 候補が全部埋まっていれば OS に選ばせる
+        monkeypatch.setattr(desktop, "PREFERRED_PORTS", (taken, port))
+        assert desktop._pick_port() == port  # 空いている候補があればそれを使う（埋まった候補は飛ばす）
 
 
 def test_browser_opens_unless_disabled(monkeypatch):

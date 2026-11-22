@@ -292,11 +292,13 @@ yolo detect train data=data.yaml model=yolo11s.pt epochs=100 imgsz=1280
 ## テスト
 
 PR と main への push ごとに `.github/workflows/ci.yml` が pytest・ruff・画面の型検査とテストを回します。
+テストは製品のコードの全行・全分岐を通します（網羅率 100%。下回ると CI が失敗します。数える範囲と方針は DD-0045）。
 依存の版は `constraints.txt` で固定しています（更新するときはファイル先頭のコマンドで作り直し、CI が通ることを確かめる）。
 
 ```bash
 pip install -r requirements.txt -r requirements-dev.txt -c constraints.txt
 make test                # 下の 4 つをまとめて実行
+make coverage            # 網羅率 100% の確認（requirements-coverage.txt・requirements-interop.txt と ngspice・poppler-utils が要る）
 make eval                # 合成回路・合成図面での評価。基準値より悪くなれば失敗（DD-0038。CI では --quick）
 python3 -m pytest        # API・PDF 分割・YOLO 形式・往復復元・セキュリティ
 ruff check .

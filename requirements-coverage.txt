@@ -1,0 +1,7 @@
+# 網羅率を測るときの追加の依存（CI の backend ジョブ・make coverage）。DD-0045。
+# 任意の機能（OCR・回路の照合・JSON スキーマの検査）を本物で動かし、それぞれの分岐をテストで通すために入れる。
+#   pip install -r requirements.txt -r requirements-dev.txt -r requirements-interop.txt -r requirements-coverage.txt -c constraints.txt
+# あわせて OS のパッケージ ngspice（回路のシミュレーション）と poppler-utils（pdfinfo・pdftoppm）が要る。
+pytest-cov>=6
+jsonschema>=4
+rapidocr-onnxruntime>=1.4,<2

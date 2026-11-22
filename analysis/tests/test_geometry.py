@@ -45,3 +45,18 @@ def test_text_and_box_overlap_ratios():
     assert g.segment_box_overlap_ratio((0, 50), (100, 50), box) == 0.0
     assert g.segment_box_overlap_ratio((15, -50), (15, 50), box) == pytest.approx(0.1)
     assert g.segment_box_overlap_ratio((50, -50), (50, 50), box) == 0.0
+
+
+def test_graph_drops_edges_whose_ends_fall_on_the_same_node():
+    """点のまとめ方は順番に左右されるので、線の上の 2 点が同じ点に寄ることがある。その辺は作らない（DD-0022）。"""
+    from analysis.wiring.graph import build_connection_graph
+    from analysis.wiring.shapes import Box, DetectedWire
+
+    def wire(i, o, axis, s, e):
+        box = Box(s, axis - 1, e, axis + 1) if o == "h" else Box(axis - 1, s, axis + 1, e)
+        return DetectedWire(f"w{i}", o, box, axis, s, e, e - s, 0.9, 1.0, "t", [])
+
+    spec = [("h", 44, 39, 71), ("v", 66, 58, 91), ("h", 75, 50, 58), ("v", 44, 24, 57),
+            ("v", 64, 51, 64), ("v", 60, 43, 59), ("v", 57, 26, 96), ("h", 54, 31, 57)]
+    graph = build_connection_graph([wire(i, *s) for i, s in enumerate(spec)], [])
+    assert all(edge["from_node_id"] != edge["to_node_id"] for edge in graph["edges"])

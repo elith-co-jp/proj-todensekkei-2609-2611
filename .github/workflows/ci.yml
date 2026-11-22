@@ -30,18 +30,35 @@ jobs:
           cache-dependency-path: |
             requirements.txt
             requirements-dev.txt
+            requirements-interop.txt
+            requirements-coverage.txt
             constraints.txt
+
+      # 回路のシミュレーション（ngspice）と PDF の読み込み（Poppler）も本物で試す（DD-0045）
+      - name: Install system packages
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ngspice poppler-utils
 
       - name: Install dependencies
         run: |
           python -m pip install uv==0.13.7
-          uv pip install --system -r requirements.txt -r requirements-dev.txt -c constraints.txt
+          uv pip install --system -r requirements.txt -r requirements-dev.txt -r requirements-interop.txt \
+            -r requirements-coverage.txt -c constraints.txt
 
       - name: Ruff
         run: ruff check .
 
-      - name: Pytest
-        run: python -m pytest
+      # 製品のコードの網羅率は 100%（pyproject.toml の [tool.coverage]、DD-0045）。下回れば失敗する
+      - name: Pytest with coverage
+        run: python -m pytest --cov --cov-report=term --cov-report=xml
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: backend-coverage
+          path: coverage.xml
+          if-no-files-found: ignore
+          retention-days: 14
 
       # 合成回路・合成図面での評価（DD-0038）。基準値（analysis/eval_baseline.json）より悪くなれば失敗する
       - name: Evaluation (quick)
@@ -75,5 +92,6 @@ jobs:
       - run: npm ci
       - name: Type check
         run: npx tsc -b
-      - name: Tests
-        run: npm test
+      # 網羅率は 100%（vite.config.ts の thresholds）。下回れば失敗する
+      - name: Tests with coverage
+        run: npx vitest run --coverage

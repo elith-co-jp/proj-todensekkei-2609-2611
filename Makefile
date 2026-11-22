@@ -1,4 +1,4 @@
-.PHONY: install dev build serve test eval eval-quick docker-up docker-down docker-logs clean
+.PHONY: install dev build serve test coverage eval eval-quick docker-up docker-down docker-logs clean
 
 install:
 	pip install -r requirements.txt -r requirements-dev.txt -c constraints.txt
@@ -20,6 +20,11 @@ test:
 	python3 -m pytest
 	ruff check .
 	cd frontend && npx tsc -b && npm test
+
+# 網羅率 100% の確認（DD-0045）。requirements-coverage.txt と ngspice・poppler-utils が要る
+coverage:
+	python3 -m pytest --cov --cov-report=term
+	cd frontend && npx vitest run --coverage
 
 # 合成回路・合成図面での評価（DD-0038）。基準値より悪くなれば失敗する
 eval:

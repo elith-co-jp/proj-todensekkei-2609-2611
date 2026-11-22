@@ -34,3 +34,6 @@ dist/
 htmlcov/
 coverage.xml
 frontend/coverage/
+# SKiDL がテストの実行時に書く記録
+skidl_REPL.*
+*_REPL.erc
