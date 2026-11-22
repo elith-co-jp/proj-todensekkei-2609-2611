@@ -400,3 +400,72 @@ def test_analysis_job_rejects_unknown_drawings(client, monkeypatch):
     _upload_model(client)
     _fake_detector(monkeypatch)
     assert client.post("/api/ml/analysis/jobs", json={"project_ids": [pid, 999]}).status_code == 404
+
+
+def test_detector_without_names_uses_class_order_and_skips_empty_results():
+    from PIL import Image
+
+    from services.inference_service import _detect
+
+    class Array:
+        def __init__(self, values):
+            self.values = values
+
+        def tolist(self):
+            return self.values
+
+    boxes = SimpleNamespace(xywhn=Array([[0.5, 0.5, 0.1, 0.1], [0.2, 0.2, 0.1, 0.1]]), conf=None, cls=Array([1, 7]))
+
+    class Detector:
+        names: dict = {}
+
+        def predict(self, page, **kwargs):
+            return [SimpleNamespace(boxes=None), SimpleNamespace(boxes=boxes)]
+
+    classes = {1: SimpleNamespace(id=11, key="contact_a", label="接点")}
+    detections = _detect(Detector(), Image.new("RGB", (20, 20), "white"), 0.5, None, classes)
+    assert [(d["class_key"], d["confidence"]) for d in detections] == [("contact_a", None)]
+
+
+def test_inference_reports_missing_model_files_images_and_extra_images(client, monkeypatch):
+    from models import AnnotationImage
+    from services.annotation_service import image_path
+    from services.model_service import model_path
+
+    _fake_detector(monkeypatch)
+    first, second = create_project(client), create_project(client, "second.png")
+    model = _upload_model(client).json()
+    # 画像ファイルが無い図面: 検出は飛ばすが、構造解析は止める
+    sha = client.get(f"/api/projects/{second}").json()["images"][0]["sha256"]
+    image_path(sha).unlink()
+    ok = client.post("/api/ml/inference/run", json={"project_ids": [second]})
+    assert ok.status_code == 200 and ok.json()["detection_count"] == 0
+    missing = client.post("/api/ml/analysis/run", json={"project_ids": [second]})
+    assert missing.status_code == 400 and "図面画像が見つかりません" in missing.json()["detail"]
+    # 画像が 2 枚の図面は構造解析しない
+    with database.SessionLocal() as db:
+        db.add(AnnotationImage(project_id=first, filename="extra.png", sha256="0" * 64, width=1, height=1))
+        db.commit()
+    two = client.post("/api/ml/analysis/run", json={"project_ids": [first]})
+    assert two.status_code == 400 and "1画像" in two.json()["detail"]
+    # モデルのファイルが消えている
+    model_path(model["sha256"]).unlink()
+    gone = client.post("/api/ml/inference/run", json={"project_ids": [first]})
+    assert gone.status_code == 400 and "モデルファイルが見つかりません" in gone.json()["detail"]
+
+
+def test_prediction_zip_skips_broken_lines_and_needs_project_files(client):
+    pid = create_project(client)
+    lines = ["0 0.5", "x 0.5 0.5 0.1 0.1", "99 0.5 0.5 0.1 0.1", "0 0.5 0.5 0.1 0.1 0.8"]
+    res = client.post("/api/ml/inference/import",
+                      files={"archive": ("p.zip", _predictions_zip(pid, lines), "application/zip")})
+    assert res.status_code == 200, res.text
+    assert res.json()["results"][0]["detections"] == 1
+    import io
+    import zipfile
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("labels/page1.txt", "0 0.5 0.5 0.1 0.1")
+    res = client.post("/api/ml/inference/import", files={"archive": ("p.zip", buf.getvalue(), "application/zip")})
+    assert res.status_code == 400 and "取り込める推論結果がありません" in res.json()["detail"]

@@ -347,9 +347,8 @@ def _page_dict(project, symbols_in, terminals_of: dict, connections_in, cls_by_i
     sym_by_id = {s.id: s for s in symbols}
     out_connections = []
     for c in sorted(connections_in, key=lambda c: c.id):
-        src, dst = sym_by_id.get(c.from_symbol_id), sym_by_id.get(c.to_symbol_id)
-        if src is None or dst is None:
-            continue
+        # 配線の両端は同じ図面の記号（外部キーと replace_annotations が保証し、古い DB の孤児は移行で消す）
+        src, dst = sym_by_id[c.from_symbol_id], sym_by_id[c.to_symbol_id]
         out_connections.append(
             {
                 "ref": c.ref,

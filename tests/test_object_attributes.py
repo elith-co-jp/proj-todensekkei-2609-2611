@@ -150,3 +150,20 @@ def test_existing_db_upgrade_adds_attribute_columns(client):
     db_migrations.migrate(database.engine)
     pid = _project(client)
     assert client.get(f"/api/projects/{pid}").json()["connections"][0]["ref"] == "W-0001"
+
+
+def test_import_rejects_odd_values_kinds_and_files(client):
+    pid = _project(client)
+    doc = _export(client, [pid], template=True)
+    objects = {o["object_id"]: o for o in doc["objects"]}
+    objects["ER21216/SYM-0001"]["attributes"] = ["リスト"]
+    objects["ER21216/SYM-0002"]["attributes"] = {"maker": {"入れ子": 1}}
+    objects["ER21216/W-0002"]["attributes"] = {"length_m": True}
+    doc["objects"].append({"object_id": "ER21216/X", "project_id": pid, "type": "text", "ref": "SYM-0001"})
+    report = _import(client, doc).json()
+    assert report["not_found"] == ["ER21216/X"]
+    assert "ER21216/SYM-0001 attributes がオブジェクトではありません" in report["invalid"]
+    assert "ER21216/SYM-0002 maker: 値は文字・数値・真偽のどれかにしてください" in report["invalid"]
+    assert "ER21216/W-0002 length_m: 数値ではありません（True）" in report["invalid"]
+    res = client.post("/api/attributes/import", files={"file": ("a.json", b"\xff\xfe{", "application/json")})
+    assert res.status_code == 400 and "JSON として読めません" in res.json()["detail"]

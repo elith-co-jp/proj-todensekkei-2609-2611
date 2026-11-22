@@ -72,8 +72,6 @@ def export_xml(pages: list[dict[str, Any]], class_keys: list[str] | None = None)
             ET.SubElement(box, "attribute", name="ref").text = s["ref"]
             ET.SubElement(box, "attribute", name="text").text = s.get("label") or ""
             for t in s.get("terminals") or []:
-                if t.get("tx") is None:
-                    continue
                 px, py = t["tx"] * w, t["ty"] * h
                 points[(s["ref"], t["ref"])] = (px, py)
                 pt = ET.SubElement(img, "points", label=TERMINAL, source="manual", occluded="0",
