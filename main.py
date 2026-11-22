@@ -11,6 +11,7 @@ import os
 import threading
 import time
 from contextlib import asynccontextmanager
+from pathlib import Path
 from urllib.parse import urlsplit
 
 from fastapi import FastAPI, HTTPException, Request
@@ -156,19 +157,23 @@ def desktop_shutdown() -> dict:
     return {"status": "shutting_down"}
 
 
-# ビルド済みフロントエンド（frontend/dist）があれば配信する。
-# exe 化時は同梱リソースの基準（resource_base）から探す。
-_DIST = resource_base() / "frontend" / "dist"
-if _DIST.exists():
-    app.mount("/assets", StaticFiles(directory=_DIST / "assets"), name="assets")
+def _mount_frontend(target: FastAPI, dist: Path) -> None:
+    """ビルド済みフロントエンド（frontend/dist）があれば配信する。exe 化時は同梱リソースの基準から探す。"""
+    if not dist.exists():
+        return
+    target.mount("/assets", StaticFiles(directory=dist / "assets"), name="assets")
 
-    @app.get("/{full_path:path}")
+    @target.get("/{full_path:path}")
     def spa(full_path: str):
         # dist 直下の静的ファイル（favicon・ロゴ等）は実体を返し、
         # それ以外は SPA として index.html にフォールバックする。
         if full_path:
-            dist_root = _DIST.resolve()
+            dist_root = dist.resolve()
             candidate = (dist_root / full_path).resolve()
             if candidate.is_file() and dist_root in candidate.parents:
                 return FileResponse(candidate)
-        return FileResponse(_DIST / "index.html")
+        return FileResponse(dist / "index.html")
+
+
+_DIST = resource_base() / "frontend" / "dist"
+_mount_frontend(app, _DIST)
