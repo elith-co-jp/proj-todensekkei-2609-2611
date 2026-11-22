@@ -19,13 +19,14 @@ import {
 
 import { api } from '../api/client'
 import { DEFAULT_CONNECTOR_CONF, DEFAULT_DETECTION_CONF } from '../api/defaults'
+import { AnalysisJobProgress } from '../components/AnalysisJobProgress'
 import { LoadingOverlay } from '../components/LoadingOverlay'
 import { AdoptionReviewNote, PerClassComparison, TrainingDataPanel } from '../components/TrainingQuality'
 import type {
   AnalysisJob,
   EvalScope,
   InferenceImportResult,
-  InferenceRunResponse,
+  InferenceRunResult,
   MlModel,
   MlStatus,
   PredictionSummary,
@@ -33,14 +34,13 @@ import type {
   ProjectRow,
   TrainingRun,
 } from '../types'
+import { useAnalysisJob } from '../hooks/useAnalysisJob'
 import { formatJstShort } from '../utils/jst'
 
 type Notice = { kind: 'success' | 'error'; title: string; body: string }
 
 // 学習実行中のステータスポーリング間隔
 const TRAINING_POLL_MS = 3000
-// 裏の解析（DD-0039）の進み具合を取りに行く間隔
-const ANALYSIS_POLL_MS = 1000
 
 const CYCLE_STEPS = [
   { icon: Zap, label: '解析', desc: 'シンボル・配線・接続を検出', tone: 'bg-blue-100 text-blue-700' },
@@ -110,11 +110,10 @@ export default function MlOpsPage() {
   const [conf, setConf] = useState(DEFAULT_DETECTION_CONF)
   const [connectorConf, setConnectorConf] = useState(DEFAULT_CONNECTOR_CONF)
   const [ids, setIds] = useState<Set<number>>(new Set())
-  const [inferenceResult, setInferenceResult] = useState<InferenceRunResponse | null>(null)
+  const [analysisResults, setAnalysisResults] = useState<InferenceRunResult[] | null>(null)
   const [importResult, setImportResult] = useState<InferenceImportResult | null>(null)
   const [jsonOpen, setJsonOpen] = useState<number | null>(null)
   const [jsonCache, setJsonCache] = useState<Record<number, ProjectPredictions>>({})
-  const [job, setJob] = useState<AnalysisJob | null>(null)
 
   // 学習パラメータ
   const [epochs, setEpochs] = useState(100)
@@ -170,16 +169,9 @@ export default function MlOpsPage() {
   const toggleTrain = toggleSet(setTrainIds)
 
   // 解析は裏のジョブで 1 枚ずつ進め、図面ごとに保存する（DD-0039）。画面を離れても続き、戻ると進み具合を出す
-  const jobRunning = job?.status === 'running'
   const finishJob = useCallback(
     async (j: AnalysisJob) => {
-      setInferenceResult({
-        model: j.model ?? (status?.active_model as MlModel),
-        conf: j.conf,
-        connector_conf: j.connector_conf,
-        results: j.results,
-        detection_count: j.detection_count,
-      })
+      setAnalysisResults(j.results)
       setImportResult(null)
       setJsonCache({})
       setJsonOpen(null)
@@ -197,39 +189,18 @@ export default function MlOpsPage() {
       }
       await reload()
     },
-    [reload, status?.active_model],
+    [reload],
   )
 
-  useEffect(() => {
-    // 画面を開いたとき、裏で解析中のジョブがあれば進み具合の表示を続ける
-    void api
-      .listAnalysisJobs()
-      .then((jobs) => {
-        const running = jobs.find((j) => j.status === 'running')
-        if (running) setJob(running)
-      })
-      .catch(() => undefined)
-  }, [])
-
-  useEffect(() => {
-    if (!job || job.status !== 'running') return
-    const timer = window.setInterval(() => {
-      void api
-        .getAnalysisJob(job.id)
-        .then((next) => {
-          setJob((prev) => ({ ...next, model: next.model ?? prev?.model }))
-          if (next.status !== 'running') void finishJob({ ...next, model: next.model ?? job.model })
-        })
-        .catch(() => undefined)
-    }, ANALYSIS_POLL_MS)
-    return () => window.clearInterval(timer)
-  }, [job, finishJob])
+  const analysis = useAnalysisJob(finishJob)
+  const job = analysis.job
+  const jobRunning = analysis.running
 
   const runInference = async () => {
     setBusy('inference')
     setNotice(null)
     try {
-      setJob(await api.startAnalysisJob(Array.from(ids), conf, connectorConf))
+      await analysis.start(Array.from(ids), conf, connectorConf)
     } catch (e) {
       setNotice({ kind: 'error', title: '解析を始められませんでした', body: e instanceof Error ? e.message : String(e) })
     } finally {
@@ -238,9 +209,8 @@ export default function MlOpsPage() {
   }
 
   const cancelJob = async () => {
-    if (!job) return
     try {
-      setJob(await api.cancelAnalysisJob(job.id))
+      await analysis.cancel()
     } catch (e) {
       setNotice({ kind: 'error', title: '中止できませんでした', body: e instanceof Error ? e.message : String(e) })
     }
@@ -253,7 +223,7 @@ export default function MlOpsPage() {
     try {
       const r = await api.importPredictionsZip(f)
       setImportResult(r)
-      setInferenceResult(null)
+      setAnalysisResults(null)
       setJsonCache({})
       setJsonOpen(null)
       setNotice({
@@ -401,6 +371,8 @@ export default function MlOpsPage() {
   }
 
   const busyOverlay = busy ? BUSY_OVERLAY[busy] : undefined
+  // 直近の結果: 裏の解析の結果か、外部の推論結果の取り込み
+  const shownResults = analysisResults ?? importResult?.results
 
   return (
     <div className="page-shell enter-up">
@@ -635,9 +607,9 @@ export default function MlOpsPage() {
                   ER 系の図面ではコネクタを 0.60 以上にすると誤検出が減りました。推論結果は図面ごとに保存され、エディタで確認・修正できます。
                 </p>
               </div>
-              <label className="block">
+              <div className="block">
                 <span className="mb-1 flex flex-wrap items-center gap-2 text-[11px] text-slate-500">
-                  <span>対象（未選択なら全件）— 選択 {ids.size} / {projects.length} 枚</span>
+                  <span>{ids.size ? `対象: 選んだ ${ids.size} 枚` : `対象: 全 ${projects.length} 枚（未選択のため）`}</span>
                   <span className="flex-1" />
                   <button type="button" className="btn btn-sm" onClick={() => setIds(new Set(projects.map((r) => r.id)))} disabled={projects.length === 0}>
                     全選択
@@ -662,7 +634,7 @@ export default function MlOpsPage() {
                   ))}
                   {projects.length === 0 && <div className="px-3 py-4 text-center text-xs text-slate-400">図面がありません</div>}
                 </div>
-              </label>
+              </div>
               <button
                 className="btn btn-accent w-full justify-center"
                 onClick={() => void runInference()}
@@ -677,29 +649,7 @@ export default function MlOpsPage() {
                       ? '解析中…'
                       : 'AI 解析を実行'}
               </button>
-              {job && jobRunning && (
-                <div className="rounded-2xl border border-cyan-100 bg-cyan-50/60 p-3" role="status" aria-label="解析の進み具合">
-                  <div className="flex items-center gap-2 text-xs font-bold text-cyan-800">
-                    <span>
-                      解析中 {job.done} / {job.total} 図面
-                    </span>
-                    {job.failures.length > 0 && <span className="text-rose-600">失敗 {job.failures.length}</span>}
-                    <span className="flex-1" />
-                    <button type="button" className="btn btn-sm" onClick={() => void cancelJob()} disabled={job.cancel_requested}>
-                      {job.cancel_requested ? '中止します…' : '中止'}
-                    </button>
-                  </div>
-                  <div className="mt-2 h-2 overflow-hidden rounded-full bg-white">
-                    <div
-                      className="h-full rounded-full bg-cyan-500 transition-all"
-                      style={{ width: `${job.total ? Math.round((100 * job.done) / job.total) : 0}%` }}
-                    />
-                  </div>
-                  <p className="mt-2 text-[11px] leading-5 text-slate-500">
-                    {job.current ? `いま: ${job.current}。` : ''}図面ごとに保存します。この画面を離れても解析は続きます。
-                  </p>
-                </div>
-              )}
+              {job && jobRunning && <AnalysisJobProgress job={job} onCancel={() => void cancelJob()} />}
 
               <div className="border-t border-slate-100 pt-4">
                 <div className="mb-2 flex items-center gap-2 text-[11px] font-bold text-slate-500">
@@ -727,7 +677,7 @@ export default function MlOpsPage() {
             </div>
           </div>
 
-          {(inferenceResult || importResult) && (
+          {shownResults && (
             <div className="card overflow-hidden">
               <div className="card-head">
                 <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-blue-50 text-blue-700">
@@ -737,11 +687,11 @@ export default function MlOpsPage() {
                   <div className="text-[9px] font-bold uppercase tracking-wider text-slate-400">Results</div>
                   <h2 className="text-sm font-black">直近の解析結果</h2>
                 </div>
-                {inferenceResult && <button type="button" className="btn btn-sm ml-auto" onClick={() => void downloadStructure(inferenceResult.results.map((page) => page.project_id))}><Download size={14} />構造JSON</button>}
+                {analysisResults && <button type="button" className="btn btn-sm ml-auto" onClick={() => void downloadStructure(analysisResults.map((page) => page.project_id))}><Download size={14} />構造JSON</button>}
               </div>
               <div className="p-4 sm:p-5">
                 <div className="thin-scroll max-h-80 overflow-auto rounded-2xl border border-slate-200">
-                  {(inferenceResult?.results ?? importResult?.results ?? []).map((r) => (
+                  {shownResults.map((r) => (
                     <div key={r.project_id}>
                       <div className="flex items-center gap-2 border-b border-slate-100 px-3 py-2 text-xs">
                         <span className="font-mono text-slate-400">{r.project_id}</span>
@@ -756,7 +706,7 @@ export default function MlOpsPage() {
                       </div>
                       {jsonOpen === r.project_id && (
                         <pre className="thin-scroll max-h-64 overflow-auto border-b border-slate-100 bg-slate-900 p-3 font-mono text-[10px] leading-4 text-emerald-100">
-                          {JSON.stringify(jsonCache[r.project_id] ?? {}, null, 2)}
+                          {JSON.stringify(jsonCache[r.project_id], null, 2)}
                         </pre>
                       )}
                     </div>
@@ -886,7 +836,7 @@ export default function MlOpsPage() {
                   図面の約2割を学習に使わずに取り分け、新旧モデルをその図面で比べます。図面が5枚未満のときは学習に使った図面で評価します。
                 </p>
               </div>
-              <label className="block">
+              <div className="block">
                 <span className="mb-1 flex flex-wrap items-center gap-2 text-[11px] text-slate-500">
                   <span>学習対象を個別指定（未選択なら上の条件）</span>
                   <span className="flex-1" />
@@ -908,7 +858,7 @@ export default function MlOpsPage() {
                     </label>
                   ))}
                 </div>
-              </label>
+              </div>
               <button
                 className="btn btn-accent w-full justify-center"
                 onClick={() => void startTraining()}

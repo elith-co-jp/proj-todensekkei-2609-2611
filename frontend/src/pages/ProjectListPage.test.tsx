@@ -216,7 +216,7 @@ describe('ProjectListPage', () => {
       const view = renderPage()
       await view.findByText('図面1')
       fireEvent.click(view.getByRole('button', { name: /AI 解析（全件）/ }))
-      await waitFor(() => expect(apiMocks.startAnalysisJob).toHaveBeenCalledWith([]))
+      await waitFor(() => expect(apiMocks.startAnalysisJob).toHaveBeenCalledWith([], undefined, undefined))
       const progress = await view.findByRole('status', { name: '解析の進み具合' })
       expect(progress.textContent).toContain('解析中 0 / 2 図面')
       expect(progress.textContent).toContain('いま: 図面1')
@@ -250,7 +250,7 @@ describe('ProjectListPage', () => {
       await view.findByText('図面1')
       fireEvent.click(view.getAllByRole('checkbox')[1])
       fireEvent.click(view.getByRole('button', { name: /AI 解析（1 件）/ }))
-      await waitFor(() => expect(apiMocks.startAnalysisJob).toHaveBeenCalledWith([2]))
+      await waitFor(() => expect(apiMocks.startAnalysisJob).toHaveBeenCalledWith([2], undefined, undefined))
       apiMocks.getAnalysisJob.mockResolvedValue(job({
         status: 'done', total: 1, done: 1, failures: [{ project_id: 2, name: '図面2', message: '画像がありません' }],
       }))
@@ -301,7 +301,7 @@ describe('ProjectListPage', () => {
       const file = new File(['%PDF'], 'a.pdf', { type: 'application/pdf' })
       fireEvent.change(view.container.querySelector('input[type="file"]')!, { target: { files: [file] } })
       fireEvent.click(await view.findByRole('button', { name: /AI 解析（登録した 2 件）/ }))
-      await waitFor(() => expect(apiMocks.startAnalysisJob).toHaveBeenCalledWith([11, 12]))
+      await waitFor(() => expect(apiMocks.startAnalysisJob).toHaveBeenCalledWith([11, 12], undefined, undefined))
       await waitFor(() => expect(view.queryByRole('button', { name: /登録した 2 件/ })).toBeNull())
     })
   })

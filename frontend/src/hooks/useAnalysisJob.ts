@@ -13,6 +13,9 @@ export function useAnalysisJob(onFinish: (job: AnalysisJob) => void | Promise<vo
   const [job, setJob] = useState<AnalysisJob | null>(null)
   const finishRef = useRef(onFinish)
   finishRef.current = onFinish
+  // 進み具合（GET）には使ったモデルが入らないので、始めたときの応答のモデルを引き継ぐ
+  const modelRef = useRef<AnalysisJob['model']>(undefined)
+  modelRef.current = job?.model ?? modelRef.current
 
   useEffect(() => {
     let alive = true
@@ -38,10 +41,11 @@ export function useAnalysisJob(onFinish: (job: AnalysisJob) => void | Promise<vo
         .getAnalysisJob(jobId)
         .then((next) => {
           if (finished) return
-          setJob((prev) => ({ ...next, model: next.model ?? prev?.model }))
-          if (next.status !== 'running') {
+          const merged = { ...next, model: next.model ?? modelRef.current }
+          setJob(merged)
+          if (merged.status !== 'running') {
             finished = true
-            void finishRef.current(next)
+            void finishRef.current(merged)
           }
         })
         .catch(() => undefined)
@@ -52,9 +56,9 @@ export function useAnalysisJob(onFinish: (job: AnalysisJob) => void | Promise<vo
     }
   }, [running, jobId])
 
-  /** projectIds が空なら全図面。しきい値は既定（api/defaults.ts）を使う。 */
-  const start = useCallback(async (projectIds: number[]) => {
-    const started = await api.startAnalysisJob(projectIds)
+  /** projectIds が空なら全図面。しきい値を渡さなければ既定（api/defaults.ts）を使う。 */
+  const start = useCallback(async (projectIds: number[], conf?: number, connectorConf?: number | null) => {
+    const started = await api.startAnalysisJob(projectIds, conf, connectorConf)
     setJob(started)
     return started
   }, [])

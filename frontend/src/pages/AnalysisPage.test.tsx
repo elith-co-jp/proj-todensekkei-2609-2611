@@ -92,7 +92,7 @@ describe('AnalysisPage', () => {
     expect((view.getByRole('checkbox', { name: /^AI検出配線/ }) as HTMLInputElement).disabled).toBe(true)
     expect((view.getByRole('button', { name: '構造JSON' }) as HTMLButtonElement).disabled).toBe(true)
     fireEvent.click(view.getByRole('button', { name: '解析を実行' }))
-    await waitFor(() => expect(api.startAnalysisJob).toHaveBeenCalledWith([1]))
+    await waitFor(() => expect(api.startAnalysisJob).toHaveBeenCalledWith([1], undefined, undefined))
   })
 
   it('reanalyses with the background job, shows progress without blocking, and reloads when done', async () => {
