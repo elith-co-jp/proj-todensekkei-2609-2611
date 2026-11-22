@@ -655,3 +655,58 @@ export type DrawingSetSuggestion = {
   sheets: string[]
   missing_sheets: string[]
 }
+
+// 機器索引（DD-0044）。位置は図面の幅・高さに対する割合（0〜1）と、人が読む言葉（左上・中央など）
+export type DeviceLocation = {
+  project_id: number
+  page: string
+  symbol_ref: string
+  label: string
+  cx: number
+  cy: number
+  w: number
+  h: number
+  area: string
+  origin?: string | null
+}
+
+export type DeviceContact = DeviceLocation & {
+  kind: 'a' | 'b'
+  kind_label: string
+  coil_sheet?: string | null
+  instant?: boolean
+}
+
+export type DeviceEntry = {
+  device: string
+  role: 'relay' | 'input' | 'load'
+  role_label: string
+  coils: DeviceLocation[]
+  contacts: DeviceContact[]
+  loads: (DeviceLocation & { class_label: string })[]
+  a_count: number
+  b_count: number
+  pages: string[]
+  variants: string[]
+  timer: { mode: string; mode_label: string; delay_s: number } | null
+  notes: { kind: string; message: string }[]
+}
+
+export type WireNumberEntry = {
+  wire_no: string
+  pages: string[]
+  /** その番号の配線の本数 */
+  connections: number
+  node_count: number
+  note: string
+  /** その番号の配線がつなぐ記号（分岐点を除く） */
+  ends: (DeviceLocation & { class_label: string })[]
+}
+
+export type DeviceIndex = {
+  pages: { id: number; name: string }[]
+  devices: DeviceEntry[]
+  unlabeled_contacts: DeviceContact[]
+  wire_numbers: WireNumberEntry[]
+  counts: { relays: number; inputs: number; loads: number; contacts: number; wire_numbers: number; notes: number }
+}

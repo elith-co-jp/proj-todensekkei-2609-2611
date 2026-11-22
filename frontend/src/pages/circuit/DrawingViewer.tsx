@@ -6,6 +6,8 @@ import type { CircuitResult } from '../../types'
 
 type Overlay = CircuitResult['overlay'][number]
 type View = { scale: number; x: number; y: number }
+/** 図面の上で目立たせる記号の枠（図面の幅・高さに対する割合）。key が変わるたびにそこへ移動する */
+export type ViewerFocus = { cx: number; cy: number; w: number; h: number; key: number; label?: string }
 
 const MIN_SCALE = 0.05
 const MAX_SCALE = 8
@@ -27,6 +29,7 @@ export default function DrawingViewer({
   onToggleInput,
   disabled,
   insets,
+  focus,
   children,
 }: {
   imageUrl: string
@@ -40,6 +43,8 @@ export default function DrawingViewer({
   disabled?: boolean
   /** 図面の上に重ねたパネルで隠れる幅。全体表示はこれを除いた範囲に合わせる */
   insets?: { top?: number; right?: number; bottom?: number; left?: number }
+  /** 機器索引などから選んだ記号。そこを中心に拡大し、枠を点滅させる */
+  focus?: ViewerFocus | null
   children?: ReactNode
 }) {
   const stageRef = useRef<HTMLDivElement | null>(null)
@@ -71,6 +76,25 @@ export default function DrawingViewer({
   useLayoutEffect(() => {
     fit()
   }, [fit, imageUrl])
+
+  // 選んだ記号を中心に、周りの回路が読める程度（記号の約 12 倍の範囲）まで拡大する
+  useEffect(() => {
+    const stage = stageRef.current
+    if (!focus || !stage || !width || !height) return
+    const w = Math.max(stage.clientWidth - left - right - 32, 80)
+    const h = Math.max(stage.clientHeight - top - bottom - 32, 80)
+    const fitScale = Math.min(w / width, h / height)
+    const boxW = Math.max(focus.w * width, 24) * 12
+    const boxH = Math.max(focus.h * height, 24) * 12
+    const scale = Math.min(4, Math.max(fitScale, Math.min(w / boxW, h / boxH)))
+    fitted.current = false
+    setView({
+      scale,
+      x: left + 16 + w / 2 - focus.cx * width * scale,
+      y: top + 16 + h / 2 - focus.cy * height * scale,
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focus?.key, width, height])
 
   // 画面の大きさが変わったら、全体表示のままなら合わせ直す
   useEffect(() => {
@@ -220,6 +244,20 @@ export default function DrawingViewer({
                 </rect>
               )
             })}
+          </svg>
+        )}
+        {focus && (
+          <svg className="pointer-events-none absolute inset-0 h-full w-full" viewBox="0 0 1 1" preserveAspectRatio="none" aria-label="選んだ記号">
+            <rect
+              data-testid="viewer-focus"
+              x={focus.cx - focus.w / 2 - 0.006} y={focus.cy - focus.h / 2 - 0.006}
+              width={focus.w + 0.012} height={focus.h + 0.012}
+              fill="#f59e0b" fillOpacity={0.15}
+              stroke="#d97706" strokeWidth={4} vectorEffect="non-scaling-stroke"
+              className="animate-pulse"
+            >
+              {focus.label && <title>{focus.label}</title>}
+            </rect>
           </svg>
         )}
       </div>
