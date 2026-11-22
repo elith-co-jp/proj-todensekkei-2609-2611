@@ -36,4 +36,16 @@ describe('small components', () => {
     expect(view.getByRole('status').textContent).not.toContain('いま:')
     expect(view.getByRole('status').textContent).not.toContain('失敗')
   })
+
+  it('shows failures, the current drawing and a pending cancel on the analysis job', () => {
+    const job = {
+      id: 1, status: 'running' as const, total: 4, done: 1, current: '匿名ページ2', conf: 0.5, connector_conf: null, results: [],
+      failures: [{ project_id: 1, name: null, message: '読めません' }], error: null, cancel_requested: true,
+      detection_count: 0, started_at: null, finished_at: null,
+    }
+    const view = render(<AnalysisJobProgress job={job} onCancel={() => undefined} />)
+    expect(view.getByRole('status').textContent).toContain('失敗 1')
+    expect(view.getByRole('status').textContent).toContain('いま: 匿名ページ2。')
+    expect(view.getByRole('button', { name: '中止します…' })).toHaveProperty('disabled', true)
+  })
 })

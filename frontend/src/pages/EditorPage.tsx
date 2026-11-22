@@ -91,21 +91,15 @@ export default function EditorPage() {
   const [exporting, setExporting] = useState(false)
   const [aiApplying, setAiApplying] = useState(false)
   const [shortcutsVisible, setShortcutsVisible] = useState(false)
-  const [inspectorOpen, setInspectorOpen] = useState(() =>
-    typeof window === 'undefined' ? true : window.matchMedia('(min-width: 1024px)').matches,
-  )
-  const [desktopInspector, setDesktopInspector] = useState(() =>
-    typeof window === 'undefined' ? true : window.matchMedia('(min-width: 1024px)').matches,
-  )
+  const [inspectorOpen, setInspectorOpen] = useState(() => window.matchMedia('(min-width: 1024px)').matches)
+  const [desktopInspector, setDesktopInspector] = useState(() => window.matchMedia('(min-width: 1024px)').matches)
 
   /* レイヤー表示: 非表示シンボルは ref 単位で持ち、クラス/AI検出行は一括操作として扱う */
   const [hiddenSymbols, setHiddenSymbols] = useState<ReadonlySet<string>>(() => new Set())
   const [showTerminals, setShowTerminals] = useState(true)
   const [showConnections, setShowConnections] = useState(true)
   const [showLabels, setShowLabels] = useState(true)
-  const [layersOpen, setLayersOpen] = useState(() =>
-    typeof window === 'undefined' ? true : window.matchMedia('(min-width: 1024px)').matches,
-  )
+  const [layersOpen, setLayersOpen] = useState(() => window.matchMedia('(min-width: 1024px)').matches)
 
   const undoStack = useRef<Snapshot[]>([])
   const redoStack = useRef<Snapshot[]>([])
@@ -207,6 +201,8 @@ export default function EditorPage() {
     }
   }
 
+  // 図面情報パネルは読み込み済みの今のページにだけ出る（読み込みを始めるときに project を空にし、
+  // currentProjectIdRef は描画中に更新する）。そのため targetProjectId は常に今のページを指す
   const queueMetaSave = useCallback((targetProjectId: number, payload: MetaForm, immediate = false) => {
     const save = createProjectScopedSave(targetProjectId, payload)
     const queuedSave = metaSaves.queued.get(targetProjectId)
@@ -222,18 +218,12 @@ export default function EditorPage() {
       metaSaves.timers.delete(targetProjectId)
       clearPersistedProjectSave('meta', targetProjectId)
       refreshDraftStorageBlock(targetProjectId)
-      if (targetProjectId === currentProjectIdRef.current) {
-        setMetaSaveStatus('saved')
-        setProject((current) =>
-          current?.id === targetProjectId ? { ...current, ...payload } : current,
-        )
-      }
+      setMetaSaveStatus('saved')
+      setProject((current) => ({ ...current!, ...payload }))
       return
     }
     if (save.key === latestOutstandingSave?.key && !(immediate && latestOutstandingSave === failedSave)) {
-      if (targetProjectId === currentProjectIdRef.current) {
-        setMetaSaveStatus(queuedSave ? 'pending' : activeSave ? 'saving' : 'error')
-      }
+      setMetaSaveStatus(queuedSave ? 'pending' : activeSave ? 'saving' : 'error')
       if (immediate && queuedSave) {
         const timer = metaSaves.timers.get(targetProjectId)
         if (timer !== undefined) window.clearTimeout(timer)
@@ -245,18 +235,11 @@ export default function EditorPage() {
     metaSaves.failed.delete(targetProjectId)
     enqueueProjectSave(metaSaves.queued, save)
     const storedInSession = persistProjectSave('meta', save)
-    if (!storedInSession && targetProjectId === currentProjectIdRef.current) {
-      setDraftStorageBlocked(true)
-    } else if (storedInSession) {
-      refreshDraftStorageBlock(targetProjectId)
-    }
-    if (targetProjectId === currentProjectIdRef.current) {
-      setMetaSaveStatus('pending')
-      setError(null)
-      setProject((current) =>
-        current?.id === targetProjectId ? { ...current, ...payload } : current,
-      )
-    }
+    if (storedInSession) refreshDraftStorageBlock(targetProjectId)
+    else setDraftStorageBlocked(true)
+    setMetaSaveStatus('pending')
+    setError(null)
+    setProject((current) => ({ ...current!, ...payload }))
     const timer = metaSaves.timers.get(targetProjectId)
     if (timer !== undefined) window.clearTimeout(timer)
     metaSaves.timers.delete(targetProjectId)
@@ -336,7 +319,7 @@ export default function EditorPage() {
           (metaSaves.generation.get(detail.id) ?? 0) > metaGenerationAtRequest
         const confirmedMetaPayload =
           metaSavedDuringRequest && knownMetaKey && knownMetaKey !== serverMetaKey
-            ? metaSaves.lastSavedPayloads.get(detail.id) ?? null
+            ? metaSaves.lastSavedPayloads.get(detail.id)! // 保存が確定したキーと内容は必ず一緒に残す
             : null
         if (!confirmedMetaPayload) {
           metaSaves.lastSavedKeys.set(detail.id, serverMetaKey)
@@ -371,7 +354,7 @@ export default function EditorPage() {
           (annotationSaves.generation.get(detail.id) ?? 0) > annotationGenerationAtRequest
         const confirmedAnnotationPayload =
           annotationSavedDuringRequest && knownAnnotationKey && knownAnnotationKey !== serverAnnotationKey
-            ? annotationSaves.lastSavedPayloads.get(detail.id) ?? null
+            ? annotationSaves.lastSavedPayloads.get(detail.id)!
             : null
         if (!confirmedAnnotationPayload) {
           annotationSaves.lastSavedKeys.set(detail.id, serverAnnotationKey)
@@ -471,10 +454,10 @@ export default function EditorPage() {
   }, [symbols, connections])
 
   /* ------------------------------------------------------------------ 座標変換 */
+  // キャンバス（canvasRef）は図面を読み込んだ後にだけ描かれ、ここの関数はそれ以降にだけ呼ばれる
   const toNorm = useCallback(
     (clientX: number, clientY: number) => {
-      const rect = canvasRef.current?.getBoundingClientRect()
-      if (!rect) return { nx: 0, ny: 0 }
+      const rect = canvasRef.current!.getBoundingClientRect()
       const sx = (clientX - rect.left - pan.x) / zoom
       const sy = (clientY - rect.top - pan.y) / zoom
       return { nx: clamp01(sx / iw), ny: clamp01(sy / ih) }
@@ -483,15 +466,14 @@ export default function EditorPage() {
   )
 
   const fit = useCallback((preferReadableScale = false) => {
-    const rect = canvasRef.current?.getBoundingClientRect()
-    if (!rect || !project) return
+    const rect = canvasRef.current!.getBoundingClientRect()
     const availableWidth = Math.max(rect.width - 40, 1)
     const availableHeight = Math.max(rect.height - 40, 1)
     const minimumZoom = preferReadableScale && rect.width < 640 ? 0.34 : 0.05
     const z = Math.max(minimumZoom, Math.min(availableWidth / iw, availableHeight / ih))
     setZoom(z)
     setPan({ x: (rect.width - iw * z) / 2, y: (rect.height - ih * z) / 2 })
-  }, [project, iw, ih])
+  }, [iw, ih])
 
   useEffect(() => {
     if (project) requestAnimationFrame(() => fit(true))
@@ -499,8 +481,7 @@ export default function EditorPage() {
 
   const zoomAt = useCallback(
     (factor: number, cx: number, cy: number) => {
-      const rect = canvasRef.current?.getBoundingClientRect()
-      if (!rect) return
+      const rect = canvasRef.current!.getBoundingClientRect()
       const px = (cx - rect.left - pan.x) / zoom
       const py = (cy - rect.top - pan.y) / zoom
       const z = Math.max(0.05, Math.min(12, zoom * factor))
@@ -516,11 +497,11 @@ export default function EditorPage() {
     setTab('symbols')
   }
 
+  // 一覧の行から呼ぶので、シンボルもキャンバスも必ずある
   const revealSymbol = (ref: string) => {
     setSelectedRef(ref)
-    const s = symbolByRef.get(ref)
-    const rect = canvasRef.current?.getBoundingClientRect()
-    if (!s || !rect) return
+    const s = symbolByRef.get(ref)!
+    const rect = canvasRef.current!.getBoundingClientRect()
     const left = pan.x + (s.cx - s.w / 2) * iw * zoom
     const top = pan.y + (s.cy - s.h / 2) * ih * zoom
     const right = left + s.w * iw * zoom
@@ -538,8 +519,8 @@ export default function EditorPage() {
     setSelectedRef(focusRef)
     setTab('symbols')
     setInspectorOpen(true)
-    const rect = canvasRef.current?.getBoundingClientRect()
-    if (rect) setPan({ x: rect.width / 2 - s.cx * iw * zoom, y: rect.height / 2 - s.cy * ih * zoom })
+    const rect = canvasRef.current!.getBoundingClientRect()
+    setPan({ x: rect.width / 2 - s.cx * iw * zoom, y: rect.height / 2 - s.cy * ih * zoom })
   }, [focusRef, project, projectId, symbols, iw, ih, zoom])
 
   /* コイルの中を通り抜ける配線を、コイルの枠の出入りの点で 2 本に分けて端子を付ける（DD-0009 §6） */
@@ -597,8 +578,8 @@ export default function EditorPage() {
   }
 
   /* AI の結果（シンボル・端子・配線）を確認用の候補として足す（破線表示・人が修正して蓄積）*/
+  // 取り込み中はボタンを押せない
   const applyPredictions = async () => {
-    if (aiApplying) return
     setAiApplying(true)
     try {
       const result = await api.aiImport(projectId, buildAnnotationPayload(symbols, connections))
@@ -751,10 +732,8 @@ export default function EditorPage() {
 
   /* ------------------------------------------------------------------ ポインター（マウス／ペン／タッチ） */
   const onPointerDown = (e: React.PointerEvent) => {
-    if (!project) return
     if (activePointerIdRef.current !== null) return
-    const eventTarget = e.target instanceof Element ? e.target : null
-    if (eventTarget?.closest('button, a, input, select, textarea, [role="tab"]')) return
+    if ((e.target as Element).closest('button, a, input, select, textarea, [role="tab"]')) return
     const { nx, ny } = toNorm(e.clientX, e.clientY)
 
     const startDrag = (nextDrag: Drag) => {
@@ -822,8 +801,9 @@ export default function EditorPage() {
 
   const cancelActivePointer = useCallback(() => {
     const pointerId = activePointerIdRef.current
-    if (pointerId !== null && canvasRef.current?.hasPointerCapture(pointerId)) {
-      canvasRef.current.releasePointerCapture(pointerId)
+    // 押している指があるときはキャンバスが描かれている
+    if (pointerId !== null && canvasRef.current!.hasPointerCapture(pointerId)) {
+      canvasRef.current!.releasePointerCapture(pointerId)
     }
     activePointerIdRef.current = null
     setDrag({ kind: 'none' })
@@ -846,7 +826,8 @@ export default function EditorPage() {
             s.ref === drag.ref ? { ...s, ...fitInside(nx - drag.dx, ny - drag.dy, s.w, s.h) } : s,
           ),
         )
-      } else if (drag.kind === 'resize') {
+      } else {
+        // resize（'none' は上で抜けている）
         setSymbols((prev) =>
           prev.map((s) => {
             if (s.ref !== drag.ref) return s
@@ -1005,33 +986,23 @@ export default function EditorPage() {
       window.clearTimeout(autosaveTimerRef.current)
       autosaveTimerRef.current = null
     }
-    const key = JSON.stringify(annotationPayload)
-    const queuedSave = annotationSaves.queued.get(projectId)
-    const activeSave = annotationSaves.active?.projectId === projectId ? annotationSaves.active : null
+    // 変更は上の自動保存の effect が描画のたびにキューへ入れている（保存中のものと違えば必ず入る）。
+    // ここでは待ち時間を飛ばし、失敗したままの保存があれば送り直す。失敗した保存がある間は、
+    // 同じ図面の新しい保存はキューにも送信中にも無い（新しい変更を入れるときに失敗分を消すため）
     const failedSave = annotationSaves.failed.get(projectId)
-    const latestOutstandingSave = queuedSave ?? activeSave ?? failedSave
-    if (
-      key !== latestOutstandingSave?.key &&
-      (key !== annotationSaves.lastSavedKeys.get(projectId) || Boolean(latestOutstandingSave))
-    ) {
-      const save = createProjectScopedSave(projectId, annotationPayload)
-      annotationSaves.failed.delete(projectId)
-      enqueueProjectSave(annotationSaves.queued, save)
-      if (!persistProjectSave('annotations', save)) setDraftStorageBlocked(true)
-      else refreshDraftStorageBlock(projectId)
-    } else if (latestOutstandingSave === failedSave && failedSave) {
+    if (failedSave) {
       annotationSaves.failed.delete(projectId)
       enqueueProjectSave(annotationSaves.queued, failedSave)
     }
     await annotationSaves.flush()
-  }, [annotationPayload, project, projectId, refreshDraftStorageBlock])
+  }, [project, projectId])
 
+  // 書き出し中はボタンを押せない
   const exportCurrentProject = async () => {
-    if (!project || exporting) return
     setExporting(true)
     setError(null)
     try {
-      await api.exportProject(project.id)
+      await api.exportProject(projectId)
       setNotice('この図面のデータを書き出しました')
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught))

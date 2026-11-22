@@ -97,8 +97,9 @@ export function EditorInspector({
 
   useEffect(() => {
     if (tab !== 'symbols' || !selectedRef) return
+    // シンボルのタブを開いている間は一覧（symbolListRef）が必ず描かれている
     const row = Array.from(
-      symbolListRef.current?.querySelectorAll<HTMLElement>('[data-symbol-ref]') ?? [],
+      symbolListRef.current!.querySelectorAll<HTMLElement>('[data-symbol-ref]'),
     ).find((element) => element.dataset.symbolRef === selectedRef)
     const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
     row?.scrollIntoView({ block: 'nearest', behavior: reduceMotion ? 'auto' : 'smooth' })
