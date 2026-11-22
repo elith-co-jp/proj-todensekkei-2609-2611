@@ -42,3 +42,9 @@ def test_an_upright_page_is_stored_as_it_is(client):
     project = client.get(f"/api/projects/{res.json()['project_ids'][0]}").json()
     assert (project["image_width"], project["image_height"], project["note"]) == (1400, 1000, None)
 
+
+
+def test_unreadable_image_is_kept_as_it_is():
+    from services.page_orientation import upright_page
+
+    assert upright_page(b"not a png") == (b"not a png", 0)

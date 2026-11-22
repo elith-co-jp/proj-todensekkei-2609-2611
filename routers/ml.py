@@ -399,15 +399,14 @@ def decide_training_run(
     run = db.query(TrainingRun).filter(TrainingRun.id == run_id).one_or_none()
     if run is None:
         raise HTTPException(404, "学習ジョブが見つかりません")
-    if run.status != "success" or run.result_model_id is None:
+    if run.status != "success":
         raise HTTPException(400, "採用判定できるのは完了した学習ジョブのみです")
     if run.decision != "pending":
         raise HTTPException(400, "この学習ジョブはすでに判定済みです")
-    model = (
-        db.query(MlModel).filter(MlModel.id == run.result_model_id).one_or_none()
-    )
-    if model is None:
+    # モデルを消すと外部キー（ON DELETE SET NULL）で参照が空になる。以前は「完了した学習ジョブのみ」と誤って断っていた。
+    if run.result_model_id is None:
         raise HTTPException(400, "成果物のモデルが削除されているため判定できません")
+    model = db.query(MlModel).filter(MlModel.id == run.result_model_id).one()
     if payload.decision == "adopt":
         activate(db, model)
         run.decision = "adopted"
