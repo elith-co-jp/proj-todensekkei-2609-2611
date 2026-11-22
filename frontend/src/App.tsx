@@ -41,9 +41,7 @@ export default function App() {
   const [desktopMode, setDesktopMode] = useState(false)
   const [shutdownPending, setShutdownPending] = useState(false)
   const [desktopTerminated, setDesktopTerminated] = useState(false)
-  const [desktopNavigation, setDesktopNavigation] = useState(() =>
-    typeof window === 'undefined' ? true : window.matchMedia('(min-width: 1024px)').matches,
-  )
+  const [desktopNavigation, setDesktopNavigation] = useState(() => window.matchMedia('(min-width: 1024px)').matches)
   const mobileNavigationRef = useRef<HTMLElement | null>(null)
   const heartbeatTimerRef = useRef<number | null>(null)
 
@@ -78,8 +76,8 @@ export default function App() {
     }
   }, [])
   const closeMobileNavigation = useCallback(() => setMobileNavOpen(false), [])
+  // 終了中はボタンを押せない（disabled）ので、二重に送らない
   const shutdownDesktop = useCallback(async () => {
-    if (shutdownPending) return
     const confirmed = window.confirm('TodenYOLO を終了します。保存済みであることを確認してください。')
     if (!confirmed) return
     setShutdownPending(true)
@@ -92,7 +90,7 @@ export default function App() {
       setShutdownPending(false)
       window.alert(caught instanceof Error ? caught.message : String(caught))
     }
-  }, [shutdownPending, stopHeartbeat])
+  }, [stopHeartbeat])
   const mobileNavigationModalOpen = mobileNavOpen && !desktopNavigation
 
   useModalFocus({

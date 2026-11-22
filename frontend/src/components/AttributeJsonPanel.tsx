@@ -5,7 +5,7 @@ import { api } from '../api/client'
 import type { AttributeImportReport } from '../types'
 
 /** 記号・配線の属性を、オブジェクト ID と 1 対 1 の JSON で書き出し・取り込む（DD-0010）。 */
-export function AttributeJsonPanel({ projectIds }: { projectIds: number[] }) {
+export function AttributeJsonPanel({ projectIds, selected = true }: { projectIds: number[]; selected?: boolean }) {
   const fileRef = useRef<HTMLInputElement | null>(null)
   const [report, setReport] = useState<AttributeImportReport | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -33,7 +33,7 @@ export function AttributeJsonPanel({ projectIds }: { projectIds: number[] }) {
     : []
 
   return (
-    <section className="card mb-5 overflow-hidden" aria-label="属性 JSON">
+    <section className="card overflow-hidden" aria-label="属性 JSON">
       <div className="card-head">
         <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-sky-50 text-sky-700">
           <Braces size={17} />
@@ -47,7 +47,11 @@ export function AttributeJsonPanel({ projectIds }: { projectIds: number[] }) {
         <p className="text-[12px] leading-6 text-slate-600">
           記号と配線の 1 つ 1 つを、オブジェクト ID（例: ER21216/SYM-0001、ER21216/W-0003）と属性（メーカー・型式・長さなど）の組で並べた JSON です。
           入力用は、まだ値の無い標準の項目も空欄（null）で並べます。編集して取り込むと、載っているオブジェクトの属性をその内容で置き換えます。
-          {projectIds.length ? ` 対象: 選んだ ${projectIds.length} 枚。` : ' 対象: 図面がありません。'}
+          {!projectIds.length
+            ? ' 対象: 図面がありません。'
+            : selected
+              ? ` 対象: 選んだ ${projectIds.length} 枚。`
+              : ` 対象: 全 ${projectIds.length} 枚（図面を選んでいないため）。`}
         </p>
         <div className="flex flex-wrap gap-2">
           <button type="button" className="btn" disabled={busy || !projectIds.length}

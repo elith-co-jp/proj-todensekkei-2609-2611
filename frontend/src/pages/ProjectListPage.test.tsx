@@ -233,7 +233,7 @@ describe('ProjectListPage', () => {
         results: [
           { project_id: 1, project_name: '図面1', detections: 2, wire_count: 3 },
           { project_id: 2, project_name: '図面2', detections: 1, wire_count: 1, warnings: ['ラベルの読み取り'] },
-        ] as AnalysisJob['results'],
+        ] as unknown as AnalysisJob['results'],
       }))
       const loadsBefore = apiMocks.listProjects.mock.calls.length
       await act(() => vi.advanceTimersByTimeAsync(1000))

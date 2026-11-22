@@ -58,3 +58,18 @@ def test_circuit_timeline_contract(client):
     assert timeline.status_code == 200, timeline.text
     _check("circuit-summary-timer.json", summary.json())
     _check("circuit-timeline.json", timeline.json())
+
+
+def test_every_frontend_api_path_exists():
+    """frontend/src/api/client.ts の呼び先の URL が、すべてサーバに実在する（打ち間違い・消した API を呼ばない）。"""
+    import re
+
+    from main import app
+
+    source = (FIXTURES.parents[1] / "api" / "client.ts").read_text(encoding="utf-8")
+    # /api/projects${q ? ...} のような、パスの後ろに付ける問い合わせは除く
+    paths = {re.sub(r"\$\{[^}]+\}", "X", re.sub(r"(?<!/)\$\{.*$", "", m)) for m in re.findall(r"[`'](/api/(?:[^`'?$]|\$\{[^}]*\})*)", source)}
+    assert len(paths) > 50
+    routes = [r for r in app.routes if getattr(r, "path", "").startswith("/api/")]
+    missing = [p for p in sorted(paths) if not any(r.path_regex.match(p.replace("X", "1")) for r in routes)]
+    assert missing == []

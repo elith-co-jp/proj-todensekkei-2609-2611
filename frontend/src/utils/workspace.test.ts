@@ -205,3 +205,58 @@ describe('project draft persistence', () => {
     expect(hasVolatileProjectSave('meta', 53)).toBe(false)
   })
 })
+
+describe('退避の読み出しの異常系', () => {
+  const isAny = (value: unknown): value is unknown => value !== undefined
+
+  function memoryStorage(seed: Record<string, string> = {}): Storage {
+    const data = new Map(Object.entries(seed))
+    return {
+      get length() { return data.size },
+      clear: () => data.clear(),
+      getItem: (k: string) => data.get(k) ?? null,
+      key: (i: number) => [...data.keys()][i] ?? null,
+      removeItem: (k: string) => void data.delete(k),
+      setItem: (k: string, v: string) => void data.set(k, v),
+    }
+  }
+
+  it('文字列にできない中身（BigInt）の退避は読まない', () => {
+    const storage = memoryStorage()
+    persistProjectSave('annotations', { projectId: 61, key: '1', payload: 1n }, storage)
+    expect(loadPersistedProjectSave('annotations', 61, isAny, storage)).toBeNull()
+  })
+
+  it('壊れた退避は消し、消すのも拒まれたら黙って null を返す', () => {
+    const key = 'seq-annotator:project-draft:annotations:62'
+    const storage = memoryStorage({ [key]: '{壊れた JSON' })
+    expect(loadPersistedProjectSave('annotations', 62, isAny, storage)).toBeNull()
+    expect(storage.getItem(key)).toBeNull()
+
+    const refusing = memoryStorage({ [key]: '{壊れた JSON' })
+    refusing.removeItem = () => {
+      throw new Error('SecurityError')
+    }
+    expect(loadPersistedProjectSave('annotations', 62, isAny, refusing)).toBeNull()
+  })
+
+  it('空のキューからは null を取り出す', () => {
+    expect(takeNextProjectSave(new Map())).toBeNull()
+  })
+
+  it('ページを開き直したら、sessionStorage の退避を読み戻す', () => {
+    const save = createProjectScopedSave(64, { b: 2 })
+    const storage = memoryStorage({ 'seq-annotator:project-draft:annotations:64': JSON.stringify(save) })
+    expect(loadPersistedProjectSave('annotations', 64, isAny, storage)).toEqual(save)
+  })
+
+  it('sessionStorage が使えない環境では、画面のメモリだけに退避する', () => {
+    // このテストは node で動く（window が無い）。window.sessionStorage を読むと例外になる環境と同じ
+    const save = createProjectScopedSave(63, { a: 1 })
+    expect(persistProjectSave('meta', save)).toBe(false)
+    expect(hasVolatileProjectSave('meta', 63)).toBe(true)
+    expect(loadPersistedProjectSave('meta', 63, isAny)).toEqual(save)
+    clearPersistedProjectSave('meta', 63)
+    expect(loadPersistedProjectSave('meta', 63, isAny)).toBeNull()
+  })
+})

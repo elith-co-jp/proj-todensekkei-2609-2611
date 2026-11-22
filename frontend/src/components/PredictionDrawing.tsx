@@ -26,16 +26,16 @@ export default function PredictionDrawing({
   const [view, setView] = useState<View>({ x: 0, y: 0, scale: 1 })
 
   const fit = useCallback(() => {
-    const rect = viewport.current?.getBoundingClientRect()
-    if (!rect || !rect.width || !rect.height) return
+    // fit は描いたあと（effect・ResizeObserver・ボタン）からしか呼ばないので、viewport は必ずある
+    const rect = viewport.current!.getBoundingClientRect()
+    if (!rect.width || !rect.height) return
     const scale = Math.max(0.01, Math.min((rect.width - 32) / width, (rect.height - 32) / height))
     setView({ scale, x: (rect.width - width * scale) / 2, y: (rect.height - height * scale) / 2 })
   }, [width, height])
 
   useEffect(() => {
     fit()
-    const element = viewport.current
-    if (!element) return
+    const element = viewport.current!
     const observer = new ResizeObserver(fit)
     observer.observe(element)
     return () => observer.disconnect()
@@ -50,8 +50,7 @@ export default function PredictionDrawing({
   }, [])
 
   useEffect(() => {
-    const element = viewport.current
-    if (!element) return
+    const element = viewport.current!
     const wheel = (event: WheelEvent) => {
       event.preventDefault()
       const rect = element.getBoundingClientRect()
@@ -62,8 +61,8 @@ export default function PredictionDrawing({
   }, [zoomAt])
 
   const zoomCenter = (factor: number) => {
-    const rect = viewport.current?.getBoundingClientRect()
-    if (rect) zoomAt(factor, rect.width / 2, rect.height / 2)
+    const rect = viewport.current!.getBoundingClientRect()
+    zoomAt(factor, rect.width / 2, rect.height / 2)
   }
   const imageScaleX = width / (structure?.image_size.width || width)
   const imageScaleY = height / (structure?.image_size.height || height)
