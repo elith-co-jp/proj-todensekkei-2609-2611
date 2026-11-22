@@ -415,3 +415,11 @@ def annotation_table_rows(db: Session, project_ids: list[int], drawing_set: str 
 
     circuit, pages = _circuit(db, project_ids)
     return annotation_table.export_rows(pages, circuit, drawing_set=drawing_set)
+
+
+def device_index(db: Session, project_ids: list[int]) -> dict[str, Any]:
+    """器具ごとのコイルと接点の相互参照、電線番号の一覧（DD-0044）。"""
+    from services import device_index as di
+
+    circuit, pages = _circuit(db, project_ids)
+    return di.build_index(pages, circuit)

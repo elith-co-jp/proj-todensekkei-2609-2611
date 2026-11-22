@@ -19,6 +19,7 @@ import {
   Route,
   Search,
   ShieldCheck,
+  Tags,
   Timer,
   ToggleRight,
   X,
@@ -27,11 +28,14 @@ import {
 import { api } from '../api/client'
 import type { CircuitResult, CircuitSummary, ProjectRow } from '../types'
 import ConsistencyPanel from './circuit/ConsistencyPanel'
+import DevicePanel from './circuit/DevicePanel'
+import type { LocateTarget } from './circuit/DevicePanel'
 import EditPanel from './circuit/EditPanel'
 import TimelinePanel from './circuit/TimelinePanel'
 import TracePanel from './circuit/TracePanel'
 import WhatIfPanel from './circuit/WhatIfPanel'
 import DrawingViewer from './circuit/DrawingViewer'
+import type { ViewerFocus } from './circuit/DrawingViewer'
 import DrawingSetBar from './circuit/DrawingSetBar'
 
 const ENGINE_LABEL = { ngspice: 'ngspice で計算', builtin: '内蔵ソルバで計算（ngspice 未導入）' }
@@ -96,6 +100,9 @@ export default function CircuitPage() {
   const [result, setResult] = useState<CircuitResult | null>(null)
   const [inputs, setInputs] = useState<Record<string, boolean>>({})
   const [page, setPage] = useState<number | null>(null)
+  // 機器索引などから選んだ記号（そのページを開き、記号を中心に拡大して枠を点滅させる）
+  const [focus, setFocus] = useState<(ViewerFocus & { projectId: number }) | null>(null)
+  const drawingRef = useRef<HTMLElement | null>(null)
   const [tab, setTab] = useState('operate')
   const [panelOpen, setPanelOpen] = useState(true)
   const [fullscreen, setFullscreen] = useState(false)
@@ -177,6 +184,12 @@ export default function CircuitPage() {
 
   const overlay = result?.overlay.find((o) => o.project_id === page)
   const row = rows.find((r) => r.id === page)
+  const locate = (target: LocateTarget) => {
+    setPage(target.project_id)
+    setFocus({ projectId: target.project_id, cx: target.cx, cy: target.cy, w: target.w, h: target.h, label: target.label, key: Date.now() })
+    // パネルが図面の下にある幅では、図面が見える位置まで動かす
+    if (!wide) drawingRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'start' })
+  }
   const step = summary ? 2 : selected.length ? 1 : 0
   const energizedCount = summary ? summary.coils.filter((c) => result?.coil_states[c.device]?.energized).length : 0
   const onCount = Object.values(inputs).filter(Boolean).length
@@ -264,6 +277,13 @@ export default function CircuitPage() {
               </section>
             </div>
           ),
+        },
+        {
+          key: 'devices',
+          label: '機器',
+          caption: '器具番号・電線番号で探し、コイルと接点がどのページのどこにあるかを見る。',
+          icon: Tags,
+          render: () => <DevicePanel projectIds={projectIds} onLocate={locate} />,
         },
         {
           key: 'trace',
@@ -573,6 +593,7 @@ export default function CircuitPage() {
       {choosing && selector}
 
       <section
+        ref={drawingRef}
         aria-label="図面上の結果"
         className={
           fullscreen
@@ -592,6 +613,7 @@ export default function CircuitPage() {
             onToggleInput={toggle}
             disabled={busy}
             insets={insets}
+            focus={focus && focus.projectId === row.id ? focus : null}
           >
             <div data-overlay-ui className="absolute left-3 top-3 flex flex-col gap-2" style={{ maxWidth: `calc(100% - ${Math.max(insets.right, 64) + 24}px)` }}>
               <div className="flex flex-wrap items-center gap-1.5 rounded-xl border border-white/70 bg-white/90 p-1.5 shadow-lg shadow-slate-900/10 backdrop-blur">

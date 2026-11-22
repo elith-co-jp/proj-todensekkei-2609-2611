@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -24,6 +24,7 @@ from services.circuit_service import (
     circuit_timeline,
     circuit_what_if,
     consistency_check,
+    device_index,
     edit_apply,
     edit_context,
     edit_history,
@@ -357,3 +358,28 @@ def edit_undo_api(change_set_id: int, payload: UndoRequest | None = None, db: Se
         raise HTTPException(409, str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(404, str(exc)) from exc
+
+
+XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+
+@router.post("/devices")
+def devices(payload: ConsistencyRequest, db: Session = Depends(get_db)):
+    """機器索引（DD-0044）: 器具ごとのコイルと接点の場所（ページ・位置）、a / b 接点の数、要確認、電線番号の一覧。"""
+    try:
+        return device_index(db, payload.project_ids)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@router.get("/devices.xlsx")
+def devices_xlsx(project_ids: str = Query(pattern=r"^\d+(,\d+)*$"), db: Session = Depends(get_db)):
+    """機器索引の Excel（機器一覧・接点の場所・電線番号・要確認の 4 シート）。"""
+    from services import device_index as di
+
+    try:
+        index = device_index(db, [int(x) for x in project_ids.split(",")])
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return Response(di.to_xlsx(index), media_type=XLSX,
+                    headers={"Content-Disposition": 'attachment; filename="device_index.xlsx"'})

@@ -38,6 +38,7 @@ import type {
   SymbolClass,
   StructureResult,
   TrainingRun,
+  DeviceIndex,
 } from '../types'
 
 import { DEFAULT_DETECTION_CONF } from './defaults'
@@ -385,6 +386,16 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ project_ids: projectIds }),
     }, 'circuit_code.py'),
+
+  deviceIndex: (projectIds: number[]) =>
+    req<DeviceIndex>('/api/circuit/devices', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ project_ids: projectIds }),
+    }),
+
+  downloadDeviceIndex: (projectIds: number[]) =>
+    download(`/api/circuit/devices.xlsx?project_ids=${projectIds.join(',')}`, {}, 'device_index.xlsx'),
 
   traceTargets: (projectIds: number[]) =>
     req<TraceTargets>('/api/circuit/trace/targets', {
