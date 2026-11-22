@@ -171,8 +171,8 @@ def _saved_pages(client, pages, sheets):
     from tests.test_circuit_api import _save
 
     ids = []
-    for page, sheet in zip(pages, sheets, strict=True):
-        pid = _save(client, page)
+    for drawing, sheet in zip(pages, sheets, strict=True):
+        pid = _save(client, drawing)
         meta = client.get(f"/api/projects/{pid}").json()
         assert client.put(f"/api/projects/{pid}/meta", json={"name": meta["name"], "sheet_no": sheet}).status_code == 200
         ids.append(pid)
