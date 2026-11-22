@@ -243,9 +243,7 @@ def factor(terms: list[frozenset[Literal]]) -> dict[str, Any]:
     rest = [t - common for t in terms]
     parts = [_lit(d, k) for d, k in sorted(common)]
     if any(not t for t in rest):
-        tail = None  # くくり出した残りのどれかが空 → 残りは常に成立
-    elif len(rest) == 1:
-        parts += [_lit(d, k) for d, k in sorted(rest[0])]
+        # くくり出した残りのどれかが空 → 残りは常に成立。枝が 1 本なら残りは必ず空なので、ここで終わる。
         tail = None
     else:
         counts = Counter(x for t in rest for x in t)
@@ -253,12 +251,11 @@ def factor(terms: list[frozenset[Literal]]) -> dict[str, Any]:
         if n == 1:
             tail = {"op": "or", "args": [_and([_lit(d, k) for d, k in sorted(t)]) for t in sorted(rest, key=sorted)]}
         else:
+            # pick を含まない枝は必ずある（全部の枝にあれば common に入って rest から消えている）。
             with_x = [t - {pick} for t in rest if pick in t]
             without = [t for t in rest if pick not in t]
-            args = [_and([_lit(*pick), factor(with_x)])]
-            if without:
-                args.append(factor(without))
-            tail = args[0] if len(args) == 1 else {"op": "or", "args": _flatten("or", args)}
+            args = [_and([_lit(*pick), factor(with_x)]), factor(without)]
+            tail = {"op": "or", "args": _flatten("or", args)}
     if tail is not None:
         parts.append(tail)
     return _and(parts)
