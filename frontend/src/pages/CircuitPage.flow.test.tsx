@@ -244,7 +244,7 @@ describe('CircuitPage（画面の流れ）', () => {
     // 場所へ移ってもスクロールしない（パネルは図面の上）
     Element.prototype.scrollIntoView = vi.fn()
     fireEvent.click(view.getByRole('tab', { name: '機器' }))
-    act(() => panels.onLocate!({ project_id: 7, cx: 0.5, cy: 0.5, w: 0.1, h: 0.1 }))
+    act(() => panels.onLocate!({ project_id: 7, cx: 0.5, cy: 0.5, w: 0.1, h: 0.1, label: 'X1' }))
     expect(Element.prototype.scrollIntoView).not.toHaveBeenCalled()
 
     // 画面幅が狭くなったら下に並べる
