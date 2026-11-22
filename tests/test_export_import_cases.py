@@ -48,9 +48,11 @@ def test_zip_limits(monkeypatch):
         with pytest.raises(ValueError, match="展開後のサイズ"):
             ex.safe_members(zf)
     monkeypatch.undo()
-    with zipfile.ZipFile(io.BytesIO(_zip({"zeros.bin": bytes(11 * 1024**2)}))) as zf:
-        with pytest.raises(ValueError, match="ZIP 爆弾"):
-            ex.safe_members(zf)
+    with (
+        zipfile.ZipFile(io.BytesIO(_zip({"zeros.bin": bytes(11 * 1024**2)}))) as zf,
+        pytest.raises(ValueError, match="ZIP 爆弾"),
+    ):
+        ex.safe_members(zf)
 
 
 def test_bundle_with_new_classes_images_by_name_and_dangling_wires(client):
