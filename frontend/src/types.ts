@@ -710,3 +710,72 @@ export type DeviceIndex = {
   wire_numbers: WireNumberEntry[]
   counts: { relays: number; inputs: number; loads: number; contacts: number; wire_numbers: number; notes: number }
 }
+
+/** 論理図（DD-0045）: 出力のコイルから辿った AND・OR・NOT・タイマー・キープリレーの図 */
+export interface LogicSignal {
+  id: string
+  kind: 'input' | 'power' | 'logic' | 'timer' | 'latch'
+  devices: string[]
+  name: string
+  ref_name: string
+  letter: string | null
+  output: boolean
+  default: boolean
+  text?: string
+  set_text?: string
+  reset_text?: string
+  timer?: { mode: 'on_delay' | 'off_delay'; delay_s: number }
+  source?: string
+  source_label?: string
+  note?: string
+}
+
+export interface LogicBlock {
+  signal: string
+  letter: string | null
+  name: string
+  kind: LogicSignal['kind']
+  output: boolean
+  devices: string[]
+  text: string
+}
+
+export interface LogicInput {
+  signal: string
+  name: string
+  devices: string[]
+  default: boolean
+  kind: 'input' | 'power'
+  source: string
+  source_label: string
+}
+
+export interface LogicDiagramView {
+  title: string
+  outputs: string[]
+  signals: LogicSignal[]
+  blocks: LogicBlock[]
+  inputs: LogicInput[]
+  diagnostics: { kind: string; message: string; device?: string }[]
+  svg: string
+  formulas: string
+  values: Record<string, boolean>
+  warnings: string[]
+  candidates: { device: string; default: boolean }[]
+  default_targets: string[]
+}
+
+export interface LogicTimelineEvent {
+  at: number
+  inputs: Record<string, boolean>
+  label?: string
+}
+
+export interface LogicSimulation {
+  timeline: { t: number; label: string; values: Record<string, boolean>; changes: { signal: string; name: string; before: boolean | null; after: boolean }[]; warnings: string[] }[]
+  waves: Record<string, [number, boolean][]>
+  end: number
+  names: Record<string, string>
+  letters: Record<string, string>
+  compare?: { agree: boolean; checked: number; mismatches: { t: number; device: string; circuit: boolean; logic: boolean }[] }
+}

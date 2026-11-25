@@ -423,3 +423,63 @@ def device_index(db: Session, project_ids: list[int]) -> dict[str, Any]:
 
     circuit, pages = _circuit(db, project_ids)
     return di.build_index(pages, circuit)
+
+
+# ------------------------------------------------------------------ 論理図（DD-0045）
+
+
+def _logic(db: Session, project_ids: list[int], targets: list[str] | None, names: dict[str, str] | None,
+           external: list[str] | None, merge: bool) -> tuple[Circuit, list[dict[str, Any]], Any]:
+    from services import logic_diagram
+
+    circuit, pages = _circuit(db, project_ids)
+    title = "、".join(p.get("sheet_no") or p["name"] for p in pages)
+    diagram = logic_diagram.build_logic(circuit, pages, targets=targets or None, external=external or [], names=names,
+                                        merge=merge, title=title)
+    return circuit, pages, diagram
+
+
+def logic_diagram_view(db: Session, project_ids: list[int], *, targets: list[str] | None = None,
+                       names: dict[str, str] | None = None, external: list[str] | None = None, merge: bool = True,
+                       inputs: dict[str, bool] | None = None, energized: dict[str, bool] | None = None,
+                       values: dict[str, bool] | None = None) -> dict[str, Any]:
+    """出力のコイルから辿った論理図（AND・OR・NOT・タイマー・キープリレー）と SVG。
+
+    values（信号 ID → ON/OFF。シミュレーションの記録から）か inputs で状態を決め、成立している線をピンクで示す。"""
+    from services import circuit_trace, logic_diagram
+
+    circuit, _pages_, diagram = _logic(db, project_ids, targets, names, external, merge)
+    if values is None:
+        solved = logic_diagram.solve(diagram, inputs or {}, energized or {})
+        values = solved["values"]
+        warnings = solved["warnings"]
+    else:
+        warnings = []
+    tracer = circuit_trace.Tracer(circuit)
+    return {**diagram.json(), "svg": logic_diagram.render_svg(diagram, values), "formulas": logic_diagram.formulas_text(diagram),
+            "values": values, "warnings": warnings,
+            "candidates": [{"device": d, "default": d in diagram.outputs or any(diagram.alias.get(d, ("",))[0] == o
+                                                                                  for o in diagram.outputs)}
+                           for d in sorted(circuit.coils)],
+            "default_targets": logic_diagram.default_targets(circuit, tracer)}
+
+
+def logic_simulate(db: Session, project_ids: list[int], events: list[dict[str, Any]], *, targets: list[str] | None = None,
+                   names: dict[str, str] | None = None, external: list[str] | None = None, merge: bool = True,
+                   inputs: dict[str, bool] | None = None, energized: dict[str, bool] | None = None,
+                   until: float | None = None, compare: bool = False) -> dict[str, Any]:
+    """論理図の上で時刻つきの操作を解く。compare なら同じ操作を回路の計算でも解き、リレーごとに照合する。"""
+    from services import logic_diagram
+
+    circuit, _pages_, diagram = _logic(db, project_ids, targets, names, external, merge)
+    out = logic_diagram.simulate(diagram, events, inputs=inputs, energized=energized, until=until)
+    out["names"] = {sig: diagram.ref_label(sig) for sig in diagram.signals}
+    out["letters"] = {sig: s.letter for sig, s in diagram.signals.items() if s.letter}
+    if compare:
+        out["compare"] = logic_diagram.compare_with_circuit(circuit, diagram, events, inputs=inputs, energized=energized,
+                                                            until=until)
+    return out
+
+
+def logic_svg(db: Session, project_ids: list[int], **kwargs: Any) -> str:
+    return logic_diagram_view(db, project_ids, **kwargs)["svg"]

@@ -39,6 +39,9 @@ import type {
   StructureResult,
   TrainingRun,
   DeviceIndex,
+  LogicDiagramView,
+  LogicSimulation,
+  LogicTimelineEvent,
 } from '../types'
 
 import { DEFAULT_DETECTION_CONF } from './defaults'
@@ -346,6 +349,27 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ project_ids: projectIds, events, delays, until }),
     }),
+
+  logicDiagram: (projectIds: number[], options: { targets?: string[]; inputs?: Record<string, boolean>; values?: Record<string, boolean> } = {}) =>
+    req<LogicDiagramView>('/api/circuit/logic', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ project_ids: projectIds, targets: options.targets ?? [], inputs: options.inputs ?? {}, values: options.values ?? null }),
+    }),
+
+  logicSimulate: (projectIds: number[], events: LogicTimelineEvent[], options: { targets?: string[]; inputs?: Record<string, boolean>; until?: number } = {}) =>
+    req<LogicSimulation>('/api/circuit/logic/simulate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ project_ids: projectIds, events, targets: options.targets ?? [], inputs: options.inputs ?? {}, until: options.until, compare: true }),
+    }),
+
+  downloadLogicSvg: (projectIds: number[], options: { targets?: string[]; values?: Record<string, boolean> } = {}) =>
+    download('/api/circuit/logic/svg', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ project_ids: projectIds, targets: options.targets ?? [], values: options.values ?? null }),
+    }, 'logic.svg'),
 
   circuitImpact: (projectIds: number[], device: string) =>
     req<CircuitImpact>('/api/circuit/impact', {

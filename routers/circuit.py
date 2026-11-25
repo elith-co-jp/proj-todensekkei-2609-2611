@@ -30,6 +30,8 @@ from services.circuit_service import (
     edit_history,
     edit_preview,
     edit_undo,
+    logic_diagram_view,
+    logic_simulate,
     run_simulation,
     trace,
     trace_targets,
@@ -110,6 +112,26 @@ class TraceRequest(BaseModel):
     states: dict[str, bool | None] = {}
     energized: dict[str, bool] = {}
     external: list[str] = []
+
+
+class LogicRequest(BaseModel):
+    """論理図（DD-0045）。targets: 出力にするコイルの器具番号（省略時は接点が外へ出ていく最後のリレー）。
+    names: 器具番号 → 図の名前。merge: 同じ条件のリレー・接点 1 つのリレーをまとめる。values: 信号 → ON/OFF（線の色）。"""
+
+    project_ids: list[int] = Field(min_length=1)
+    targets: list[str] = []
+    names: dict[str, str] = {}
+    external: list[str] = []
+    merge: bool = True
+    inputs: dict[str, bool] = {}
+    energized: dict[str, bool] = {}
+    values: dict[str, bool] | None = None
+
+
+class LogicSimulateRequest(LogicRequest):
+    events: list[TimelineEvent] = Field(default=[], max_length=100)
+    until: float | None = Field(default=None, ge=0, le=86400)
+    compare: bool = False
 
 
 class ConsistencyRequest(BaseModel):
@@ -383,3 +405,37 @@ def devices_xlsx(project_ids: str = Query(pattern=r"^\d+(,\d+)*$"), db: Session 
         raise HTTPException(400, str(exc)) from exc
     return Response(di.to_xlsx(index), media_type=XLSX,
                     headers={"Content-Disposition": 'attachment; filename="device_index.xlsx"'})
+
+
+def _logic_kwargs(payload: LogicRequest) -> dict[str, Any]:
+    return {"targets": payload.targets or None, "names": payload.names, "external": payload.external,
+            "merge": payload.merge, "inputs": payload.inputs, "energized": payload.energized}
+
+
+@router.post("/logic")
+def logic_api(payload: LogicRequest, db: Session = Depends(get_db)):
+    """出力のコイルから辿った論理図（直列 AND・並列 OR・b 接点 NOT・タイマー・キープリレー）と SVG（DD-0045）。"""
+    try:
+        return logic_diagram_view(db, payload.project_ids, **_logic_kwargs(payload), values=payload.values)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@router.post("/logic/svg")
+def logic_svg_api(payload: LogicRequest, db: Session = Depends(get_db)):
+    """論理図の SVG のダウンロード（DD-0045）。"""
+    try:
+        svg = logic_diagram_view(db, payload.project_ids, **_logic_kwargs(payload), values=payload.values)["svg"]
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return Response(svg, media_type="image/svg+xml", headers={"Content-Disposition": 'attachment; filename="logic.svg"'})
+
+
+@router.post("/logic/simulate")
+def logic_simulate_api(payload: LogicSimulateRequest, db: Session = Depends(get_db)):
+    """論理図の上で時刻つきの操作を解く（タイマー・キープリレーを含む）。compare で回路の計算と照合（DD-0045）。"""
+    try:
+        return logic_simulate(db, payload.project_ids, [e.model_dump() for e in payload.events], **_logic_kwargs(payload),
+                              until=payload.until, compare=payload.compare)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
