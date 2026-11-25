@@ -8,6 +8,8 @@ type Overlay = CircuitResult['overlay'][number]
 type View = { scale: number; x: number; y: number }
 /** 図面の上で目立たせる記号の枠（図面の幅・高さに対する割合）。key が変わるたびにそこへ移動する */
 export type ViewerFocus = { cx: number; cy: number; w: number; h: number; key: number; label?: string }
+/** 図面の上に枠で示す記号（論理図で選んだ信号のコイル・接点など）。拡大はしない */
+export type ViewerMark = { cx: number; cy: number; w: number; h: number; label?: string; tone?: 'coil' | 'contact' }
 
 const MIN_SCALE = 0.05
 const MAX_SCALE = 8
@@ -30,6 +32,7 @@ export default function DrawingViewer({
   disabled,
   insets,
   focus,
+  marks,
   children,
 }: {
   imageUrl: string
@@ -45,6 +48,7 @@ export default function DrawingViewer({
   insets?: { top?: number; right?: number; bottom?: number; left?: number }
   /** 機器索引などから選んだ記号。そこを中心に拡大し、枠を点滅させる */
   focus?: ViewerFocus | null
+  marks?: ViewerMark[]
   children?: ReactNode
 }) {
   const stageRef = useRef<HTMLDivElement | null>(null)
@@ -244,6 +248,22 @@ export default function DrawingViewer({
                 </rect>
               )
             })}
+          </svg>
+        )}
+        {marks && marks.length > 0 && (
+          <svg className="pointer-events-none absolute inset-0 h-full w-full" viewBox="0 0 1 1" preserveAspectRatio="none" aria-label="論理図で選んだ信号の位置">
+            {marks.map((m, i) => (
+              <rect
+                key={i}
+                data-testid="viewer-mark"
+                x={m.cx - m.w / 2 - 0.004} y={m.cy - m.h / 2 - 0.004}
+                width={m.w + 0.008} height={m.h + 0.008}
+                fill={m.tone === 'coil' ? '#8b5cf6' : '#f59e0b'} fillOpacity={0.12}
+                stroke={m.tone === 'coil' ? '#7c3aed' : '#d97706'} strokeWidth={3} vectorEffect="non-scaling-stroke"
+              >
+                {m.label && <title>{m.label}</title>}
+              </rect>
+            ))}
           </svg>
         )}
         {focus && (

@@ -92,6 +92,9 @@ class Circuit:
     sheet_links: list[dict[str, Any]] = field(default_factory=list)
     # タイマー（DD-0033）: 器具番号 → {"mode": "on_delay" / "off_delay", "delay_s": 秒}。コイルの属性から。
     timers: dict[str, dict[str, Any]] = field(default_factory=dict)
+    # キープリレー（ラッチ。DD-0045）: 器具番号 → {"set": [セットコイルの素子名], "reset": [リセットコイルの素子名],
+    # "priority": "reset" / "set"（両方が励磁したときどちらを採るか）}。コイルの属性 latch_coil から。
+    latches: dict[str, dict[str, Any]] = field(default_factory=dict)
 
 
 def device_key(label: str | None) -> str | None:
@@ -116,7 +119,14 @@ def _bus_side(text: str | None) -> str | None:
         return f"{SUPPLY}_{compact[3:]}" if compact[3:] else SUPPLY
     if compact.startswith("NER"):
         return GROUND
+    # 東電設計様の展開接続図の母線「PEV110500」「NEV110500」（DC110V の制御母線。DD-0045）。
+    m = _BUS_PEV.match(compact)
+    if m:
+        return (f"{SUPPLY}_{m.group(2)}" if m.group(2) else SUPPLY) if m.group(1) == "P" else GROUND
     return None
+
+
+_BUS_PEV = re.compile(r"^([PN])EV(\d*)$")
 
 
 _SPICE_UNSAFE = re.compile(r"[^0-9A-Za-z_]")
@@ -147,6 +157,29 @@ def timer_setting(attributes: dict[str, Any]) -> dict[str, Any] | None:
     except (TypeError, ValueError):
         delay = None
     return {"mode": mode, "delay_s": delay if delay is not None and delay >= 0 else None}
+
+
+LATCH_ROLES = {
+    "set": "set", "s": "set", "o": "set", "operate": "set", "on": "set", "セット": "set", "動作": "set",
+    "reset": "reset", "r": "reset", "off": "reset", "リセット": "reset", "復帰": "reset",
+}
+
+
+def latch_role(attributes: dict[str, Any]) -> str | None:
+    """コイルの属性 latch_coil（set / reset、O / R、セット / リセット）から、キープリレーのどちらのコイルか。"""
+    raw = str(attributes.get("latch_coil") or "").strip()
+    return LATCH_ROLES.get(raw.lower()) or LATCH_ROLES.get(raw)
+
+
+def latch_next(latch: dict[str, Any], set_on: bool, reset_on: bool, before: bool) -> bool:
+    """キープリレーの次の状態。セットで動作、リセットで復帰、どちらも無ければ前の状態を保つ。"""
+    if set_on and reset_on:
+        return latch.get("priority", "reset") == "set"
+    if set_on:
+        return True
+    if reset_on:
+        return False
+    return before
 
 
 def _load_resistance(attributes: dict[str, Any]) -> float:
@@ -355,6 +388,7 @@ def build_circuit(pages: list[dict[str, Any]], bus_texts: dict[int, list[dict[st
     coils: dict[str, list[Element]] = defaultdict(list)
     # 照合用の形 → 最初に見つけたコイルの器具番号。O と 0 だけが違うコイル・接点を同じリレーにする。
     timers: dict[str, dict[str, Any]] = {}
+    latches: dict[str, dict[str, Any]] = {}
     coil_by_canonical: dict[str, str] = {}
     for (pid, ref), s in sorted(symbols.items(), key=lambda kv: (kv[0][0], kv[0][1])):
         cls, terms = s["class_key"], s.get("terminals") or []
@@ -393,6 +427,12 @@ def build_circuit(pages: list[dict[str, Any]], bus_texts: dict[int, list[dict[st
                                         "message": f"タイマー {element.device} の時間（delay_s）が無いため 0 秒として扱います"})
                     timer["delay_s"] = 0.0
                 timers[element.device] = timer
+            role = latch_role(s.get("attributes") or {})
+            if role is not None:
+                latch = latches.setdefault(element.device, {"set": [], "reset": [], "priority": "reset"})
+                latch[role].append(element.name)
+                if str((s.get("attributes") or {}).get("latch_priority") or "").strip().lower() in ("set", "セット"):
+                    latch["priority"] = "set"
 
     # ラベルに機器名が無い接点（「33LA」）は、器具番号が同じコイルが 1 つだけなら、そのコイルで開閉する。
     by_number: dict[str, list[str]] = defaultdict(list)
@@ -421,7 +461,15 @@ def build_circuit(pages: list[dict[str, Any]], bus_texts: dict[int, list[dict[st
             diagnostics.append({"kind": "coil_without_contacts", "device": dev,
                                 "message": f"コイル {dev} の接点が選んだ図面にありません"})
     nodes = sorted(set(node_of.values()))
-    return Circuit(elements, nodes, node_of, dict(coils), sorted(inputs), diagnostics, wires, links, timers)
+    for dev, latch in latches.items():
+        if not latch["set"] or not latch["reset"]:
+            diagnostics.append({"kind": "latch_incomplete", "device": dev,
+                                "message": f"キープリレー {dev} のセット・リセットのコイルの片方がありません"})
+        others = [e.name for e in coils[dev] if e.name not in latch["set"] + latch["reset"]]
+        if others:
+            diagnostics.append({"kind": "latch_role_missing", "device": dev,
+                                "message": f"キープリレー {dev} に、セットかリセットか決まっていないコイルがあります（属性 latch_coil）"})
+    return Circuit(elements, nodes, node_of, dict(coils), sorted(inputs), diagnostics, wires, links, timers, latches)
 
 
 def netlist(circuit: Circuit, closed: dict[str, bool], title: str = "TodenYOLO circuit") -> str:
@@ -666,6 +714,13 @@ def simulate(circuit: Circuit, inputs: dict[str, bool], energized: dict[str, boo
         coil_v = {dev: max(abs(_volt(volts, e.a) - _volt(volts, e.b)) for e in es) for dev, es in circuit.coils.items()}
         new = {dev: bool(forced_devices[dev]) if dev in forced_devices else coil_v[dev] >= PICKUP_RATIO * SUPPLY_V
                for dev in circuit.coils}
+        # キープリレー: セットのコイルで動作、リセットのコイルで復帰し、どちらも励磁していなければ前の状態を保つ（DD-0045）。
+        for dev, latch in circuit.latches.items():
+            if dev in forced_devices or dev not in circuit.coils:
+                continue
+            picked = {e.name for e in circuit.coils[dev]
+                      if abs(_volt(volts, e.a) - _volt(volts, e.b)) >= PICKUP_RATIO * SUPPLY_V}
+            new[dev] = latch_next(latch, bool(picked & set(latch["set"])), bool(picked & set(latch["reset"])), state[dev])
         if new == state:
             break
         if new in seen:

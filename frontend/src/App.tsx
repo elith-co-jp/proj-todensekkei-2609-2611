@@ -11,6 +11,7 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   Power,
+  Presentation,
   X,
 } from 'lucide-react'
 
@@ -23,6 +24,7 @@ import { isEditorPath } from './utils/workspace'
 const NAVIGATION = [
   { to: '/', label: '図面一覧', caption: '登録・編集', icon: FileStack, end: true, tone: 'bg-blue-100 text-blue-700', group: 'work' },
   { to: '/circuit', label: '回路検証', caption: '動作・波及・変更', icon: CircuitBoard, end: false, tone: 'bg-rose-100 text-rose-700', group: 'work' },
+  { to: '/demo', label: 'デモ', caption: '図面と論理図', icon: Presentation, end: false, tone: 'bg-violet-100 text-violet-700', group: 'work' },
   { to: '/export', label: '入出力', caption: '書き出し・読み込み', icon: ArrowDownUp, end: false, tone: 'bg-emerald-100 text-emerald-700', group: 'work' },
   { to: '/ml', label: 'AI 学習', caption: '推論・学習・モデル', icon: BrainCircuit, end: false, tone: 'bg-violet-100 text-violet-700', group: 'admin' },
   { to: '/guide', label: 'ヘルプ', caption: '手順・ショートカット', icon: CircleHelp, end: false, tone: 'bg-amber-100 text-amber-700', group: 'admin' },
