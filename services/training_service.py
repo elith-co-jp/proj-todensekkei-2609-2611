@@ -26,6 +26,7 @@ from sqlalchemy.orm import Session
 from database import TRAINING_DIR, SessionLocal
 from models import AnnotationProject, MlModel, TrainingRun, utc_now_naive
 from runtime import is_frozen, resource_base
+from services import lifecycles
 from services.annotation_service import classes_ordered, image_path
 from services.export_service import build_label_content, project_image_stem
 from services.inference_service import ultralytics_available
@@ -77,6 +78,27 @@ def running_training(db: Session) -> TrainingRun | None:
         .order_by(TrainingRun.id.desc())
         .first()
     )
+
+
+def recover_interrupted_runs() -> int:
+    """起動時に、前回のプロセスで学習中のまま残った学習ジョブを失敗にする。直した件数を返す。
+
+    学習はプロセスの中のスレッドで回す（EXE・1 台のサーバの運用）。アプリを止めるとスレッドも消えるが、
+    行は running のまま残り、running_training() が「別の学習が実行中です」と言い続けて次の学習を始められなかった。
+    """
+    db = SessionLocal()
+    try:
+        stale = db.query(TrainingRun).filter(TrainingRun.status == "running").all()
+        for run in stale:
+            lifecycles.training_run(run).interrupt()
+            run.finished_at = run.finished_at or utc_now_naive()
+            note = "[interrupted] アプリの終了・再起動で学習が中断されました。もう一度学習を実行してください。"
+            run.log_tail = ((run.log_tail or "") + "\n" + note).strip()[-_LOG_TAIL_LIMIT:]
+        if stale:
+            db.commit()
+        return len(stale)
+    finally:
+        db.close()
 
 
 def resolve_training_projects(
@@ -427,13 +449,13 @@ def _run_training(run_id: int, holdout: bool) -> None:
         has_active = db.query(MlModel).filter(MlModel.is_active.is_(True)).count() > 0
         if has_active or baseline_metrics is not None:
             # 新旧の比較結果を見てから採用を決められるよう、採用待ちで止める
-            run.decision = "pending"
+            lifecycles.training_decision(run).await_review()
         else:
             # 比較対象を用意できない初回のみ従来どおり自動適用
             activate(db, model)
-            run.decision = "adopted"
+            lifecycles.training_decision(run).auto_adopt()
 
-        run.status = "success"
+        lifecycles.training_run(run).succeed()
         run.result_model_id = model.id
         run.metrics_json = model.metrics_json
         run.finished_at = utc_now_naive()
@@ -443,7 +465,7 @@ def _run_training(run_id: int, holdout: bool) -> None:
         db.rollback()
         run = db.query(TrainingRun).filter(TrainingRun.id == run_id).one_or_none()
         if run is not None:
-            run.status = "failed"
+            lifecycles.fail_if_running(lifecycles.training_run(run))
             run.finished_at = utc_now_naive()
             tail = (log_buf.getvalue() or "") + "\n" + traceback.format_exc()
             run.log_tail = tail[-_LOG_TAIL_LIMIT:]

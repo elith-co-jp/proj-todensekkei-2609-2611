@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from models import utc_now_naive
+from services import lifecycles
 from services.jst import iso_jst
 
 # 新しいものから残すジョブの数
@@ -28,7 +29,7 @@ class AnalysisJob:
     project_ids: list[int]
     conf: float
     connector_conf: float | None
-    status: str = "running"            # running / done / cancelled / failed
+    status: str = "running"            # running / done / cancelled / failed（移り方は lifecycles.AnalysisJobLifecycle）
     done: int = 0
     current: str | None = None
     results: list[dict[str, Any]] = field(default_factory=list)
@@ -73,7 +74,7 @@ def cancel(job_id: int) -> AnalysisJob | None:
     with _lock:
         job = _jobs.get(job_id)
         if job is not None and job.status == "running":
-            job.cancel_requested = True
+            lifecycles.analysis_job(job).request_cancel()
         return job
 
 
@@ -91,10 +92,10 @@ def start(project_ids: list[int], conf: float, connector_conf: float | None,
         try:
             work(job)
             with _lock:
-                job.status = "cancelled" if job.cancel_requested and job.done < len(job.project_ids) else "done"
+                lifecycles.analysis_job(job).finish()  # 中止の印があり残りがあれば中止、無ければ完了
         except Exception as exc:  # noqa: BLE001  ジョブの失敗は状態で返す（スレッドの外へは出さない）
             with _lock:
-                job.status = "failed"
+                lifecycles.analysis_job(job).fail()
                 job.error = str(exc) if isinstance(exc, RuntimeError) else "解析に失敗しました"
         finally:
             with _lock:

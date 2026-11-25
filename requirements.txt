@@ -4,6 +4,8 @@ uvicorn[standard]>=0.30
 sqlalchemy>=2.0
 pydantic>=2.7
 python-multipart>=0.0.9
+# 学習ジョブ・解析ジョブ・変更セットの状態の移り方を宣言で書く（DD-0047）。純 Python・依存なし
+python-statemachine>=3.2,<4
 pillow>=10.3
 pyyaml>=6.0
 openpyxl>=3.1

@@ -17,6 +17,7 @@ from services import (
     circuit_timing,
     circuit_whatif,
     consistency,
+    lifecycles,
     vector_pdf,
 )
 from services.annotation_service import load_pages
@@ -360,7 +361,7 @@ def edit_undo(db: Session, change_set_id: int, *, force: bool = False) -> dict[s
     if current != row.after_hash and not force:
         raise EditConflict("この変更の後に図面が変わっています。後の変更を先に取り消すか、force で戻してください")
     _save_pages(db, json.loads(row.before_json))
-    row.status = "undone"
+    lifecycles.change_set(row).undo()
     row.undone_at = utc_now_naive()
     db.commit()
     return _change_set_out(row)
