@@ -45,6 +45,7 @@ function demo(on: boolean): DemoView {
       inputs: [{ signal: IN, name: '主制御装置選択指令', devices: [IN], default: false, kind: 'input', source: 'input', source_label: '外部入力' }],
       svg: `<svg><g data-sig="${OUT}"><rect width="10" height="10"/><text>起動指令</text></g></svg>`,
       values: { [IN]: on, [OUT]: on },
+      deps: { [OUT]: [{ signal: IN, negated: false, port: '' }], [IN]: [] },
       locations: {
         [OUT]: [
           { project_id: 1, page: 'EV31031', symbol_ref: 'SYM-0009', device: OUT, role: 'coil', contact: null, negated: false, label: '6X', cx: 0.5, cy: 0.5, w: 0.02, h: 0.02 },
@@ -76,8 +77,26 @@ describe('DemoPage', () => {
     // 論理図の出力の箱を押すと、図面の上のコイルと接点に枠が付く
     fireEvent.click(ui.getByTestId('demo-logic').querySelector('rect')!)
     await waitFor(() => expect(ui.getAllByTestId('viewer-mark')).toHaveLength(2))
-    expect(ui.getByText(/6X P33P22 のコイル/)).toBeTruthy()
     expect(ui.getByTestId('demo-logic').querySelector('g[data-selected]')).toBeTruthy()
+    // 経路: 注目点 6X から原因（上流）へ辿ると、入力 A が出る
+    const path = ui.getByRole('list', { name: '経路' })
+    expect(path.textContent).toContain('起動指令')
+    expect(path.textContent).toContain('A: 主制御装置選択')
+    // 順に辿る: 図面の 1 か所ずつ（6X のコイル → 接点）
+    fireEvent.click(ui.getByRole('tab', { name: '順に辿る' }))
+    expect(await ui.findByText(/1 \/ 1/)).toBeTruthy()
+    expect(ui.getByText(/6X P33P22 のコイル/)).toBeTruthy()
+    await waitFor(() => expect(ui.getAllByTestId('viewer-mark')).toHaveLength(1))
+    // 影響（下流）へ向きを変えると、6X の接点も見る
+    fireEvent.change(ui.getByRole('combobox', { name: '辿る向き' }), { target: { value: 'down' } })
+    expect(await ui.findByText(/1 \/ 2/)).toBeTruthy()
+    fireEvent.click(ui.getByRole('button', { name: '次へ' }))
+    expect(await ui.findByText(/6X P33P22 の接点（a 接点）/)).toBeTruthy()
+    // 一覧: 図面の切り抜きつき
+    fireEvent.click(ui.getByRole('tab', { name: '一覧' }))
+    expect(ui.getByRole('table', { name: '関係する箇所の一覧' }).querySelectorAll('tbody tr')).toHaveLength(2)
+    expect(ui.getAllByRole('img', { name: /6X P33P22 の図面/ })).toHaveLength(2)
+    fireEvent.click(ui.getByRole('tab', { name: '経路' }))
 
     // スイッチを入れると、前の励磁状態を渡して解き直す
     fireEvent.click(ui.getByRole('button', { name: /主制御装置選択指令 OFF/ }))

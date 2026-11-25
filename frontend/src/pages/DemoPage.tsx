@@ -6,6 +6,9 @@ import { api } from '../api/client'
 import type { AnalysisJob, DemoLocation, DemoView, ProjectRow } from '../types'
 import DrawingViewer from './circuit/DrawingViewer'
 import type { ViewerFocus, ViewerMark } from './circuit/DrawingViewer'
+import FocusTrace from './demo/FocusTrace'
+import type { TraceMode } from './demo/FocusTrace'
+import type { TraceNode } from './demo/trace'
 
 /** `#/demo?ids=1,2` で図面を選んだ状態で開く */
 function idsFromQuery(value: string | null): number[] {
@@ -35,6 +38,8 @@ const LOGIC_CSS = `
 .demo-logic g[data-sig] { cursor: pointer; }
 .demo-logic g[data-sig]:hover polygon, .demo-logic g[data-sig]:hover rect, .demo-logic g[data-sig]:hover circle { stroke: #7c3aed; }
 .demo-logic g[data-selected] polygon, .demo-logic g[data-selected] rect, .demo-logic g[data-selected] circle { stroke: #7c3aed; stroke-width: 3; }
+.demo-logic[data-focus] g[data-block]:not([data-path]) { opacity: 0.18; }
+.demo-logic[data-focus] g[data-sig][data-path]:not([data-selected]) polygon, .demo-logic[data-focus] g[data-sig][data-path]:not([data-selected]) circle { stroke: #a78bfa; stroke-width: 2; }
 `
 
 /**
@@ -53,6 +58,8 @@ export default function DemoPage() {
   const [page, setPage] = useState<number | null>(null)
   const [selected, setSelected] = useState<string | null>(null)
   const [focus, setFocus] = useState<(ViewerFocus & { projectId: number }) | null>(null)
+  // 注目点から辿った経路と見方（論理図を薄くする・図面に印を付けるのに使う）
+  const [trace, setTrace] = useState<{ path: TraceNode[]; mode: TraceMode; step: DemoLocation | null } | null>(null)
   const [busy, setBusy] = useState(false)
   const [job, setJob] = useState<AnalysisJob | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -118,8 +125,11 @@ export default function DemoPage() {
   const reset = () => void run(opened, {}, {})
   const defaultOf = (key: string) => logic?.inputs.find((i) => i.signal === key)?.default ?? false
   const inputDevices = useMemo(() => new Set(sim?.inputs.map((i) => i.device) ?? []), [sim])
-  const locations: DemoLocation[] = (selected && logic?.locations[selected]) || []
-  const signal = selected ? logic?.signals.find((s) => s.id === selected) : undefined
+  const pathSignals = useMemo(() => new Set(selected && trace ? trace.path.map((n) => n.signal) : selected ? [selected] : []), [trace, selected])
+  // 図面の印: 順に辿るときは今の 1 か所、ほかは経路に入る信号のコイル・接点すべて
+  const locations: DemoLocation[] = trace?.mode === 'tour'
+    ? (trace.step ? [trace.step] : [])
+    : [...pathSignals].flatMap((sig) => logic?.locations[sig] ?? [])
 
   const choose = (sig: string) => {
     setSelected(sig)
@@ -141,15 +151,19 @@ export default function DemoPage() {
     if (sig) setSelected(sig)
   }
 
-  // 選んだ信号のまとまりに印を付ける（SVG は文字列なので、描いたあとに属性で示す）
+  // 選んだ信号と経路に印を付け、経路の外のまとまりを薄くする（SVG は文字列なので、描いたあとに属性で示す）
   useEffect(() => {
     const root = logicRef.current
     if (!root) return
+    const mark = (g: Element, name: string, on: boolean) => (on ? g.setAttribute(name, '') : g.removeAttribute(name))
     root.querySelectorAll('g[data-sig]').forEach((g) => {
-      if (g.getAttribute('data-sig') === selected) g.setAttribute('data-selected', '')
-      else g.removeAttribute('data-selected')
+      const sig = g.getAttribute('data-sig') ?? ''
+      mark(g, 'data-selected', sig === selected)
+      mark(g, 'data-path', pathSignals.has(sig))
     })
-  }, [selected, logic?.svg])
+    root.querySelectorAll('g[data-block]').forEach((g) => mark(g, 'data-path', pathSignals.has(g.getAttribute('data-block') ?? '')))
+    mark(root, 'data-focus', Boolean(selected && trace && trace.path.length > 1))
+  }, [selected, logic?.svg, pathSignals, trace])
 
   const onLogicClick = (event: React.MouseEvent<HTMLDivElement>) => {
     const g = (event.target as Element).closest('g[data-sig]')
@@ -305,7 +319,7 @@ export default function DemoPage() {
                     onClick={onLogicClick} data-testid="demo-logic"
                     // 図はサーバが作る SVG（器具番号・名前は HTML に逃がしてある）
                     dangerouslySetInnerHTML={{ __html: logic.svg }} />
-                  <div className="grid gap-3 lg:grid-cols-2">
+                  <div className="grid gap-3 lg:grid-cols-[2fr_3fr]">
                     <div>
                       <div className="mb-1 flex items-center gap-2 text-xs font-black text-slate-800">
                         スイッチ
@@ -325,28 +339,27 @@ export default function DemoPage() {
                         })}
                       </div>
                     </div>
-                    <div aria-label="図面の上の位置">
-                      <div className="mb-1 flex items-center gap-1 text-xs font-black text-slate-800"><MapPin size={12} /> 図面の上の位置</div>
-                      {signal ? (
-                        <>
-                          <p className="text-[11px] text-slate-600">
-                            <span className="font-bold">{signal.letter ? `${signal.letter}: ` : ''}{signal.ref_name || signal.name}</span>
-                            {' '}は今 <span className={logic.values[signal.id] ? 'font-bold text-pink-700' : 'font-bold text-slate-500'}>{logic.values[signal.id] ? 'ON' : 'OFF'}</span>
-                          </p>
-                          <ul className="thin-scroll mt-1 max-h-48 space-y-1 overflow-auto">
-                            {locations.map((l) => (
-                              <li key={`${l.project_id}-${l.symbol_ref}`}>
-                                <button type="button" className="w-full rounded-md px-2 py-1 text-left text-[11px] hover:bg-violet-50" onClick={() => jump(l)}>
-                                  <span className={`mr-1 inline-block h-2 w-2 rounded-sm ${l.role === 'coil' ? 'bg-violet-500' : 'bg-amber-500'}`} />
-                                  {l.page} · {l.device} の{ROLE_LABEL[l.role]}{l.contact ? `（${l.contact} 接点）` : ''}
-                                </button>
-                              </li>
-                            ))}
-                            {locations.length === 0 && <li className="text-[11px] text-slate-500">選んだ図面の中には見つかりません。</li>}
-                          </ul>
-                        </>
+                    <div className="thin-scroll max-h-[24rem] overflow-auto pr-1">
+                      {selected && logic.signals.some((x) => x.id === selected) ? (
+                        <FocusTrace
+                          focus={selected}
+                          signals={logic.signals}
+                          deps={logic.deps}
+                          locations={logic.locations}
+                          values={logic.values}
+                          pages={view.pages}
+                          onJump={jump}
+                          onChoose={choose}
+                          onPath={(path, mode, step) => setTrace({ path, mode, step })}
+                        />
                       ) : (
-                        <p className="text-[11px] text-slate-500">論理図の部品（六角形・丸の英字・出力の箱）を押してください。</p>
+                        <>
+                          <div className="mb-1 flex items-center gap-1 text-xs font-black text-slate-800"><MapPin size={12} /> 注目点から辿る</div>
+                          <p className="text-[11px] leading-5 text-slate-500">
+                            論理図の部品（六角形・丸の英字・出力の箱）を押すと、そこを注目点にして原因（上流）・影響（下流）へ辿り、
+                            図面の上でどう書かれているかを確かめられます。見方は「経路」「順に辿る」「一覧」から選べます。
+                          </p>
+                        </>
                       )}
                     </div>
                   </div>

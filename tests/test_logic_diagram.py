@@ -351,3 +351,17 @@ def test_demo_api_builds_from_ai_analysis_only(client):
     empty = create_project(client, "empty.png", 100, 100)
     none = client.post("/api/circuit/demo", json={"project_ids": [empty]}).json()
     assert none["ready"] is False and none["pages"][0]["source"] == "none"
+
+
+def test_deps_trace_upstream_from_6x(drawing):
+    """注目点（6X）から上流へ辿ると、紙芝居と同じく A・B・C と起動指令の入力に行き着く（DD-0047）。"""
+    _data, _circuit, d = drawing
+    deps = d.deps()
+    up = {x["signal"] for x in deps[X6]}
+    letters = {d.signals[s].letter for s in up if d.signals[s].letter}
+    assert {"A", "B", "C"} <= letters and START_DDC in up and START_SAM in up
+    assert any(x["negated"] for x in deps[X6] if d.signals[x["signal"]].letter == "C")
+    lk = deps[d.resolve(LK)[0]]
+    assert {x["port"] for x in lk} == {"S", "R"}
+    svg = L.render_svg(d)
+    assert svg.count("<g data-block=") == len(d.block_order()) and svg.count("<g") == svg.count("</g>")

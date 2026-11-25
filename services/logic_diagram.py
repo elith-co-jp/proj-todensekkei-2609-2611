@@ -123,6 +123,16 @@ def _refs(tree: dict[str, Any] | None) -> list[str]:
     return [r for a in tree.get("args", []) for r in _refs(a)]
 
 
+def _leaves(tree: dict[str, Any] | None, neg: bool = False) -> list[tuple[str, bool]]:
+    """式の葉の信号と、その信号が反転して効くか（NOT の数の偶奇）。"""
+    if not tree or "const" in tree:
+        return []
+    if "sig" in tree:
+        return [(tree["sig"], neg != bool(tree.get("neg")))]
+    flip = neg != (tree["op"] == "not")
+    return [x for a in tree["args"] for x in _leaves(a, flip)]
+
+
 def _map_tree(tree: dict[str, Any], resolve) -> dict[str, Any]:
     """circuit_trace の式（葉は {"lit", "kind"}）→ 信号の式（葉は {"sig", "neg"}）。resolve(器具番号) → (信号 ID, 反転)。"""
     if "const" in tree:
@@ -198,7 +208,22 @@ class LogicDiagram:
                 "blocks": blocks, "alias": {k: {"signal": v[0], "negated": v[1]} for k, v in sorted(self.alias.items())},
                 "inputs": [{"signal": s.id, "name": self.label(s.id), "devices": s.devices, "default": s.default,
                             "kind": s.kind, "source": s.source, "source_label": s.source_label} for s in self.inputs()],
-                "diagnostics": self.diagnostics}
+                "diagnostics": self.diagnostics, "deps": self.deps()}
+
+    def deps(self) -> dict[str, list[dict[str, Any]]]:
+        """信号 → その信号を決める信号（上流）。port はキープリレーの S / R（ほかは空）。注目点から辿るのに使う（DD-0047）。"""
+        out: dict[str, list[dict[str, Any]]] = {}
+        for sig, s in self.signals.items():
+            parts = [("S", s.set_expr), ("R", s.reset_expr)] if s.kind == "latch" else [("", s.expr)]
+            seen: set[tuple[str, bool, str]] = set()
+            rows = []
+            for port, tree in parts:
+                for ref, neg in _leaves(tree):
+                    if (ref, neg, port) not in seen and ref != sig:
+                        seen.add((ref, neg, port))
+                        rows.append({"signal": ref, "negated": neg, "port": port})
+            out[sig] = rows
+        return out
 
     def block_order(self) -> list[str]:
         """図に描くまとまりの順: コネクタ（A, B, …）の定義、続いて出力。"""
@@ -963,6 +988,7 @@ def render_svg(d: LogicDiagram, values: dict[str, bool] | None = None, *, title:
         y += 28
     for sig in d.block_order():
         s = d.signals[sig]
+        svg.add(f'<g data-block="{html.escape(sig, quote=True)}">')
         if s.kind in ("input", "power"):
             # 入力に英字を付けた（何か所でも使う）: 六角形 → コネクタ
             on = None if values is None else bool(values.get(sig))
@@ -980,6 +1006,7 @@ def render_svg(d: LogicDiagram, values: dict[str, bool] | None = None, *, title:
             y += 40 + BLOCK_GAP
             svg.add(f'<line x1="{PAD}" y1="{y - BLOCK_GAP / 2:.1f}" x2="{right:.1f}" y2="{y - BLOCK_GAP / 2:.1f}" '
                     f'stroke="#ddd" stroke-width="1" stroke-dasharray="2 4"/>')
+            svg.add("</g>")
             continue
         if s.kind == "latch":
             parts = [(_block_tree(d, s.set_expr, inline), "S"), (_block_tree(d, s.reset_expr, inline), "R")]
@@ -1071,6 +1098,7 @@ def render_svg(d: LogicDiagram, values: dict[str, bool] | None = None, *, title:
         y += max(block_h, 40) + BLOCK_GAP
         svg.add(f'<line x1="{PAD}" y1="{y - BLOCK_GAP / 2:.1f}" x2="{right:.1f}" y2="{y - BLOCK_GAP / 2:.1f}" '
                 f'stroke="#ddd" stroke-width="1" stroke-dasharray="2 4"/>')
+        svg.add("</g>")
     height = y + PAD
     width = max(width, 480)
     head = (f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {math.ceil(width)} {math.ceil(height)}" '
