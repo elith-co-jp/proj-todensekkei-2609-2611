@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import argparse
+import inspect
 import sys
 from pathlib import Path
 
@@ -30,7 +31,7 @@ HEADER = """# 状態の移り方（状態図）
 def render() -> str:
     parts = [HEADER]
     for name, machine in MACHINES.items():
-        doc = (machine.__doc__ or "").strip()
+        doc = inspect.cleandoc(machine.__doc__ or "")  # 3.13 未満は docstring の字下げが残る
         values = "、".join(f"`{s.value!r}`（{s.name}）" if s.value == "" else f"`{s.value}`（{s.name}）"
                           for s in machine.states)
         parts.append(f"## {name}（`{machine.__name__}`）\n\n{doc}\n\n値: {values}\n\n"
