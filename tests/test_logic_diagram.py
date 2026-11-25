@@ -285,3 +285,69 @@ def test_logic_api(client):
     assert svg.status_code == 200 and svg.headers["content-type"].startswith("image/svg+xml")
     bad = client.post("/api/circuit/logic", json={"project_ids": ids, "targets": ["ZZZ"]})
     assert bad.status_code == 400
+
+
+# ------------------------------------------------------------------------------------------- デモ（DD-0046）
+
+
+def _as_structure(page, texts):
+    """登録した記号・端子・配線を、AI 解析（構造解析）の結果の形にする。PDF を登録して解析しただけの状態の代わり。"""
+    W, H = page["image_width"], page["image_height"]
+    symbols = []
+    for i, s in enumerate(page["symbols"]):
+        x0, y0 = (s["cx"] - s["w"] / 2) * W, (s["cy"] - s["h"] / 2) * H
+        symbols.append({
+            "id": f"symbol_{i:04d}", "class_name": s["class_key"], "label": s["label"], "confidence": 0.9,
+            "bbox": {"x0": x0, "y0": y0, "x1": x0 + s["w"] * W, "y1": y0 + s["h"] * H},
+            "terminals": [{"ref": t["ref"], "name": t["name"], "point": [t["tx"] * W, t["ty"] * H]} for t in s["terminals"]],
+        })
+    sid = {s["ref"]: f"symbol_{i:04d}" for i, s in enumerate(page["symbols"])}
+    connections = [{"type": "wire", "from": {"symbol_id": sid[c["from_symbol_ref"]], "terminal_ref": c["from_terminal_ref"]},
+                    "to": {"symbol_id": sid[c["to_symbol_ref"]], "terminal_ref": c["to_terminal_ref"]}}
+                   for c in page["connections"]]
+    return {"status": "completed", "image_size": {"width": W, "height": H}, "symbols": symbols, "wires": [],
+            "texts": texts, "from_to": {"connection_count": len(connections), "connections": connections}, "warnings": []}
+
+
+def test_demo_api_links_logic_to_drawing(client):
+    data = kamishibai.build()
+    ids = [_save(client, p) for p in data["pages"]]
+    off = client.post("/api/circuit/demo", json={"project_ids": ids}).json()
+    assert off["ready"] and {p["source"] for p in off["pages"]} == {"annotation"}
+    logic = off["logic"]
+    assert logic["values"][X6] is False and f'data-sig="{X6}"' in logic["svg"] and f'data-sig="{A_IN}"' in logic["svg"]
+    # 出力の 6X はコイルと接点、入力は図面の上の接点の位置を持つ
+    roles = {loc["role"] for loc in logic["locations"][X6]}
+    assert roles == {"coil", "contact"}
+    assert all(0 < loc["cx"] < 1 and loc["project_id"] in ids for loc in logic["locations"][A_IN])
+    # スイッチを入れると、図面の上の線と論理図の線が同じように通じる
+    on = client.post("/api/circuit/demo", json={"project_ids": ids, "inputs": {A_IN: True, START_DDC: True}}).json()
+    assert on["simulation"]["coil_states"][X6]["energized"] is True and on["logic"]["values"][X6] is True
+    live = sum(w["live"] for o in on["simulation"]["overlay"] for w in o["wires"])
+    assert live > sum(w["live"] for o in off["simulation"]["overlay"] for w in o["wires"])
+
+
+def test_demo_api_builds_from_ai_analysis_only(client):
+    """記号を登録していない図面（PDF を登録して AI 解析しただけ）でも、AI の結果で回路と論理図を組んで動かせる。"""
+    import json
+
+    import database
+    from models import StructurePrediction
+
+    data = kamishibai.build()
+    ids = []
+    for page in data["pages"]:
+        pid = create_project(client, f"{page['sheet_no']}.png", page["image_width"], page["image_height"])
+        with database.SessionLocal() as db:
+            db.add(StructurePrediction(project_id=pid, payload_json=json.dumps(_as_structure(page, data["bus_texts"][page["id"]]))))
+            db.commit()
+        ids.append(pid)
+    body = client.post("/api/circuit/demo", json={"project_ids": ids, "inputs": {A_IN: True, START_DDC: True}}).json()
+    assert body["ready"] and {p["source"] for p in body["pages"]} == {"ai"}
+    assert all(p["symbols"] > 0 for p in body["pages"])
+    assert body["simulation"]["coil_states"][X6]["energized"] is True
+    assert body["logic"]["values"][X6] is True and body["logic"]["locations"][X6]
+    # 何も無い図面は、AI 解析を促す
+    empty = create_project(client, "empty.png", 100, 100)
+    none = client.post("/api/circuit/demo", json={"project_ids": [empty]}).json()
+    assert none["ready"] is False and none["pages"][0]["source"] == "none"

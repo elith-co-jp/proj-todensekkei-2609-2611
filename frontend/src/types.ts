@@ -779,3 +779,39 @@ export interface LogicSimulation {
   letters: Record<string, string>
   compare?: { agree: boolean; checked: number; mismatches: { t: number; device: string; circuit: boolean; logic: boolean }[] }
 }
+
+// ---------- 図面と論理図のデモ（DD-0046） ----------
+/** 論理図の信号の、図面の上の位置（コイル・接点）。座標は図面の幅・高さに対する割合 */
+export interface DemoLocation {
+  project_id: number
+  page: string | null
+  symbol_ref: string
+  device: string
+  role: 'coil' | 'contact'
+  contact: 'a' | 'b' | null
+  negated: boolean
+  label: string | null
+  cx: number
+  cy: number
+  w: number
+  h: number
+}
+
+export interface DemoPage {
+  id: number
+  name: string
+  /** annotation=人が登録した内容 / ai=AI 解析の結果だけで組んだ / none=どちらも無い */
+  source: 'annotation' | 'ai' | 'none'
+  symbols: number
+  connections: number
+  width: number
+  height: number
+}
+
+export interface DemoView {
+  pages: DemoPage[]
+  ready: boolean
+  message?: string
+  simulation?: CircuitResult
+  logic?: (Omit<LogicDiagramView, 'formulas' | 'candidates' | 'default_targets'> & { locations: Record<string, DemoLocation[]> }) | null
+}

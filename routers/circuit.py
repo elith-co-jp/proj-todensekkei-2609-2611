@@ -47,6 +47,10 @@ class CircuitRequest(BaseModel):
     energized: dict[str, bool] = {}
 
 
+class DemoRequest(CircuitRequest):
+    targets: list[str] = []
+
+
 class SymbolRef(BaseModel):
     project_id: int
     symbol_ref: str
@@ -437,5 +441,17 @@ def logic_simulate_api(payload: LogicSimulateRequest, db: Session = Depends(get_
     try:
         return logic_simulate(db, payload.project_ids, [e.model_dump() for e in payload.events], **_logic_kwargs(payload),
                               until=payload.until, compare=payload.compare)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@router.post("/demo")
+def demo_api(payload: DemoRequest, db: Session = Depends(get_db)):
+    """図面と論理図を並べて動かすデモ（DD-0046）。記号の無い図面は AI 解析の結果で組む。"""
+    from services.circuit_service import demo_view
+
+    try:
+        return demo_view(db, payload.project_ids, inputs=payload.inputs, energized=payload.energized,
+                         targets=payload.targets or None)
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc

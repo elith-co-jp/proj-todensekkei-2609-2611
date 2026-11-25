@@ -41,6 +41,7 @@ import type {
   DeviceIndex,
   LogicDiagramView,
   LogicSimulation,
+  DemoView,
   LogicTimelineEvent,
 } from '../types'
 
@@ -362,6 +363,13 @@ export const api = {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ project_ids: projectIds, events, targets: options.targets ?? [], inputs: options.inputs ?? {}, until: options.until, compare: true }),
+    }),
+
+  demoView: (projectIds: number[], inputs: Record<string, boolean> = {}, energized: Record<string, boolean> = {}) =>
+    req<DemoView>('/api/circuit/demo', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ project_ids: projectIds, inputs, energized }),
     }),
 
   downloadLogicSvg: (projectIds: number[], options: { targets?: string[]; values?: Record<string, boolean> } = {}) =>

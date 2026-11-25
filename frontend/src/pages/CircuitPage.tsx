@@ -15,6 +15,7 @@ import {
   PanelRightOpen,
   PenLine,
   PowerOff,
+  Presentation,
   RefreshCw,
   Route,
   Search,
@@ -591,6 +592,9 @@ export default function CircuitPage() {
             <AlertTriangle size={12} /> 警告 {issueCount}
           </button>
         )}
+        <Link className="btn btn-sm" to={`/demo?ids=${projectIds.join(',')}`} title="図面と論理図を並べて動かす">
+          <Presentation size={12} /> デモ表示
+        </Link>
         <button type="button" className="btn btn-sm" onClick={() => setChoosing((v) => !v)} title="対象の図面を選び直す">
           <Files size={12} /> 図面選択
         </button>

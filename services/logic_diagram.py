@@ -412,7 +412,8 @@ def build_logic(circuit: Circuit, pages: list[dict[str, Any]] | None = None, *, 
                 s.name = name
                 break
         if not s.name:
-            s.name = _short(sig)
+            # 名前の無い入力は器具番号を全部出す（D001 B405 と D001 B855 のように先頭の語が同じ入力がある）
+            s.name = sig if s.kind == "input" else _short(sig)
         if s.kind in ("input", "power"):
             for dev in s.devices[1:]:
                 name = names.get(dev) or names.get(_short(dev)) or attr_names.get(dev)
@@ -789,6 +790,13 @@ class _Svg:
     def add(self, s: str) -> None:
         self.parts.append(s)
 
+    def open(self, sig: str) -> None:
+        """信号ごとのまとまり。画面ではここを選ぶと図面の上の位置を示す（DD-0046）。"""
+        self.add(f'<g data-sig="{html.escape(sig, quote=True)}">')
+
+    def close(self) -> None:
+        self.add("</g>")
+
     def line(self, x1, y1, x2, y2, *, on: bool | None = None, width: float = 1.4) -> None:
         if on:
             self.add(f'<line x1="{x1:.1f}" y1="{y1:.1f}" x2="{x2:.1f}" y2="{y2:.1f}" stroke="{HIGHLIGHT}" '
@@ -923,11 +931,13 @@ def _draw_tree(svg: _Svg, d: LogicDiagram, node: _Node, x_left: float, x_root: f
         if n.kind == "leaf":
             s = d.signals[n.sig or ""]
             on = None if values is None else bool(n.value)
+            svg.open(s.id)
             if s.letter:
                 svg.text(x_left + LEAF_W - 26, n.y, _fit(d.ref_label(s.id), LEAF_W - 40), size=11, anchor="end")
                 _connector(svg, x_left + LEAF_W - 12, n.y, s.letter, on=on)
             else:
                 _hexagon(svg, x_left, n.y, LEAF_W - 8, d.label(s.id), dashed=s.source not in ("", INPUT, "power"), on=on)
+            svg.close()
         elif n.kind == "const":
             svg.text(x_left + LEAF_W - 12, n.y, "1" if n.value else "0", size=12, anchor="end")
         for c, _ in n.children:
@@ -957,12 +967,14 @@ def render_svg(d: LogicDiagram, values: dict[str, bool] | None = None, *, title:
             # 入力に英字を付けた（何か所でも使う）: 六角形 → コネクタ
             on = None if values is None else bool(values.get(sig))
             yy = y + ROW / 2
+            svg.open(sig)
             _hexagon(svg, PAD, yy, LEAF_W - 8, d.label(sig), dashed=s.source not in ("", INPUT, "power"), on=on)
             x_end = PAD + LEAF_W + 120
             svg.line(PAD + LEAF_W - 8, yy, x_end, yy, on=on)
             _connector(svg, x_end + 10, yy, s.letter or "?", on=on)
             svg.text(x_end + 26, yy - 7, _fit(d.ref_label(sig), SINK_W - 50), size=12)
             svg.text(x_end + 26, yy + 9, _fit(" / ".join(_short(x) for x in s.devices[:4]), SINK_W - 50, 10), size=10)
+            svg.close()
             right = x_end + SINK_W
             width = max(width, right + PAD)
             y += 40 + BLOCK_GAP
@@ -1033,6 +1045,7 @@ def render_svg(d: LogicDiagram, values: dict[str, bool] | None = None, *, title:
                 out_x += 18
                 sink_note = "タイマー"
         on = None if values is None else bool(values.get(sig))
+        svg.open(sig)
         if s.output:
             bw, bh = 150, max(30, min(block_h - 8, 44))
             svg.line(out_x, out_y, out_x + 16, out_y, on=on)
@@ -1053,6 +1066,7 @@ def render_svg(d: LogicDiagram, values: dict[str, bool] | None = None, *, title:
             note = " / ".join(_short(x) for x in s.devices[:4]) + (f"（{sink_note}）" if sink_note else "")
             svg.text(out_x + 46, out_y + 9, _fit(note, SINK_W - 50, 10), size=10)
             right = out_x + SINK_W
+        svg.close()
         width = max(width, right + PAD)
         y += max(block_h, 40) + BLOCK_GAP
         svg.add(f'<line x1="{PAD}" y1="{y - BLOCK_GAP / 2:.1f}" x2="{right:.1f}" y2="{y - BLOCK_GAP / 2:.1f}" '
@@ -1063,6 +1077,31 @@ def render_svg(d: LogicDiagram, values: dict[str, bool] | None = None, *, title:
             f'width="{math.ceil(width)}" height="{math.ceil(height)}" font-family="{FONT}">'
             f'<rect width="100%" height="100%" fill="#fff"/>')
     return head + "".join(svg.parts) + "</svg>"
+
+
+def locations(circuit: Circuit, d: LogicDiagram, pages: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    """論理図の信号 → 図面の上の位置（そのリレーのコイルと接点、入力の接点）。DD-0046。
+
+    位置は図面の幅・高さに対する割合（cx, cy, w, h）。role は coil / contact、contact は a / b。"""
+    boxes = {(p["id"], s["ref"]): s for p in pages for s in p["symbols"]}
+    sheet = {p["id"]: p.get("sheet_no") or p["name"] for p in pages}
+    out: dict[str, list[dict[str, Any]]] = {}
+    for e in circuit.elements:
+        if not e.device or e.device not in d.alias or e.kind not in ("a", "b", "load"):
+            continue
+        box = boxes.get((e.project_id, e.symbol_ref))
+        if box is None:
+            continue
+        sig, neg = d.alias[e.device]
+        out.setdefault(sig, []).append({
+            "project_id": e.project_id, "page": sheet.get(e.project_id), "symbol_ref": e.symbol_ref,
+            "device": e.device, "role": "coil" if e.kind == "load" else "contact",
+            "contact": e.kind if e.kind != "load" else None, "negated": neg, "label": box.get("label"),
+            "cx": box["cx"], "cy": box["cy"], "w": box["w"], "h": box["h"],
+        })
+    for items in out.values():
+        items.sort(key=lambda x: (x["role"] != "coil", x["project_id"], x["cy"], x["cx"]))
+    return out
 
 
 def formulas_text(d: LogicDiagram) -> str:
