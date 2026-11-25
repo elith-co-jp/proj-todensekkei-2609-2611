@@ -28,10 +28,13 @@ from services.structure_service import get_structure_texts, get_structures
 LIVE_RATIO = 0.5
 
 
-def _pages(db: Session, project_ids: list[int]) -> tuple[list[dict[str, Any]], dict[int, list[dict[str, Any]]]]:
+def _pages(db: Session, project_ids: list[int], *, use_ai: bool = False
+           ) -> tuple[list[dict[str, Any]], dict[int, list[dict[str, Any]]]]:
     pages = load_pages(db, project_ids)
     if not pages:
         raise ValueError("図面を選んでください")
+    if use_ai:
+        _fill_from_ai(db, pages)
     ids = [p["id"] for p in pages]
     texts = get_structure_texts(db, ids)
     if missing := [pid for pid in ids if pid not in texts]:
@@ -42,6 +45,34 @@ def _pages(db: Session, project_ids: list[int]) -> tuple[list[dict[str, Any]], d
         for pid in missing:
             texts[pid] = _vector_texts(pid, shas.get(pid))
     return pages, {pid: texts[pid] for pid in ids}
+
+
+def _fill_from_ai(db: Session, pages: list[dict[str, Any]]) -> None:
+    """記号を 1 つも登録していない図面は、AI 解析の結果（記号・端子・配線）をそのまま使う（DD-0046）。
+
+    保存はしない。読むたびに同じ候補から同じ記号番号（SYM-0001…）で組むので、図面の上の位置も毎回同じになる。
+    各図面の source は annotation（人が登録・確認した内容）/ ai（AI 解析の結果だけ）/ none（どちらも無い）。
+    """
+    from services.ai_candidates import from_structure, plan_import
+    from services.annotation_service import classes_ordered
+
+    for p in pages:
+        p["source"] = "annotation" if p["symbols"] else "none"
+    empty = [p for p in pages if not p["symbols"]]
+    if not empty:
+        return
+    found = get_structures(db, [p["id"] for p in empty])
+    classes = classes_ordered(db)
+    keys = [c.key for c in classes]
+    label_of = {c.key: c.label for c in classes}
+    for p in empty:
+        structure = found.get(p["id"])
+        if structure is None:
+            continue
+        plan = plan_import(from_structure(structure, keys), [], [], p["image_width"], p["image_height"])
+        p["symbols"] = [{**s, "class_label": label_of.get(s["class_key"], "その他"), "attributes": {}} for s in plan.symbols]
+        p["connections"] = [{**c, "ref": f"AI-{i:04d}", "attributes": {}} for i, c in enumerate(plan.connections, start=1)]
+        p["source"] = "ai"
 
 
 def _structures(db: Session, pages: list[dict[str, Any]]) -> dict[int, Any]:
@@ -91,7 +122,11 @@ def circuit_summary(db: Session, project_ids: list[int]) -> dict[str, Any]:
 
 def run_simulation(db: Session, project_ids: list[int], inputs: dict[str, bool], energized: dict[str, bool]) -> dict[str, Any]:
     pages, texts = _pages(db, project_ids)
-    circuit = build_circuit(pages, texts)
+    return _simulation(build_circuit(pages, texts), pages, inputs, energized)
+
+
+def _simulation(circuit: Circuit, pages: list[dict[str, Any]], inputs: dict[str, bool],
+                energized: dict[str, bool]) -> dict[str, Any]:
     result = simulate(circuit, inputs, energized)
     symbols = _label_of(pages)
     terminal_pos = {(pid, s["ref"], t["ref"]): (t["tx"], t["ty"]) for (pid, _), s in symbols.items() for t in s.get("terminals") or []}
@@ -424,3 +459,111 @@ def device_index(db: Session, project_ids: list[int]) -> dict[str, Any]:
 
     circuit, pages = _circuit(db, project_ids)
     return di.build_index(pages, circuit)
+
+
+# ------------------------------------------------------------------ 論理図（DD-0045）
+
+
+def _logic(db: Session, project_ids: list[int], targets: list[str] | None, names: dict[str, str] | None,
+           external: list[str] | None, merge: bool) -> tuple[Circuit, list[dict[str, Any]], Any]:
+    from services import logic_diagram
+
+    circuit, pages = _circuit(db, project_ids)
+    title = "、".join(p.get("sheet_no") or p["name"] for p in pages)
+    diagram = logic_diagram.build_logic(circuit, pages, targets=targets or None, external=external or [], names=names,
+                                        merge=merge, title=title)
+    return circuit, pages, diagram
+
+
+def logic_diagram_view(db: Session, project_ids: list[int], *, targets: list[str] | None = None,
+                       names: dict[str, str] | None = None, external: list[str] | None = None, merge: bool = True,
+                       inputs: dict[str, bool] | None = None, energized: dict[str, bool] | None = None,
+                       values: dict[str, bool] | None = None) -> dict[str, Any]:
+    """出力のコイルから辿った論理図（AND・OR・NOT・タイマー・キープリレー）と SVG。
+
+    values（信号 ID → ON/OFF。シミュレーションの記録から）か inputs で状態を決め、成立している線をピンクで示す。"""
+    from services import circuit_trace, logic_diagram
+
+    circuit, _pages_, diagram = _logic(db, project_ids, targets, names, external, merge)
+    if values is None:
+        solved = logic_diagram.solve(diagram, inputs or {}, energized or {})
+        values = solved["values"]
+        warnings = solved["warnings"]
+    else:
+        warnings = []
+    tracer = circuit_trace.Tracer(circuit)
+    return {**diagram.json(), "svg": logic_diagram.render_svg(diagram, values), "formulas": logic_diagram.formulas_text(diagram),
+            "values": values, "warnings": warnings,
+            "candidates": [{"device": d, "default": d in diagram.outputs or any(diagram.alias.get(d, ("",))[0] == o
+                                                                                  for o in diagram.outputs)}
+                           for d in sorted(circuit.coils)],
+            "default_targets": logic_diagram.default_targets(circuit, tracer)}
+
+
+def logic_simulate(db: Session, project_ids: list[int], events: list[dict[str, Any]], *, targets: list[str] | None = None,
+                   names: dict[str, str] | None = None, external: list[str] | None = None, merge: bool = True,
+                   inputs: dict[str, bool] | None = None, energized: dict[str, bool] | None = None,
+                   until: float | None = None, compare: bool = False) -> dict[str, Any]:
+    """論理図の上で時刻つきの操作を解く。compare なら同じ操作を回路の計算でも解き、リレーごとに照合する。"""
+    from services import logic_diagram
+
+    circuit, _pages_, diagram = _logic(db, project_ids, targets, names, external, merge)
+    out = logic_diagram.simulate(diagram, events, inputs=inputs, energized=energized, until=until)
+    out["names"] = {sig: diagram.ref_label(sig) for sig in diagram.signals}
+    out["letters"] = {sig: s.letter for sig, s in diagram.signals.items() if s.letter}
+    if compare:
+        out["compare"] = logic_diagram.compare_with_circuit(circuit, diagram, events, inputs=inputs, energized=energized,
+                                                            until=until)
+    return out
+
+
+def logic_svg(db: Session, project_ids: list[int], **kwargs: Any) -> str:
+    return logic_diagram_view(db, project_ids, **kwargs)["svg"]
+
+
+# ------------------------------------------------------------------ デモ（DD-0046）
+
+
+def demo_view(db: Session, project_ids: list[int], *, inputs: dict[str, bool] | None = None,
+              energized: dict[str, bool] | None = None, targets: list[str] | None = None) -> dict[str, Any]:
+    """図面と論理図を並べて動かすデモの 1 画面分。
+
+    人が登録した記号の無い図面は AI 解析の結果で組む（PDF を登録して解析しただけで動かせる）。
+    同じ入力で回路の計算（図面の上の通電）と論理図（成立している線）を解き、論理図の信号ごとに
+    図面の上の位置（コイル・接点）を返す。"""
+    from services import logic_diagram
+
+    inputs = inputs or {}
+    energized = energized or {}
+    pages, texts = _pages(db, project_ids, use_ai=True)
+    page_info = [{"id": p["id"], "name": p.get("sheet_no") or p["name"], "source": p.get("source", "annotation"),
+                  "symbols": len(p["symbols"]), "connections": len(p["connections"]),
+                  "width": p["image_width"], "height": p["image_height"]} for p in pages]
+    if not any(p["symbols"] for p in pages):
+        return {"pages": page_info, "ready": False,
+                "message": "記号が登録されておらず、AI 解析の結果もありません。AI 解析を実行してください。"}
+    circuit = build_circuit(pages, texts)
+    sim = _simulation(circuit, pages, inputs, energized)
+    title = "、".join(p.get("sheet_no") or p["name"] for p in pages)
+    out: dict[str, Any] = {"pages": page_info, "ready": True, "simulation": sim}
+    try:
+        diagram = logic_diagram.build_logic(circuit, pages, targets=targets or None, title=title)
+    except ValueError as e:
+        return {**out, "logic": None, "message": str(e)}
+    def known(values: dict[str, bool]) -> dict[str, bool]:
+        # 論理図に描いていない（出力に関係しない）器具は除く
+        out = {}
+        for k, v in values.items():
+            try:
+                diagram.resolve(k)
+            except ValueError:
+                continue
+            out[k] = v
+        return out
+
+    energized_now = {dev: bool(st["energized"]) for dev, st in sim["coil_states"].items()}
+    solved = logic_diagram.solve(diagram, known(inputs), known(energized_now))
+    out["logic"] = {**diagram.json(), "svg": logic_diagram.render_svg(diagram, solved["values"]),
+                    "values": solved["values"], "warnings": solved["warnings"],
+                    "locations": logic_diagram.locations(circuit, diagram, pages)}
+    return out

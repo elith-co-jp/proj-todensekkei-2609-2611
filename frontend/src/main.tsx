@@ -11,6 +11,7 @@ import GuidePage from './pages/GuidePage'
 import MlOpsPage from './pages/MlOpsPage'
 import AnalysisPage from './pages/AnalysisPage'
 import CircuitPage from './pages/CircuitPage'
+import DemoPage from './pages/DemoPage'
 
 const router = createHashRouter([
   {
@@ -23,6 +24,7 @@ const router = createHashRouter([
       { path: 'export', element: <ExportPage /> },
       { path: 'ml', element: <MlOpsPage /> },
       { path: 'circuit', element: <CircuitPage /> },
+      { path: 'demo', element: <DemoPage /> },
       { path: 'guide', element: <GuidePage /> },
     ],
   },

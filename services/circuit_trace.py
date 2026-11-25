@@ -26,7 +26,7 @@ from typing import Any
 
 from analysis.text_extraction import SHEET_REF
 from services import sheet_links
-from services.circuit_model import GROUND, SUPPLY, Circuit, Element, canonical_device
+from services.circuit_model import GROUND, SUPPLY, Circuit, Element, canonical_device, latch_next
 
 ON, OFF, UNKNOWN = "成立", "不成立", "判定不能"
 SIDE_SUPPLY, SIDE_RETURN = "電源側", "戻り側"
@@ -518,6 +518,32 @@ class Tracer:
         self._cache[key] = out
         return out
 
+    def coil_condition(self, coil: Element) -> dict[str, Any]:
+        """1 つのコイル（素子）だけの成立条件。キープリレーのセット・リセットを分けて求めるのに使う（DD-0045）。"""
+        key = f"coil:{coil.name}"
+        if key not in self._cache:
+            found, truncated = branches(self.circuit, coil, limit=self.limit, adj=self._adj)
+            live = [b for b in found if not b.contradictory()]
+            tree = factor([b.literals() for b in live])
+            self._cache[key] = {"target": coil.device or coil.name, "branches": found, "tree": tree, "text": to_text(tree),
+                                "formula": to_text(tree, ascii_ops=True), "truncated": truncated,
+                                "devices": sorted({d for b in live for d, _ in b.literals()})}
+        return self._cache[key]
+
+    def latch_condition(self, device: str) -> dict[str, Any]:
+        """キープリレーのセット・リセットそれぞれの成立条件（コイルが複数なら OR）。"""
+        latch = self.circuit.latches[device]
+        by_name = {e.name: e for e in self.circuit.coils.get(device, [])}
+        out: dict[str, Any] = {"device": device, "priority": latch.get("priority", "reset")}
+        for role in ("set", "reset"):
+            conds = [self.coil_condition(by_name[n]) for n in latch[role] if n in by_name]
+            trees = [c["tree"] for c in conds]
+            tree = trees[0] if len(trees) == 1 else {"op": "or", "args": _flatten("or", trees)} if trees else {"const": False}
+            out[role] = {"tree": tree, "text": to_text(tree), "formula": to_text(tree, ascii_ops=True),
+                         "devices": sorted({d for c in conds for d in c["devices"]}),
+                         "truncated": any(c["truncated"] for c in conds)}
+        return out
+
     # 判定 -----------------------------------------------------------------------------------------
     def evaluate(self, target: str | dict[str, Any], states: dict[str, bool | None] | None = None,
                  energized: dict[str, bool] | None = None, *, max_depth: int = MAX_DEPTH) -> dict[str, Any]:
@@ -546,6 +572,20 @@ class Tracer:
                 return None, "depth"
             hits = cycle_hits[0]
             stack.append(dev)
+            if dev in self.circuit.latches:
+                # キープリレー: セット・リセットの条件と前の状態から（DD-0045）。決まらない組み合わせがあれば不明。
+                lc = self.latch_condition(dev)
+                s_on = kleene(lc["set"]["tree"], lambda d: value(d, depth + 1)[0])
+                r_on = kleene(lc["reset"]["tree"], lambda d: value(d, depth + 1)[0])
+                prev = before.get(c)
+                opts = lambda x: (x,) if x is not None else (False, True)  # noqa: E731
+                found = {latch_next(self.circuit.latches[dev], s_, r_, p_)
+                         for s_ in opts(s_on) for r_ in opts(r_on) for p_ in opts(prev)}
+                stack.pop()
+                result = (found.pop() if len(found) == 1 else None, "latch")
+                if cycle_hits[0] == hits:
+                    memo[dev] = result
+                return result
             cond = self.condition(dev)
             v = kleene(cond["tree"], lambda d: value(d, depth + 1)[0]) if cond["branches"] else None
             stack.pop()

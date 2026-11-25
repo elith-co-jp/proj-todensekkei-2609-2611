@@ -29,6 +29,7 @@ class CircuitCode:
         self.extra_nodes: list[str] = []
         self.diagnostics: list[dict[str, Any]] = []
         self.timers: dict[str, dict[str, Any]] = {}
+        self.latches: dict[str, dict[str, Any]] = {}
 
     # 素子 ---------------------------------------------------------------------------------------------
     def _add(self, ref: str, kind: str, a: str, b: str, *, source: tuple[int, str], label: str = "",
@@ -64,9 +65,15 @@ class CircuitCode:
         self.timers[device] = {"mode": mode, "delay_s": float(delay_s)}
 
     def coil(self, ref: str, a: str, b: str, *, device: str, source: tuple[int, str], label: str = "",
-             resistance: float = R_LOAD) -> Element:
-        """リレーのコイル。両端の電圧で励磁し、同じ器具番号の接点を開閉する。"""
-        return self._add(ref, "load", a, b, source=source, label=label, device=device, resistance=resistance)
+             resistance: float = R_LOAD, latch: str | None = None) -> Element:
+        """リレーのコイル。両端の電圧で励磁し、同じ器具番号の接点を開閉する。
+        latch="set" / "reset" はキープリレーのセット（動作）・リセット（復帰）のコイル（DD-0045）。"""
+        e = self._add(ref, "load", a, b, source=source, label=label, device=device, resistance=resistance)
+        if latch is not None:
+            if latch not in ("set", "reset"):
+                raise ValueError(f"キープリレーのコイル {latch} は set か reset")
+            self.latches.setdefault(device, {"set": [], "reset": [], "priority": "reset"})[latch].append(e.name)
+        return e
 
     def diode(self, ref: str, a: str, b: str, *, source: tuple[int, str], label: str = "", directed: bool = False) -> Element:
         """ダイオード。directed=True なら a がアノード、b がカソードで、逆向きには流れない。False なら両向きに流れる（DD-0037）。"""
@@ -95,7 +102,9 @@ class CircuitCode:
         inputs = sorted({e.device for e in self.elements if e.kind in ("a", "b") and e.device and e.device not in coils})
         nodes = sorted({n for e in self.elements for n in (e.a, e.b)} | set(self.extra_nodes))
         timers = {dev: dict(cfg) for dev, cfg in self.timers.items() if dev in coils}
-        return Circuit(list(self.elements), nodes, {}, coils, inputs, list(self.diagnostics), timers=timers)
+        latches = {dev: {k: list(v) if isinstance(v, list) else v for k, v in cfg.items()}
+                   for dev, cfg in self.latches.items() if dev in coils}
+        return Circuit(list(self.elements), nodes, {}, coils, inputs, list(self.diagnostics), timers=timers, latches=latches)
 
 
 def _src(e: Element) -> str:
@@ -139,7 +148,9 @@ def to_python(circuit: Circuit, *, pages: list[dict[str, Any]] | None = None, ti
             lines.append(f"c.diode({args}, source={_src(e)}{label}{directed})")
         elif e.device and e.device in circuit.coils:
             res = "" if e.resistance == R_LOAD else f", resistance={e.resistance:g}"
-            lines.append(f"c.coil({args}, device={e.device!r}, source={_src(e)}{label}{res})")
+            role = next((r for r in ("set", "reset") if e.name in circuit.latches.get(e.device, {}).get(r, [])), None)
+            latch = f", latch={role!r}" if role else ""
+            lines.append(f"c.coil({args}, device={e.device!r}, source={_src(e)}{label}{res}{latch})")
         else:
             res = "" if e.resistance == R_LOAD else f", resistance={e.resistance:g}"
             lines.append(f"c.load({args}, source={_src(e)}{label}{res})")

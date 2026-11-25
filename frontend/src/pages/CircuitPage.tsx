@@ -15,6 +15,7 @@ import {
   PanelRightOpen,
   PenLine,
   PowerOff,
+  Presentation,
   RefreshCw,
   Route,
   Search,
@@ -22,6 +23,7 @@ import {
   Tags,
   Timer,
   ToggleRight,
+  Workflow,
   X,
 } from 'lucide-react'
 
@@ -31,6 +33,7 @@ import ConsistencyPanel from './circuit/ConsistencyPanel'
 import DevicePanel from './circuit/DevicePanel'
 import type { LocateTarget } from './circuit/DevicePanel'
 import EditPanel from './circuit/EditPanel'
+import LogicPanel from './circuit/LogicPanel'
 import TimelinePanel from './circuit/TimelinePanel'
 import TracePanel from './circuit/TracePanel'
 import WhatIfPanel from './circuit/WhatIfPanel'
@@ -293,6 +296,13 @@ export default function CircuitPage() {
           render: () => <TracePanel projectIds={projectIds} />,
         },
         {
+          key: 'logic',
+          label: '論理図',
+          caption: '出力のコイルから辿った論理図（AND・OR・NOT・タイマー・キープリレー）を作り、入力や時間の流れで動かす。',
+          icon: Workflow,
+          render: () => <LogicPanel projectIds={projectIds} />,
+        },
+        {
           key: 'whatif',
           label: '波及',
           caption: '機器を選び、影響範囲と、強制 ON / OFF したときの変化を見る。',
@@ -418,13 +428,14 @@ export default function CircuitPage() {
             aria-selected={active}
             aria-controls="circuit-tool-panel"
             title={vertical ? t.label : undefined}
-            className={`relative flex flex-col items-center justify-center gap-1 rounded-xl px-1 text-[11px] font-bold leading-tight transition ${
+            className={`relative flex flex-col items-center justify-center gap-1 rounded-xl px-0 text-[11px] font-bold leading-tight transition ${
               vertical ? 'h-11 w-11' : 'min-h-14'
             } ${active ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-600 hover:bg-slate-100'}`}
             onClick={() => openTab(t.key)}
           >
             <Icon size={16} />
-            <span className={vertical ? 'sr-only' : 'text-center'}>{t.label}</span>
+            {/* 道具が 8 つ並んでも「タイマー」が折り返さないよう、横並びのときは詰めて 1 行にする */}
+            <span className={vertical ? 'sr-only' : 'whitespace-nowrap text-center text-[10px] tracking-tighter'}>{t.label}</span>
             {t.badge ? (
               <span className={`absolute right-0.5 top-0.5 min-w-4 rounded-full px-1 text-[9px] leading-4 ${
                 active ? 'bg-white text-blue-700' : t.tone === 'warn' ? 'bg-amber-500 text-white' : 'bg-slate-500 text-white'
@@ -581,6 +592,9 @@ export default function CircuitPage() {
             <AlertTriangle size={12} /> 警告 {issueCount}
           </button>
         )}
+        <Link className="btn btn-sm" to={`/demo?ids=${projectIds.join(',')}`} title="図面と論理図を並べて動かす">
+          <Presentation size={12} /> デモ表示
+        </Link>
         <button type="button" className="btn btn-sm" onClick={() => setChoosing((v) => !v)} title="対象の図面を選び直す">
           <Files size={12} /> 図面選択
         </button>

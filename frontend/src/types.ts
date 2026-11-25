@@ -710,3 +710,108 @@ export type DeviceIndex = {
   wire_numbers: WireNumberEntry[]
   counts: { relays: number; inputs: number; loads: number; contacts: number; wire_numbers: number; notes: number }
 }
+
+/** 論理図（DD-0045）: 出力のコイルから辿った AND・OR・NOT・タイマー・キープリレーの図 */
+export interface LogicSignal {
+  id: string
+  kind: 'input' | 'power' | 'logic' | 'timer' | 'latch'
+  devices: string[]
+  name: string
+  ref_name: string
+  letter: string | null
+  output: boolean
+  default: boolean
+  text?: string
+  set_text?: string
+  reset_text?: string
+  timer?: { mode: 'on_delay' | 'off_delay'; delay_s: number }
+  source?: string
+  source_label?: string
+  note?: string
+}
+
+export interface LogicBlock {
+  signal: string
+  letter: string | null
+  name: string
+  kind: LogicSignal['kind']
+  output: boolean
+  devices: string[]
+  text: string
+}
+
+export interface LogicInput {
+  signal: string
+  name: string
+  devices: string[]
+  default: boolean
+  kind: 'input' | 'power'
+  source: string
+  source_label: string
+}
+
+export interface LogicDiagramView {
+  title: string
+  outputs: string[]
+  signals: LogicSignal[]
+  blocks: LogicBlock[]
+  inputs: LogicInput[]
+  diagnostics: { kind: string; message: string; device?: string }[]
+  svg: string
+  formulas: string
+  values: Record<string, boolean>
+  warnings: string[]
+  candidates: { device: string; default: boolean }[]
+  default_targets: string[]
+}
+
+export interface LogicTimelineEvent {
+  at: number
+  inputs: Record<string, boolean>
+  label?: string
+}
+
+export interface LogicSimulation {
+  timeline: { t: number; label: string; values: Record<string, boolean>; changes: { signal: string; name: string; before: boolean | null; after: boolean }[]; warnings: string[] }[]
+  waves: Record<string, [number, boolean][]>
+  end: number
+  names: Record<string, string>
+  letters: Record<string, string>
+  compare?: { agree: boolean; checked: number; mismatches: { t: number; device: string; circuit: boolean; logic: boolean }[] }
+}
+
+// ---------- 図面と論理図のデモ（DD-0046） ----------
+/** 論理図の信号の、図面の上の位置（コイル・接点）。座標は図面の幅・高さに対する割合 */
+export interface DemoLocation {
+  project_id: number
+  page: string | null
+  symbol_ref: string
+  device: string
+  role: 'coil' | 'contact'
+  contact: 'a' | 'b' | null
+  negated: boolean
+  label: string | null
+  cx: number
+  cy: number
+  w: number
+  h: number
+}
+
+export interface DemoPage {
+  id: number
+  name: string
+  /** annotation=人が登録した内容 / ai=AI 解析の結果だけで組んだ / none=どちらも無い */
+  source: 'annotation' | 'ai' | 'none'
+  symbols: number
+  connections: number
+  width: number
+  height: number
+}
+
+export interface DemoView {
+  pages: DemoPage[]
+  ready: boolean
+  message?: string
+  simulation?: CircuitResult
+  logic?: (Omit<LogicDiagramView, 'formulas' | 'candidates' | 'default_targets'> & { locations: Record<string, DemoLocation[]> }) | null
+}
