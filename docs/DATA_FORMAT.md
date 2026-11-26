@@ -252,10 +252,12 @@ AI 改善サイクル画面の構造解析をまとめて書き出したファ�
 | `symbols[].relay_link` | 書き出し時だけ付く。ラベルに別のシート番号がある接点・コイルについて、その図面（`project_id`）の同じ器具番号のコイル（`coil_symbol_ids`）とリレー表の行番号（`relay_table_rows`）。参照先の図面を同時に書き出していなければ付かない |
 | `symbols[].label_source` | `llm` のときローカル LLM が読み直したラベル。元の OCR の読みは `ocr_label` |
 | `symbols[].label_box` / `label_link` | 枠の中に器具番号が無い記号（印だけの枠）に、近くの文字のまとまりを結んだとき（DD-0049）。`label_box` はその文字の位置 `[x0, y0, x1, y1]`。`label_link` は `status`（linked / 要確認 / 未検出）、`direction`（right・above など）、`gap`（枠どうしの隙間 px）、`candidates`（近い順の候補 3 つ） |
+| `symbols[].attributes` / `attribute_inference` | 図面の文字から推定した属性の候補（DD-0050）。`attributes` は `timer_mode`（on_delay / off_delay）・`delay_s`（秒）・`latch_coil`（set / reset）・`signal_name`・`external_io`（yes）。`attribute_inference` は `evidence[]`（`attribute`・`value`・根拠の文字 `text` と位置 `box`・`review`）と `review[]`（人が確かめる理由）。AI 取込で記号の属性に入り、注記に理由が付く |
+| `unlinked_captions[]` | 母線の上の縦書きの名前のうち、どの記号にも結べなかったもの（`text`・`box`。DD-0050） |
 | `texts[]` | 読めた文字。`kind` は `device_number`（器具番号）、`number`（端子番号・電線番号）、`destination`（行先・来先）、`relay_terminals`（リレー端子 5-9-1）、`name`（装置名・信号名称。`symbol_id` の記号に結び付く）、`note`（注記）、`other`。`zone` はリレー表・表題欄の中なら `relay_table` / `title_block`。読み直したものは `source`（`name_ocr`: 同梱の日本語対応 OCR、`llm`: ローカル LLM）と元の読み `ocr_text` を持つ |
 | `relay_table.rows[]` | リレー表の行。`device`（器具番号）、`terminal`（5-9-1）、`contact`（a / b）、`sheet`（「本」またはシート番号）、`position`（行列 10D） |
-| `relay_table.page_rows` / `source` | 欄ごとに読み直した行（`source: "cell_reread"`）を `rows` に入れたとき、ページの OCR だけで読んだ行（DD-0050 §6）。人が確定したリレー表は `rows` に入り、AI の読みは `ocr_rows`（DD-0050 §3） |
-| `tables.relay_table` / `tables.title_block` | 表の格子（DD-0050）。`bbox`、`rows[]`（`y0`・`y1`）、`cols[]`（`x0`・`x1`）、`cells[]`（`row`・`col`・`text`・`score`・`box`・`kind`: 列の書式、`page_text`: ページ全体の OCR の読み）、`reread`（欄ごとに読み直したか） |
+| `relay_table.page_rows` / `source` | 欄ごとに読み直した行（`source: "cell_reread"`）を `rows` に入れたとき、ページの OCR だけで読んだ行（DD-0051 §6）。人が確定したリレー表は `rows` に入り、AI の読みは `ocr_rows`（DD-0051 §3） |
+| `tables.relay_table` / `tables.title_block` | 表の格子（DD-0051）。`bbox`、`rows[]`（`y0`・`y1`）、`cols[]`（`x0`・`x1`）、`cells[]`（`row`・`col`・`text`・`score`・`box`・`kind`: 列の書式、`page_text`: ページ全体の OCR の読み）、`reread`（欄ごとに読み直したか） |
 | `relay_table.links[]` | 器具番号ごとに、表の行（`rows`）と同じ図面のコイル（`coil_symbol_ids`）・接点（`contact_symbol_ids`）。コイルが無い、または「本」の接点が足りないときは `status: "要確認"`。`row_links[]` は行ごとの行列の位置での紐付け（`row`、`position`、`sheet`、`symbol_id`、`status`、`reasons`） |
 | `drawing_grid` | 図面の枠の列番号・行の文字から求めた行列の位置（`columns`、`rows`） |
 | `sheet_references[]` | 括弧つき・「へ」「より」つきのシート番号。`kind` は `wire`（配線の行先・来先）か `relay`（接点のコイルがあるシート。`symbol_id` に接点・コイルの記号）。書き出し時に `target_project_id`（同時に書き出した図面のうちシート番号が一致する図面。無ければ null）を付ける |

@@ -96,7 +96,7 @@ stateDiagram-v2
 
 ## TableReview.status（`TableReviewLifecycle`）
 
-表の読み取りの確認（DD-0050 の TableReview.status）。
+表の読み取りの確認（DD-0051 の TableReview.status）。
 
 人が欄を直して保存すると確認中になり、確定すると構造解析の結果（リレー表）に人の読みを使う。
 確定した後に直すときは確認中に戻す（戻している間は AI の読みを使う）。

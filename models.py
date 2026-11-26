@@ -370,7 +370,7 @@ class CircuitChangeSet(Base):
 
 
 class TableReview(Base):
-    """表の欄（リレー表・表題欄など）の読み取りを人が確かめた結果（DD-0050）。図面 1 枚・表 1 つにつき 1 行。
+    """表の欄（リレー表・表題欄など）の読み取りを人が確かめた結果（DD-0051）。図面 1 枚・表 1 つにつき 1 行。
 
     grid_json は確かめ始めたときの OCR の格子（行・列の位置と AI の読み）、values_json は人が直した後の欄の文字。
     status は draft（確認中）／confirmed（確定）。移り方は services/lifecycles.py の TableReviewLifecycle。

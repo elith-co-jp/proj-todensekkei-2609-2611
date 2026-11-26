@@ -1,5 +1,6 @@
 import type {
   AnalysisJob,
+  IoTableSummary,
   DrawingSet,
   DrawingSetCoverage,
   DrawingSetSuggestion,
@@ -393,6 +394,15 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ project_ids: projectIds, inputs, energized }),
     }),
+
+  /** I/O 表（他盤との信号の一覧。DD-0050）。登録すると回路を組むたびに接点へ外部入力と信号名を入れる */
+  ioTable: () => req<IoTableSummary>('/api/circuit/io-table'),
+  uploadIoTable: (file: File) => {
+    const fd = new FormData()
+    fd.append('file', file)
+    return req<IoTableSummary>('/api/circuit/io-table', { method: 'PUT', body: fd })
+  },
+  deleteIoTable: () => req<IoTableSummary>('/api/circuit/io-table', { method: 'DELETE' }),
 
   downloadLogicSvg: (projectIds: number[], options: { targets?: string[]; values?: Record<string, boolean> } = {}) =>
     download('/api/circuit/logic/svg', {

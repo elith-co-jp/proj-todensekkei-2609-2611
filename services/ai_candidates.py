@@ -59,9 +59,27 @@ class AiSymbol:
     # 枠の外から結んだラベルの文字の位置（正規化の cx, cy, w, h）と、決めきれなかったときの注記（DD-0049）。
     label_box: tuple[float, float, float, float] | None = None
     note: str | None = None
+    # 図面の文字から推定した属性（タイマー・キープリレー・信号名・外部入力。DD-0050）。
+    attributes: tuple[tuple[str, Any], ...] = ()
 
 
 LABEL_REVIEW_NOTE = "ラベル要確認: 近くの文字の候補が複数あります（{candidates}）"
+ATTRIBUTE_NOTE = "属性は図面の文字から推定（{names}）"
+ATTRIBUTE_NAMES = {"timer_mode": "タイマーの種類", "delay_s": "タイマーの時間", "latch_coil": "キープリレー",
+                   "signal_name": "信号名", "external_io": "外部入力"}
+
+
+def _attributes(s: dict[str, Any]) -> tuple[tuple[tuple[str, Any], ...], str | None]:
+    """構造 JSON の記号から、推定した属性と注記（確かめる理由があれば書き足す）。"""
+    attributes = {k: v for k, v in (s.get("attributes") or {}).items() if v is not None and v != ""}
+    if not attributes:
+        return (), None
+    inference = s.get("attribute_inference") or {}
+    names = "・".join(ATTRIBUTE_NAMES.get(k, k) for k in attributes)
+    note = ATTRIBUTE_NOTE.format(names=names)
+    if inference.get("review"):
+        note += "。要確認: " + "／".join(inference["review"])
+    return tuple(sorted(attributes.items())), note
 
 
 def _label_link(s: dict[str, Any], width: float, height: float) -> tuple[tuple[float, float, float, float] | None, str | None]:
@@ -165,10 +183,13 @@ def from_structure(structure: dict[str, Any], class_keys: Iterable[str]) -> AiCa
                 mirrored.append(index)
         px, py = (dot[0] / width, dot[1] / height) if dot else (cx, cy)
         label_box, note = _label_link(s, width, height)
+        attributes, attribute_note = _attributes(s)
+        if attribute_note:
+            note = f"{note}。{attribute_note}" if note else attribute_note
         symbols.append(AiSymbol(
             class_key, cx, cy, w, h, px, py,
             confidence=s.get("confidence"), label=(s.get("label") or "").strip() or None, terminals=terminals,
-            label_box=label_box, note=note,
+            label_box=label_box, note=note, attributes=attributes,
         ))
     links: list[tuple[Endpoint, Endpoint]] = [((i, 0), (i, 1)) for i in mirrored]
     seen: set[frozenset[Endpoint]] = {frozenset(link) for link in links}
@@ -327,7 +348,7 @@ def plan_import(
             new_symbols.append({
                 "ref": ref, "class_key": a.class_key, "label": a.label,
                 "label_box": dict(zip(("cx", "cy", "w", "h"), a.label_box, strict=True)) if a.label_box else None,
-                "cx": a.cx, "cy": a.cy, "w": a.w, "h": a.h, "note": a.note,
+                "cx": a.cx, "cy": a.cy, "w": a.w, "h": a.h, "note": a.note, "attributes": dict(a.attributes),
                 "origin": "inference", "confidence": a.confidence, "terminals": added,
             })
 

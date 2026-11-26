@@ -1,6 +1,6 @@
 import type { TableCellValue, TableGrid } from '../../types'
 
-// 表の欄を、図面の上と同じ位置に並べるための計算（DD-0050）。座標は図面のピクセル
+// 表の欄を、図面の上と同じ位置に並べるための計算（DD-0051）。座標は図面のピクセル
 export type CellRect = { row: number; col: number; colspan: number; x: number; y: number; w: number; h: number }
 
 export const CELL_PAD = 3

@@ -830,6 +830,17 @@ export interface DemoPage {
   height: number
 }
 
+/** I/O 表の登録状況（DD-0050） */
+export interface IoTableSummary {
+  loaded: boolean
+  file_name: string | null
+  updated_at: string | null
+  rows: number
+  /** 入力（他盤から来る信号）の行の数 */
+  inputs: number
+  preview: { device: string; name: string; direction: 'input' | 'output' }[]
+}
+
 export interface DemoView {
   pages: DemoPage[]
   ready: boolean
@@ -842,7 +853,7 @@ export interface DemoView {
   }) | null
 }
 
-// 表の読み取りの確認（DD-0050）。OCR の文字を元の表と同じ行 × 列に並べ、人が直して確定する
+// 表の読み取りの確認（DD-0051）。OCR の文字を元の表と同じ行 × 列に並べ、人が直して確定する
 export type TableCell = {
   row: number
   col: number
@@ -851,7 +862,7 @@ export type TableCell = {
   score: number
   box: [number, number, number, number]
   parts: number
-  // 欄ごとに読み直したとき（DD-0050 §6）のページ全体の OCR の読み
+  // 欄ごとに読み直したとき（DD-0051 §6）のページ全体の OCR の読み
   page_text?: string
 }
 

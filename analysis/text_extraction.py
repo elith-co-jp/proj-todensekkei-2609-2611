@@ -323,6 +323,8 @@ RELAY_REF_CLASSES = {"relay_coil", "contact_a", "contact_b"}
 
 _CONFUSABLE = ("B8", "I1TL!|", "O0DQ", "NHY", "S5", "Z2", "CG6")
 _CLASS_OF = {c: i for i, group in enumerate(_CONFUSABLE) for c in group}
+# 上の組のほかに見分けにくい 2 文字（紙芝居の OCR は 5M を 5N、MY4N を NY4N と読む。DD-0050）。
+_CONFUSABLE_PAIRS = frozenset({frozenset("MN")})
 _WRAP_NOISE = re.compile(r"[0-9I1|!.()]{1,3}")
 
 
@@ -332,7 +334,9 @@ def page_lexicon(items: list[TextItem]) -> Counter:
 
 
 def _confusable(a: str, b: str) -> bool:
-    return len(a) == len(b) and all(x == y or _CLASS_OF.get(x, -1) == _CLASS_OF.get(y, -2) for x, y in zip(a, b, strict=True))
+    return len(a) == len(b) and all(
+        x == y or _CLASS_OF.get(x, -1) == _CLASS_OF.get(y, -2) or frozenset((x, y)) in _CONFUSABLE_PAIRS
+        for x, y in zip(a, b, strict=True))
 
 
 def correct_token(token: str, lexicon: Counter) -> str:
@@ -700,7 +704,7 @@ TEXT_NAME_MARGIN_PX = 20
 
 def read_tables(image: Image.Image, texts: list[dict[str, Any]], zones: list[dict[str, Any]], reader: Any,
                 lexicon: Counter | None = None) -> dict[str, Any]:
-    """リレー表・表題欄を罫線で行 × 列の格子にし、欄ごとに読み直す（DD-0050）。
+    """リレー表・表題欄を罫線で行 × 列の格子にし、欄ごとに読み直す（DD-0051）。
 
     SEQANNO_TABLE_REREAD=0 なら読み直さず、ページの OCR の文字を並べるだけにする。失敗しても解析は続ける。
     """
@@ -848,6 +852,33 @@ def _overlap_area(a: Box, b: Box) -> float:
     return max(0.0, min(a[2], b[2]) - max(a[0], b[0])) * max(0.0, min(a[3], b[3]) - max(a[1], b[1]))
 
 
+def _infer_attributes(items: list[TextItem], symbols: list[dict[str, Any]], texts: list[dict[str, Any]],
+                      crop_items_of: dict[int, list[TextItem]], height: int) -> list[dict[str, Any]]:
+    """図面の文字から属性の候補を記号に入れる（DD-0050）。返り値はどの記号にも結べなかった縦書きの名前。
+
+    記号に attributes（候補の値）と attribute_inference（根拠の文字・位置と、確かめる理由）を足す。
+    キープリレーの対で器具番号を結べなかった方のコイルには、対のコイルのラベルを入れる。
+    """
+    from analysis import attribute_infer
+
+    crops = {str(s.get("id")): crop_items_of[id(s)] for s in symbols if id(s) in crop_items_of}
+    result = attribute_infer.infer_attributes(items, symbols, texts=texts, crop_items=crops, page_height=height)
+    by_id = {str(s.get("id")): s for s in symbols}
+    for sid, fix in result["labels"].items():
+        symbol = by_id[sid]
+        symbol["label"] = fix["label"]
+        symbol["label_candidate"] = {"text": fix["label"], "match_text": fix["label"], "tokens": [], "rejected_tokens": []}
+        if fix.get("label_box"):
+            symbol["label_box"] = fix["label_box"]
+        symbol["label_link"] = {**(symbol.get("label_link") or {}), "status": "要確認", "direction": "pair",
+                                "candidates": [{"text": fix["label"], "box": fix.get("label_box")}]}
+    for sid, guess in result["symbols"].items():
+        symbol = by_id[sid]
+        symbol["attributes"] = {**guess["attributes"], **(symbol.get("attributes") or {})}
+        symbol["attribute_inference"] = {"evidence": guess["evidence"], "review": guess["review"]}
+    return result["captions"]
+
+
 def extract_text_structure(
     image: Image.Image, symbols: list[dict[str, Any]], regions: list[dict[str, Any]], reader: Any,
     label_reader: LabelReader | None = None, text_reader: LabelReader | None = None, text_source: str = "llm",
@@ -873,10 +904,10 @@ def extract_text_structure(
     crop_items_of = {id(s): crop_items for s, crop_items in zip(cropped, results[len(tiles):], strict=True)}
     lexicon = page_lexicon(items)
     zones = text_zones(items, width, height)
-    links = label_link.link_labels(items, symbols, lexicon=lexicon, zones=zones)
-    # 近くの文字を使う記号を決め（label_link.link_targets）、その記号だけ結んだ文字を拡大して読み直す。
+    # 近くの文字を使う記号を決め（label_link.link_targets）、その記号だけで文字を取り合い、結んだ文字を拡大して読み直す。
     page_labels = {id(s): symbol_label(items, s["bbox"], s.get("class_name") or "", lexicon) for s in symbols}
     unnamed = label_link.link_targets(symbols, page_labels)
+    links = label_link.link_labels(items, symbols, lexicon=lexicon, zones=zones, targets=unnamed)
     unnamed_ids = {id(s) for s in unnamed}
     link_crops = _reread_link_crops(image, unnamed, label_link.owner_boxes(symbols), links, crop_reader or reader, lexicon)
     for symbol in symbols:
@@ -903,6 +934,8 @@ def extract_text_structure(
         reread = reread_label(image, symbol["bbox"], class_name, label, label_reader)
         if reread is not None:
             symbol["ocr_label"], symbol["label_source"], label = label, "llm", reread
+        if class_name in ("contact_a", "contact_b"):
+            label = label_link.repair_io_label(label)
         symbol["label"] = label
         symbol["label_candidate"] = {"text": label, "match_text": label, "tokens": [], "rejected_tokens": []}
         if class_name == "other":
@@ -913,17 +946,19 @@ def extract_text_structure(
     rows = parse_relay_table(items, width, height)
     texts = classify_texts(items, symbols, zones)
     reread_texts(image, texts, text_reader, text_source)
+    unlinked_captions = _infer_attributes(items, symbols, texts, crop_items_of, height)
     tables = read_tables(image, texts, zones, reader, lexicon)
     relay = {"rows": rows, "links": link_relay_table(rows, symbols)}
     if "relay_table" in tables:
         from analysis import table_reading
 
-        # 欄ごとに読み直したリレー表から行を読み直す（DD-0050 §6）。ページの OCR だけの行は page_rows に残す
+        # 欄ごとに読み直したリレー表から行を読み直す（DD-0051 §6）。ページの OCR だけの行は page_rows に残す
         reread = table_reading.relay_rows_from_grids(texts, tables, width, height)
         if reread:
             relay = {"rows": reread, "links": link_relay_table(reread, symbols), "page_rows": rows, "source": "cell_reread"}
     return {
         "texts": texts,
+        "unlinked_captions": unlinked_captions,
         "tables": tables,
         "relay_table": relay,
         "sheet_references": sheet_references(items, symbols),

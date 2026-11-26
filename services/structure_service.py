@@ -36,7 +36,7 @@ def analyze_project(
 def save_structure(db: Session, project_id: int, payload: dict) -> None:
     from services.table_review import apply_saved_reviews
 
-    # 人が確定したリレー表があれば、解析し直しても人の読みを使う（DD-0050）
+    # 人が確定したリレー表があれば、解析し直しても人の読みを使う（DD-0051）
     payload = apply_saved_reviews(db, project_id, payload)
     db.add(StructurePrediction(
         project_id=project_id, payload_json=json.dumps(payload, ensure_ascii=False, allow_nan=False)

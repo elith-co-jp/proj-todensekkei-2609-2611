@@ -180,7 +180,7 @@ erDiagram
         int id PK
         int project_id "FK。(project_id, table_key) で一意"
         string table_key "relay_table / title_block"
-        string status "draft / confirmed（DD-0050）"
+        string status "draft / confirmed（DD-0051）"
         text grid_json "確かめ始めたときの OCR の格子"
         text values_json "人が直した欄の文字"
         datetime updated_at
@@ -222,7 +222,7 @@ erDiagram
 ORM の relationship は `passive_deletes=True` で、子を読み込まずに親だけ消します。
 
 `annotation_projects` を削除すると、`images` / `symbols` / `connections` /
-`predictions` / `structure_predictions` / `drawing_set_members`（図面セットからも外れる。DD-0041）/ `table_reviews`（表の読み取りの確認。DD-0050）が連鎖削除されます。
+`predictions` / `structure_predictions` / `drawing_set_members`（図面セットからも外れる。DD-0041）/ `table_reviews`（表の読み取りの確認。DD-0051）が連鎖削除されます。
 図面セット（`drawing_sets`）を削除しても図面は残ります。
 シンボルを削除すると、その端子と、そのシンボルを含む配線も削除されます。端子を削除すると、
 配線の端子の指定（`from_terminal_id` / `to_terminal_id`）は NULL になります。

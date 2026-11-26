@@ -1,4 +1,4 @@
-"""表の欄の読み取りを、元の表と同じ並びで見せて人が確かめ・直し・確定する（DD-0050）。
+"""表の欄の読み取りを、元の表と同じ並びで見せて人が確かめ・直し・確定する（DD-0051）。
 
 構造解析の結果（StructurePrediction の payload）には、OCR が読んだ文字（texts）と、文字だけが並ぶ欄の範囲
 （regions の relay_table・title_block）がある。ここでは欄ごとに文字を行 × 列の格子に並べ（analysis/table_grid.py）、
@@ -54,7 +54,7 @@ def table_areas(payload: dict[str, Any]) -> dict[str, tuple[float, float, float,
 def ocr_grids(payload: dict[str, Any], image: Any = None) -> dict[str, dict[str, Any]]:
     """表ごとの OCR の格子。解析で欄ごとに読み直した格子（payload の tables）があればそれを使う。
 
-    無ければ（DD-0050 §6 より前の解析）ページの OCR の文字を並べる。図面の画像があれば罫線も使う。
+    無ければ（DD-0051 §6 より前の解析）ページの OCR の文字を並べる。図面の画像があれば罫線も使う。
     """
     saved = payload.get("tables") or {}
     texts = payload.get("texts") or []

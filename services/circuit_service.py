@@ -17,6 +17,7 @@ from services import (
     circuit_timing,
     circuit_whatif,
     consistency,
+    io_table,
     lifecycles,
     vector_pdf,
 )
@@ -35,6 +36,8 @@ def _pages(db: Session, project_ids: list[int], *, use_ai: bool = False
         raise ValueError("図面を選んでください")
     if use_ai:
         _fill_from_ai(db, pages)
+    # I/O 表があれば、接点に外部入力と信号名を入れる（DD-0050）。
+    io_table.apply(pages)
     ids = [p["id"] for p in pages]
     texts = get_structure_texts(db, ids)
     if missing := [pid for pid in ids if pid not in texts]:
@@ -70,7 +73,9 @@ def _fill_from_ai(db: Session, pages: list[dict[str, Any]]) -> None:
         if structure is None:
             continue
         plan = plan_import(from_structure(structure, keys), [], [], p["image_width"], p["image_height"])
-        p["symbols"] = [{**s, "class_label": label_of.get(s["class_key"], "その他"), "attributes": {}} for s in plan.symbols]
+        # 属性は AI 解析が図面の文字から推定したもの（タイマー・キープリレー・信号名・外部入力。DD-0050）。
+        p["symbols"] = [{**s, "class_label": label_of.get(s["class_key"], "その他"), "attributes": dict(s.get("attributes") or {})}
+                        for s in plan.symbols]
         p["connections"] = [{**c, "ref": f"AI-{i:04d}", "attributes": {}} for i, c in enumerate(plan.connections, start=1)]
         p["source"] = "ai"
 

@@ -1,4 +1,4 @@
-# DD-0050 §6 表の読み直しの当たり率（2026-11-27）
+# DD-0051 §6 表の読み直しの当たり率（2026-11-27）
 
 `python analysis/tools/eval_table_reading.py --seeds 40 --mode both --split report`（RapidOCR 1.4.4、Python 3.12）。
 合成の図面（`analysis/synthetic_tables.py`）。種ごとに字の大きさ 10〜13 px（150 dpi）、字体（IPA ゴシック・DejaVu・Liberation・

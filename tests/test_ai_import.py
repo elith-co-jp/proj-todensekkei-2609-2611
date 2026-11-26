@@ -339,3 +339,19 @@ def test_existing_database_gets_origin_columns_defaulting_to_manual(client):
     saved = client.get(f"/api/projects/{pid}").json()
     assert saved["symbols"][0]["terminals"][0]["origin"] == "manual"
     assert saved["connections"][0]["origin"] == "manual"
+
+
+def test_import_carries_attributes_inferred_from_the_drawing_text(client):
+    """図面の文字から推定した属性（DD-0050）は、AI 候補の記号に入り、注記に確かめる理由が付く。"""
+    pid = create_project(client, w=W, h=H)
+    structure = _structure()
+    structure["symbols"][0]["attributes"] = {"external_io": "yes", "signal_name": "起動指令"}
+    structure["symbols"][0]["attribute_inference"] = {"review": ["信号名は図面上部の縦書きの文字から"]}
+    with database.SessionLocal() as db:
+        db.add(StructurePrediction(project_id=pid, payload_json=json.dumps(structure)))
+        db.commit()
+    by_ref = {s["ref"]: s for s in _import(client, pid, [], [])["symbols"]}
+    assert by_ref["SYM-0001"]["attributes"] == {"external_io": "yes", "signal_name": "起動指令"}
+    assert "外部入力・信号名" in by_ref["SYM-0001"]["note"]
+    assert "要確認: 信号名は図面上部の縦書きの文字から" in by_ref["SYM-0001"]["note"]
+    assert by_ref["SYM-0002"]["attributes"] == {}
