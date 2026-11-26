@@ -27,6 +27,7 @@ from services.inference_service import (
     run_inference,
     ultralytics_available,
 )
+from services.lifecycles import training_decision
 from services.model_service import (
     activate,
     active_model,
@@ -409,9 +410,9 @@ def decide_training_run(
         raise HTTPException(400, "成果物のモデルが削除されているため判定できません")
     if payload.decision == "adopt":
         activate(db, model)
-        run.decision = "adopted"
+        training_decision(run).adopt()
     else:
-        run.decision = "rejected"
+        training_decision(run).reject()
     db.commit()
     db.refresh(run)
     return serialize_run(run)

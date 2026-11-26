@@ -354,7 +354,7 @@ def test_demo_api_builds_from_ai_analysis_only(client):
 
 
 def test_deps_trace_upstream_from_6x(drawing):
-    """注目点（6X）から上流へ辿ると、紙芝居と同じく A・B・C と起動指令の入力に行き着く（DD-0047）。"""
+    """注目点（6X）から上流へ辿ると、紙芝居と同じく A・B・C と起動指令の入力に行き着く（DD-0048）。"""
     _data, _circuit, d = drawing
     deps = d.deps()
     up = {x["signal"] for x in deps[X6]}

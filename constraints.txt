@@ -102,6 +102,8 @@ python-dotenv==1.2.4
     # via uvicorn
 python-multipart==0.0.34
     # via -r requirements.txt
+python-statemachine==3.2.2
+    # via -r requirements.txt
 pyyaml==6.0.4
     # via
     #   -r requirements.txt

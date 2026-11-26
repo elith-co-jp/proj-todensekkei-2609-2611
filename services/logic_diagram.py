@@ -211,7 +211,7 @@ class LogicDiagram:
                 "diagnostics": self.diagnostics, "deps": self.deps()}
 
     def deps(self) -> dict[str, list[dict[str, Any]]]:
-        """信号 → その信号を決める信号（上流）。port はキープリレーの S / R（ほかは空）。注目点から辿るのに使う（DD-0047）。"""
+        """信号 → その信号を決める信号（上流）。port はキープリレーの S / R（ほかは空）。注目点から辿るのに使う（DD-0048）。"""
         out: dict[str, list[dict[str, Any]]] = {}
         for sig, s in self.signals.items():
             parts = [("S", s.set_expr), ("R", s.reset_expr)] if s.kind == "latch" else [("", s.expr)]
