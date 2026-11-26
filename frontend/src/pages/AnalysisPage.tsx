@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { ArrowLeft, Cable, ChevronLeft, ChevronRight, Download, Pencil, Sparkles, Square, SquareDashed } from 'lucide-react'
+import { ArrowLeft, Cable, ChevronLeft, ChevronRight, Download, Pencil, Sparkles, Square, SquareDashed, Table2 } from 'lucide-react'
 
 import { api } from '../api/client'
 import { LoadingOverlay } from '../components/LoadingOverlay'
@@ -108,6 +108,7 @@ export default function AnalysisPage() {
             {navigation.nextId ? <Link className="icon-button" to={`/projects/${navigation.nextId}/analysis`} title="次の図面" aria-label="次の図面"><ChevronRight size={18} /></Link> : <span className="inline-block w-9" />}
           </nav>
           <Link to={`/projects/${projectId}`} className="icon-button" title="アノテーション編集" aria-label="アノテーション編集"><Pencil size={17} /></Link>
+          {structure && <Link to={`/projects/${projectId}/tables`} className="btn" title="リレー表・表題欄の読み取りを、元の表と同じ並びで確かめて直し、確定する"><Table2 size={16} />表の確認</Link>}
           <button type="button" className="btn btn-accent" onClick={() => void run()} disabled={busy}><Sparkles size={16} />{structure ? '再解析' : '解析を実行'}</button>
           <button type="button" className="btn" onClick={() => void download()} disabled={!structure || downloading}><Download size={16} />構造JSON</button>
         </header>

@@ -178,7 +178,7 @@ export function projectIdAt(projects: ReadonlyArray<{ id: number }>, position: n
 }
 
 export function isEditorPath(pathname: string): boolean {
-  return /^\/projects\/\d+(?:\/analysis)?$/.test(pathname)
+  return /^\/projects\/\d+(?:\/analysis|\/tables)?$/.test(pathname)
 }
 
 export function isCurrentProject(project: { id: number } | null, routeProjectId: number): boolean {

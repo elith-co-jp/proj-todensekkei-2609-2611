@@ -841,3 +841,48 @@ export interface DemoView {
     deps: Record<string, { signal: string; negated: boolean; port: string }[]>
   }) | null
 }
+
+// 表の読み取りの確認（DD-0050）。OCR の文字を元の表と同じ行 × 列に並べ、人が直して確定する
+export type TableCell = {
+  row: number
+  col: number
+  colspan: number
+  text: string
+  score: number
+  box: [number, number, number, number]
+  parts: number
+}
+
+export type TableGrid = {
+  bbox: [number, number, number, number]
+  rows: { y0: number; y1: number }[]
+  cols: { x0: number; x1: number }[]
+  cells: TableCell[]
+}
+
+export type TableCellValue = { row: number; col: number; text: string }
+
+export type ReviewTable = {
+  key: string
+  label: string
+  status: 'unreviewed' | 'draft' | 'confirmed'
+  updated_at: string | null
+  confirmed_at: string | null
+  grid: TableGrid
+  values: TableCellValue[]
+  cell_count: number
+  low_score_count: number
+  changed_count: number
+  ocr_changed: boolean
+}
+
+export type RelayTableRow = { device: string; terminal: string; contact: string; sheet: string; position: string }
+
+export type ProjectTables = {
+  project_id: number
+  analyzed: boolean
+  image_size: { width: number; height: number } | null
+  tables: ReviewTable[]
+  relay_rows: RelayTableRow[]
+  relay_source?: 'ocr' | 'confirmed'
+}

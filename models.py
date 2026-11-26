@@ -369,6 +369,29 @@ class CircuitChangeSet(Base):
     undone_at = Column(DateTime, nullable=True)
 
 
+class TableReview(Base):
+    """表の欄（リレー表・表題欄など）の読み取りを人が確かめた結果（DD-0050）。図面 1 枚・表 1 つにつき 1 行。
+
+    grid_json は確かめ始めたときの OCR の格子（行・列の位置と AI の読み）、values_json は人が直した後の欄の文字。
+    status は draft（確認中）／confirmed（確定）。移り方は services/lifecycles.py の TableReviewLifecycle。
+    確定したリレー表は構造解析の結果（relay_table.rows）に反映し、解析し直しても人の読みを使う。
+    """
+
+    __tablename__ = "table_reviews"
+    __table_args__ = (UniqueConstraint("project_id", "table_key", name="uq_table_review_per_project"),)
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    project_id = Column(
+        Integer, ForeignKey("annotation_projects.id", ondelete="CASCADE"), nullable=False
+    )
+    table_key = Column(String(50), nullable=False)
+    status = Column(String(20), nullable=False, default="draft")
+    grid_json = Column(Text, nullable=False)
+    values_json = Column(Text, nullable=False, default="[]")
+    updated_at = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
+    confirmed_at = Column(DateTime, nullable=True)
+
+
 class DrawingSet(Base):
     """図面セット（DD-0041）: 行先札でつながる一続きの図面の組。回路・波及範囲・追跡をセット単位で回す。
 

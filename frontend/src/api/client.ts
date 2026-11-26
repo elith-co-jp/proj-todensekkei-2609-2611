@@ -44,6 +44,8 @@ import type {
   LogicSimulation,
   DemoView,
   LogicTimelineEvent,
+  ProjectTables,
+  TableCellValue,
 } from '../types'
 
 import { DEFAULT_DETECTION_CONF } from './defaults'
@@ -259,6 +261,18 @@ export const api = {
   drawingSetCoverage: (id: number) => req<DrawingSetCoverage>(`/api/drawing-sets/${id}/coverage`),
 
   suggestDrawingSets: () => req<DrawingSetSuggestion[]>('/api/drawing-sets/suggest'),
+
+  getTables: (projectId: number) => req<ProjectTables>(`/api/projects/${projectId}/tables`),
+
+  saveTable: (projectId: number, key: string, values: TableCellValue[], confirm: boolean) =>
+    req<ProjectTables>(`/api/projects/${projectId}/tables/${encodeURIComponent(key)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ values, confirm }),
+    }),
+
+  resetTable: (projectId: number, key: string) =>
+    req<ProjectTables>(`/api/projects/${projectId}/tables/${encodeURIComponent(key)}`, { method: 'DELETE' }),
 
   getStructure: (projectId: number) =>
     req<{ project_id: number; result: StructureResult | null }>(`/api/ml/projects/${projectId}/structure`),
