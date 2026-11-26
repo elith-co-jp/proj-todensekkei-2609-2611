@@ -34,8 +34,8 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from analysis import label_link as ll
-from analysis import text_extraction as tx
+from analysis import label_link as ll  # noqa: E402
+from analysis import text_extraction as tx  # noqa: E402
 
 # 正解の文字の位置と、結んだ文字のまとまりがこれ以上重なれば「正しい文字を結んだ」とみなす。
 LABEL_BOX_IOU = 0.3
