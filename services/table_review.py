@@ -17,7 +17,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from analysis.table_grid import build_grid, cell_box, items_in, ruling_lines
+from analysis.table_grid import build_grid, cell_box, expand_to_rules, items_in, ruling_lines
 from models import AnnotationImage, StructurePrediction, TableReview, utc_now_naive
 from services import lifecycles
 from services.jst import iso_jst
@@ -52,13 +52,23 @@ def table_areas(payload: dict[str, Any]) -> dict[str, tuple[float, float, float,
 
 
 def ocr_grids(payload: dict[str, Any], image: Any = None) -> dict[str, dict[str, Any]]:
-    """表ごとの OCR の格子。図面の画像があれば罫線も使う（読み落とした列も空の列として出す）。"""
+    """表ごとの OCR の格子。解析で欄ごとに読み直した格子（payload の tables）があればそれを使う。
+
+    無ければ（DD-0050 §6 より前の解析）ページの OCR の文字を並べる。図面の画像があれば罫線も使う。
+    """
+    saved = payload.get("tables") or {}
     texts = payload.get("texts") or []
     grids = {}
     for kind, area in table_areas(payload).items():
+        if kind in saved:
+            grids[kind] = saved[kind]
+            continue
         inside = items_in(texts, area)
         heights = sorted(float(t["box"][3]) - float(t["box"][1]) for t in inside)
-        rules = ruling_lines(image, area, heights[len(heights) // 2]) if image is not None and heights else None
+        rules = None
+        if image is not None and heights:
+            area = expand_to_rules(image, area, heights[len(heights) // 2])
+            rules = ruling_lines(image, area, heights[len(heights) // 2])
         grids[kind] = build_grid(texts, area, rules)
     return grids
 

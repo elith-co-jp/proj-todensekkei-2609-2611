@@ -851,6 +851,8 @@ export type TableCell = {
   score: number
   box: [number, number, number, number]
   parts: number
+  // 欄ごとに読み直したとき（DD-0050 §6）のページ全体の OCR の読み
+  page_text?: string
 }
 
 export type TableGrid = {

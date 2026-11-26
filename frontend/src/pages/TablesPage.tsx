@@ -214,7 +214,7 @@ function TableReviewer({ table, data, imageUrl, image, busy, mode, onMode, scale
           : 'border-dashed border-slate-200 bg-transparent text-slate-900'
     const state = edited ? 'edited' : low ? 'low' : source ? 'ocr' : 'empty'
     const title = source
-      ? `AI の読み: ${source.text}（確からしさ ${Math.round(source.score * 100)}%）`
+      ? `AI の読み: ${source.text}（確からしさ ${Math.round(source.score * 100)}%）${source.page_text !== undefined && source.page_text !== source.text ? `\nページ全体の読み: ${source.page_text || '（なし）'}` : ''}`
       : 'AI は文字を読んでいません'
     return (
       <input

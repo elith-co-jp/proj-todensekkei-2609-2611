@@ -94,7 +94,8 @@ def _with_rules(spans: list[list[float]], rules: list[tuple[float, float, float]
     lines = _positions(rules)
     out: list[list[float]] = []
     for start, end in spans:
-        cuts = [p for p in lines if start + RULE_MARGIN < p < end - RULE_MARGIN]
+        # 文字の列の中を通る罫線で分ける。罫線から列の端までが文字の半分より狭い切れ端（はみ出した字）は分けない
+        cuts = [p for p in lines if start + max(RULE_MARGIN, 0.5 * height) < p < end - max(RULE_MARGIN, 0.5 * height)]
         edges = [start, *cuts, end]
         out.extend([a, b] for a, b in pairwise(edges))
     for a, b in pairwise(lines):
@@ -273,3 +274,23 @@ def ruling_lines(image: Any, area: Any, text_height: float = 12.0) -> Rules | No
     horizontal = [(y0 + pos, x0 + a, x0 + b) for pos, a, b in _segments(_runs(ink, min_len))]
     vertical = [(x0 + pos, y0 + a, y0 + b) for pos, a, b in _segments(_runs(ink.T, min_len))]
     return {"x": vertical, "y": horizontal}
+
+
+def expand_to_rules(image: Any, area: Any, text_height: float = 12.0) -> Box:
+    """表の範囲を、範囲にかかる罫線の端まで広げる（文字から決めた範囲は、読み落とした端の列を含まないことがある）。
+
+    横の罫線は範囲の上下の内側にあるものだけ、縦の罫線は広げた左右の内側で範囲に重なるものだけを使う（図面の配線で
+    広げないため）。広げるのは各辺で文字の高さの 8 倍（40 px 以上）まで。
+    """
+    x0, y0, x1, y1 = _box(area)
+    margin = max(40.0, 8 * text_height)
+    rules = ruling_lines(image, (x0 - margin, y0 - margin, x1 + margin, y1 + margin), text_height)
+    if not rules:
+        return (x0, y0, x1, y1)
+    rows = [(a, b) for y, a, b in rules["y"] if y0 <= y <= y1 and min(b, x1) > max(a, x0)]
+    nx0 = max(x0 - margin, min([x0, *(a for a, _ in rows)]))
+    nx1 = min(x1 + margin, max([x1, *(b for _, b in rows)]))
+    cols = [(a, b) for x, a, b in rules["x"] if nx0 - 2 <= x <= nx1 + 2 and min(b, y1) > max(a, y0)]
+    ny0 = max(y0 - margin, min([y0, *(a for a, _ in cols)]))
+    ny1 = min(y1 + margin, max([y1, *(b for _, b in cols)]))
+    return (nx0, ny0, nx1, ny1)
