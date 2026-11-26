@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { AlertTriangle, FileSpreadsheet, Loader2, MapPin, Play, Presentation, RotateCcw, Sparkles, Upload } from 'lucide-react'
 
-import { analysisUnavailableReason, api } from '../api/client'
+import { api } from '../api/client'
 import type { AnalysisJob, DemoLocation, DemoView, IoTableSummary, ProjectRow } from '../types'
 import DrawingViewer from './circuit/DrawingViewer'
 import type { ViewerFocus, ViewerMark } from './circuit/DrawingViewer'
@@ -210,7 +210,7 @@ export default function DemoPage() {
   }
   const analyze = async (target: number[]) => {
     try {
-      const reason = await analysisUnavailableReason()
+      const reason = await api.analysisUnavailableReason()
       if (reason) {
         setError(reason)
         return

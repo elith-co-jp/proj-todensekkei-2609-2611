@@ -16,7 +16,7 @@ const apiMocks = vi.hoisted(() => ({
   thumbnailUrl: vi.fn((id: number) => `/api/projects/${id}/thumbnail`),
 }))
 
-vi.mock('../api/client', () => ({ api: apiMocks, analysisUnavailableReason: async () => null }))
+vi.mock('../api/client', () => ({ api: apiMocks }))
 
 function projectRow(id: number, name: string, status = 'draft'): ProjectRow {
   return {

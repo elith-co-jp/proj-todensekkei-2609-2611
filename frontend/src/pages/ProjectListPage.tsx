@@ -20,7 +20,7 @@ import {
   CircuitBoard,
 } from 'lucide-react'
 
-import { analysisUnavailableReason, api } from '../api/client'
+import { api } from '../api/client'
 import { LoadingOverlay } from '../components/LoadingOverlay'
 import { useModalFocus } from '../hooks/useModalFocus'
 import type { ProjectRow, Stats } from '../types'
@@ -283,7 +283,7 @@ export default function ProjectListPage() {
       hint: 'シンボル・配線・接続関係を処理しています。',
     })
     try {
-      const reason = await analysisUnavailableReason()
+      const reason = await api.analysisUnavailableReason()
       if (reason) {
         setError(reason)
         return
