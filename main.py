@@ -17,6 +17,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from sqlalchemy.exc import OperationalError
 
 from database import init_db
 from routers import annotations, attributes, circuit, drawing_sets, exchange, ml
@@ -94,6 +95,17 @@ app.include_router(circuit.router)
 app.include_router(attributes.router)
 app.include_router(exchange.router)
 app.include_router(drawing_sets.router)
+
+
+@app.exception_handler(OperationalError)
+async def _database_busy(_request: Request, exc: OperationalError):
+    """SQLite が別の書き込み（裏の解析・学習など）を待ちきれなかったときは、500 ではなく「少し待って再実行」を返す。"""
+    if "database is locked" in str(exc.orig):
+        return JSONResponse(
+            {"detail": "ほかの処理がデータを保存中のため、保存できませんでした。少し待ってからもう一度お試しください。"},
+            status_code=503,
+        )
+    raise exc
 
 
 _LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1"}

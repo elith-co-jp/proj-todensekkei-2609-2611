@@ -69,8 +69,12 @@ def parse(data: bytes, file_name: str = "") -> list[dict[str, str]]:
     if file_name.lower().endswith((".xlsx", ".xlsm")) or data[:2] == b"PK":
         from openpyxl import load_workbook
 
-        sheet = load_workbook(io.BytesIO(data), read_only=True, data_only=True).worksheets[0]
-        return _rows_from_cells(list(r) for r in sheet.iter_rows(values_only=True))
+        try:
+            book = load_workbook(io.BytesIO(data), read_only=True, data_only=True)
+            cells = [list(r) for r in book.worksheets[0].iter_rows(values_only=True)]
+        except Exception as exc:  # noqa: BLE001  壊れた・Excel でないファイルは 500 にせず、直し方を返す
+            raise ValueError("I/O 表の Excel を開けません（.xlsx か CSV で保存し直してください）") from exc
+        return _rows_from_cells(cells)
     for encoding in ("utf-8-sig", "cp932"):
         try:
             text = data.decode(encoding)
