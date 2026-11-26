@@ -46,9 +46,10 @@ def store_model_bytes(raw: bytes, file_name: str) -> tuple[str, int]:
         raise ValueError("モデルファイルが空です")
     if len(raw) > MAX_MODEL_BYTES:
         raise ValueError("モデルサイズが上限（1 GiB）を超えています")
-    # .pt / .torchscript 等の拡張子チェックは緩め、内容は PyTorch 系のバイナリであることだけ要求
-    if not (file_name.lower().endswith((".pt", ".pth", ".torchscript")) or raw[:2] == b"PK"):
-        raise ValueError("YOLO モデル（.pt）を指定してください")
+    # 拡張子は問わず、中身が PyTorch の保存形式（ZIP か、古い形式の pickle）であることを求める。
+    # 中身の違うファイルを登録すると、解析のたびに失敗する（500）ため、登録の時点で断る。
+    if not (raw[:2] == b"PK" or raw[:1] == b"\x80"):
+        raise ValueError("YOLO モデル（.pt）を指定してください（PyTorch のモデルファイルとして読めません）")
     return store_blob(MODEL_DIR, raw, ".pt")
 
 

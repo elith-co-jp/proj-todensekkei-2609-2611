@@ -14,6 +14,7 @@ import io
 import logging
 import zipfile
 from collections.abc import Callable
+from dataclasses import dataclass
 from importlib.util import find_spec
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -187,23 +188,33 @@ def run_inference(
 
     from ultralytics import YOLO  # 重量級のため遅延 import
 
-    detector = YOLO(str(path))
+    try:
+        detector = YOLO(str(path))
+    except Exception as exc:  # noqa: BLE001  壊れた・YOLO でないモデルは 500 にせず、直し方を返す
+        _logger.exception("Model load failed: %s", model.file_name)
+        raise RuntimeError(f"モデル「{model.name}」を読み込めません。YOLO のモデル（.pt）を登録し直すか、"
+                           "別のモデルを使用中にしてください。") from exc
     # 並んだカードを 1 つにまとめないよう、「その他」（カード・札・領域）は別のモデルで検出する（DD-0019）。
     card_path = card_model_path()
     card_detector = YOLO(str(card_path)) if card_path is not None else None
     class_by_index = _class_by_yolo_index(db)
     summary = []
+    # 書き込みは図面の解析が終わってから短く行う。解析中（1 枚で数十秒）に書き込みの途中のまま待つと、
+    # SQLite はその間ほかの保存（エディタの保存・モデルの採用など）を受け付けず 500 になる。
+    pending: list[tuple[AnnotationProject, _ProjectAnalysis]] = []
     for project in projects:
         if should_stop is not None and should_stop():
             break
         if not keep_going:
-            summary.append(_infer_project(db, model, project, detector, card_detector, card_path, class_by_index,
-                                          conf, connector_conf, include_structure))
+            # 途中で失敗したら例外を出し、どの図面も保存しない。全図面を解析してからまとめて書く。
+            pending.append((project, _analyze_project(model, project, detector, card_detector, card_path,
+                                                      class_by_index, conf, connector_conf, include_structure)))
             continue
         project_id, name = project.id, project.name
         try:
-            row = _infer_project(db, model, project, detector, card_detector, card_path, class_by_index,
-                                 conf, connector_conf, include_structure)
+            analysis = _analyze_project(model, project, detector, card_detector, card_path, class_by_index,
+                                        conf, connector_conf, include_structure)
+            row = _save_analysis(db, model, project, analysis)
             db.commit()
         except Exception as exc:  # noqa: BLE001  1 図面の失敗で残りを止めない（失敗は呼び出し側に知らせる）
             db.rollback()
@@ -215,14 +226,26 @@ def run_inference(
         summary.append(row)
         if on_progress is not None:
             on_progress({"project_id": project_id, "name": name, "ok": True, "result": row})
+    for project, analysis in pending:
+        summary.append(_save_analysis(db, model, project, analysis))
     db.commit()
     return summary
 
 
-def _infer_project(db: Session, model: MlModel, project: AnnotationProject, detector: Any, card_detector: Any,
-                   card_path: Path | None, class_by_index: dict, conf: float, connector_conf: float | None,
-                   include_structure: bool) -> dict:
-    """1 図面を推論し、検出（と構造解析）を保存して、結果の要約を返す（commit はしない）。"""
+@dataclass
+class _ProjectAnalysis:
+    """1 図面の推論と構造解析の結果（まだ保存していない）。"""
+
+    detections: list[dict]
+    skipped_images: int
+    structure: dict | None
+    model_label: str
+
+
+def _analyze_project(model: MlModel, project: AnnotationProject, detector: Any, card_detector: Any,
+                     card_path: Path | None, class_by_index: dict, conf: float, connector_conf: float | None,
+                     include_structure: bool) -> _ProjectAnalysis:
+    """1 図面を推論する（DB には書かない。時間がかかるのはここ）。"""
     from analysis.runtime import page_for_detection
 
     if include_structure and len(project.images) != 1:
@@ -248,10 +271,14 @@ def _infer_project(db: Session, model: MlModel, project: AnnotationProject, dete
         symbol_detections = [d for d in detections if detection_kind(d["w"], d["h"]) == "symbol"]
         region_detections = [d for d in detections if detection_kind(d["w"], d["h"]) == "region"]
         structure = analyze_project(project, model, symbol_detections, region_detections)
-    counts = _record_predictions(
-        db, project, detections, model,
-        model_label=model.name if card_path is None else f"{model.name} + {card_path.stem}",
-    )
+    model_label = model.name if card_path is None else f"{model.name} + {card_path.stem}"
+    return _ProjectAnalysis(detections, skipped_images, structure, model_label)
+
+
+def _save_analysis(db: Session, model: MlModel, project: AnnotationProject, analysis: _ProjectAnalysis) -> dict:
+    """推論の結果を保存して、結果の要約を返す（commit はしない）。"""
+    counts = _record_predictions(db, project, analysis.detections, model, model_label=analysis.model_label)
+    structure = analysis.structure
     if structure is not None:
         from services.structure_service import save_structure
 
@@ -262,7 +289,7 @@ def _infer_project(db: Session, model: MlModel, project: AnnotationProject, dete
             "name": project.name,
             "detections": counts["symbol"],
             "region_count": counts["region"],
-            "skipped_images": skipped_images,
+            "skipped_images": analysis.skipped_images,
             **({
                 "structure_available": True,
                 "wire_count": len(structure.get("wires", [])),
