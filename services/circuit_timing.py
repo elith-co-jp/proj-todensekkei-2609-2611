@@ -130,11 +130,16 @@ def run_timeline(circuit: Circuit, events: list[dict[str, Any]], *, inputs: dict
             "タイマーは動きませんでした（ぎりぎりの競合。実機では順序が決まらない）" for dev in races]
         timeline.append(snap)
     if until is not None and (not timeline or timeline[-1]["t"] < until):
-        timeline.append({**timeline[-1], "t": round(until, 6), "label": "終了", "changes": {}})
+        timeline.append({**timeline[-1], "t": round(until, 6), "label": "終了", "changes": _no_changes()})
     for snap in timeline:
         snap.pop("_result", None)
-        snap.setdefault("changes", {})
+        # 画面は coils・loads・contacts を常に配列として読む（初期状態・終了も同じ形にする）
+        snap.setdefault("changes", _no_changes())
     return {"timers": timers, "timeline": timeline, "unknown": options["unknown"]}
+
+
+def _no_changes() -> dict[str, list[dict[str, Any]]]:
+    return {"coils": [], "loads": [], "contacts": []}
 
 
 def state_at(timeline: list[dict[str, Any]], t: float) -> dict[str, Any]:

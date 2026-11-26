@@ -511,3 +511,14 @@ export const api = {
     return req<AttributeImportReport>('/api/attributes/import', { method: 'POST', body: fd })
   },
 }
+
+/**
+ * サーバで AI 解析できない理由（モデル未登録・ultralytics なし）。できるなら null。
+ * できないと分かっている解析の要求を送らない（送ると 400 になり、ブラウザの console にエラーが出る）。
+ */
+export async function analysisUnavailableReason(): Promise<string | null> {
+  const status = await api.mlStatus()
+  if (!status.active_model) return '推論に使うモデルがありません。「AI 学習」の画面で先にモデルを登録してください'
+  if (!status.ultralytics) return 'この環境では ultralytics が入っていないため、ここでは AI 解析できません。「AI 学習」の画面から外部で実行した結果を取り込んでください'
+  return null
+}

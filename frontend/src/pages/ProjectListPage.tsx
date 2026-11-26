@@ -20,7 +20,7 @@ import {
   CircuitBoard,
 } from 'lucide-react'
 
-import { api } from '../api/client'
+import { analysisUnavailableReason, api } from '../api/client'
 import { LoadingOverlay } from '../components/LoadingOverlay'
 import { useModalFocus } from '../hooks/useModalFocus'
 import type { ProjectRow, Stats } from '../types'
@@ -283,6 +283,11 @@ export default function ProjectListPage() {
       hint: 'シンボル・配線・接続関係を処理しています。',
     })
     try {
+      const reason = await analysisUnavailableReason()
+      if (reason) {
+        setError(reason)
+        return
+      }
       const r = await api.runAnalysis(Array.from(checked))
       setMsg(
         `解析完了: シンボル ${r.detection_count} 件、配線 ${r.results.reduce((n, page) => n + (page.wire_count ?? 0), 0)} 本。${r.results.flatMap((page) => page.warnings ?? []).length ? '一部のラベル読み取りに問題があります。解析結果を確認してください。' : ''}`,

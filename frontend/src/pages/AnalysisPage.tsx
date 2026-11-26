@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { ArrowLeft, Cable, ChevronLeft, ChevronRight, Download, Pencil, Sparkles, Square, SquareDashed } from 'lucide-react'
 
-import { api } from '../api/client'
+import { analysisUnavailableReason, api } from '../api/client'
 import { LoadingOverlay } from '../components/LoadingOverlay'
 import { PageJump } from '../components/PageJump'
 import PredictionDrawing from '../components/PredictionDrawing'
@@ -57,6 +57,11 @@ export default function AnalysisPage() {
     setError(null)
     setNotice(null)
     try {
+      const reason = await analysisUnavailableReason()
+      if (reason) {
+        if (request === generation.current) setError(reason)
+        return
+      }
       await api.runAnalysis([projectId])
       const result = await fetchPage(projectId)
       if (request !== generation.current) return

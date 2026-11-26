@@ -18,7 +18,7 @@ const api = vi.hoisted(() => ({
   deleteIoTable: vi.fn(),
   imageUrl: (id: number) => `/img/${id}`,
 }))
-vi.mock('../api/client', () => ({ api, BASE: '' }))
+vi.mock('../api/client', () => ({ api, BASE: '', analysisUnavailableReason: async () => null }))
 
 const rows = [
   { id: 1, name: 'a', sheet_no: 'EV31031', image_width: 1000, image_height: 700, symbol_count: 0, analysis_wire_count: 40 },

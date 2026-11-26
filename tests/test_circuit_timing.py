@@ -72,6 +72,15 @@ def test_instant_contact_follows_the_coil():
     assert lamp(tl, 1.0)
 
 
+def test_every_step_has_change_lists():
+    # 画面（タイマーの表）は初期状態・終了でも changes.coils などを配列として読む
+    circuit = build_circuit([timer_page(instant=True)])
+    tl = run_timeline(circuit, [{"at": 1, "inputs": {"PB1": True}}], until=2)["timeline"]
+    assert tl[0]["label"] == "初期状態" and tl[-1]["label"] == "終了"
+    for step in tl:
+        assert all(isinstance(step["changes"][k], list) for k in ("coils", "loads", "contacts")), step["label"]
+
+
 def test_what_if_longer_delay_and_faults():
     circuit = build_circuit([timer_page()])
     events = [{"at": 0, "inputs": {"PB1": True}}]
