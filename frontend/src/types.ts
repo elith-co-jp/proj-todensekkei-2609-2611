@@ -830,6 +830,17 @@ export interface DemoPage {
   height: number
 }
 
+/** I/O 表の登録状況（DD-0050） */
+export interface IoTableSummary {
+  loaded: boolean
+  file_name: string | null
+  updated_at: string | null
+  rows: number
+  /** 入力（他盤から来る信号）の行の数 */
+  inputs: number
+  preview: { device: string; name: string; direction: 'input' | 'output' }[]
+}
+
 export interface DemoView {
   pages: DemoPage[]
   ready: boolean

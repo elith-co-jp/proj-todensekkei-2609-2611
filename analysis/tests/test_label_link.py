@@ -158,3 +158,26 @@ def test_symbol_label_and_link_agree_on_a_split_box():
     mark, _ = ll.split_mark_box(gray, old_box, texts, "contact_a", terminals=[(60, 37), (60, 63)])
     links = ll.link_labels(texts, [{"id": "a", "class_name": "contact_a", "bbox": mark}])
     assert inside == links["a"]["label"] == "83DX-1 P33P22"
+
+
+def test_only_targets_compete_for_the_outside_text():
+    # 枠の中に器具番号が読めたコイル（targets の外）は、隣の接点の文字を取らない（DD-0050）。
+    coil = {"id": "c", "class_name": "relay_coil", "bbox": (600, 230, 630, 260)}
+    symbols = [contact("a", 538, 244), coil]
+    items = TWO_CONTACTS[:4]
+    links = ll.link_labels(items, symbols, targets=[symbols[0]])
+    assert links["a"]["label"].split()[1:] == ["IP33P22", "(EV31032)"]
+    assert "c" not in links or not links["c"]["label"]
+
+
+def test_io_card_pin_names_and_terminal_digits_below_are_not_the_label():
+    # I/O カードのピン名（C・NO）と、下に書いた器具番号の前の端子番号は器具番号に入れない（DD-0050）。
+    symbols = [contact("a", 400, 300)]
+    items = [item("NO", 382, 296, 396, 306), item("D001", 398, 330, 430, 342), item("B405", 398, 342, 430, 354)]
+    assert ll.link_labels(items, symbols)["a"]["label"] == "D001 B405"
+
+
+def test_numeric_device_with_hyphens_is_a_label():
+    symbols = [contact("a", 400, 300)]
+    items = [item("3-52", 412, 296, 440, 308), item("P33P22", 412, 308, 452, 320)]
+    assert ll.link_labels(items, symbols)["a"]["label"] == "3-52 P33P22"

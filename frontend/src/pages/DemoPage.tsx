@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { AlertTriangle, Loader2, MapPin, Play, Presentation, RotateCcw, Sparkles, Upload } from 'lucide-react'
+import { AlertTriangle, FileSpreadsheet, Loader2, MapPin, Play, Presentation, RotateCcw, Sparkles, Upload } from 'lucide-react'
 
 import { api } from '../api/client'
-import type { AnalysisJob, DemoLocation, DemoView, ProjectRow } from '../types'
+import type { AnalysisJob, DemoLocation, DemoView, IoTableSummary, ProjectRow } from '../types'
 import DrawingViewer from './circuit/DrawingViewer'
 import type { ViewerFocus, ViewerMark } from './circuit/DrawingViewer'
 import FocusTrace from './demo/FocusTrace'
@@ -65,12 +65,34 @@ export default function DemoPage() {
   const [error, setError] = useState<string | null>(null)
   const logicRef = useRef<HTMLDivElement | null>(null)
   const fileRef = useRef<HTMLInputElement | null>(null)
+  const ioRef = useRef<HTMLInputElement | null>(null)
+  const [ioTable, setIoTable] = useState<IoTableSummary | null>(null)
   const handledParam = useRef<string | null>(null)
 
   const loadRows = () => api.listProjects().then(setRows).catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
   useEffect(() => {
     void loadRows()
+    api.ioTable().then(setIoTable).catch(() => setIoTable(null))
   }, [])
+
+  const uploadIo = async (files: FileList | null) => {
+    if (!files || files.length === 0) return
+    try {
+      setIoTable(await api.uploadIoTable(files[0]))
+      setError(null)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      if (ioRef.current) ioRef.current.value = ''
+    }
+  }
+  const clearIo = async () => {
+    try {
+      setIoTable(await api.deleteIoTable())
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    }
+  }
 
   const run = async (target: number[], next: Record<string, boolean>, energized: Record<string, boolean>) => {
     setBusy(true)
@@ -221,6 +243,17 @@ export default function DemoPage() {
         <button type="button" className="btn btn-sm btn-primary" onClick={() => open(selectedRows.map((r) => r.id))} disabled={selectedRows.length === 0 || busy}>
           <Play size={12} /> ③ デモを開く（{selectedRows.length} 枚）
         </button>
+        <input ref={ioRef} type="file" accept=".csv,.tsv,.txt,.xlsx" className="hidden" aria-label="I/O 表のファイル"
+          onChange={(e) => void uploadIo(e.target.files)} />
+        <button type="button" className="btn btn-sm" onClick={() => ioRef.current?.click()}
+          title="他盤との信号の一覧（器具番号・信号名・入出力の列）。登録すると、一致する接点を外部入力にして信号名を付けます">
+          <FileSpreadsheet size={12} /> I/O 表{ioTable?.loaded ? `（${ioTable.rows} 行）` : 'を登録'}
+        </button>
+        {ioTable?.loaded && (
+          <button type="button" className="btn btn-sm" onClick={() => void clearIo()} title={`${ioTable.file_name ?? ''} を外します`}>
+            I/O 表を外す
+          </button>
+        )}
         {analyzing && job && <span className="text-[11px] text-slate-500">解析中 {job.done} / {job.total}{job.current ? `（${job.current}）` : ''}</span>}
         {job && job.status !== 'running' && (
           <span className="text-[11px] text-slate-500">{job.status === 'done' ? '解析が終わりました' : `解析: ${job.error ?? job.status}`}</span>
