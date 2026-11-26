@@ -49,6 +49,12 @@ DIRECTION_WEIGHTS: dict[str, dict[str, float]] = {
 }
 
 _DIGITS = re.compile(r"\(?\d{1,4}\)?")
+# 数字だけの器具番号（52、3-52、80-1）。型式の行の上にあれば器具番号の行として残す。
+_NUMERIC_DEVICE = re.compile(r"\d{1,3}(?:-\d{1,3}){1,2}")
+# I/O カードの端子の名前（C・NO・NC1・COM）。接点の器具番号ではない。
+_CARD_PINS = frozenset({"C", "NO", "NC", "NC1", "NC2", "COM", "+", "-"})
+# タイマーの時間・設定範囲・型式（1sec、(0-12sec)、TDPU）は器具番号ではない（attribute_infer が読む）。
+_TIMER_NOTE = re.compile(r"\(?[0-9ILO.]+(?:[-~〜][0-9ILO.]+)?(?:SEC|秒)\)?|T[DO0Q](?:P[UV]|[DO0Q]{2})")
 _SHEET_REF_ONLY = re.compile(rf"\(?{tx.SHEET_REF}\)?(?:へ|より)?")
 
 
@@ -90,21 +96,30 @@ def _has_cjk(text: str) -> bool:
 def _names_device(text: str) -> bool:
     """器具番号・型式の行か（英字を含み、参照先だけ・数字だけの行ではない）。"""
     compact = tx.normalize(text).replace(" ", "")
-    return (any(c.isalpha() for c in compact) and len(compact) >= 2
+    return (any(c.isalpha() for c in compact) and len(compact) >= 2 and _TIMER_NOTE.fullmatch(compact) is None
+            and compact not in _CARD_PINS
             and _SHEET_REF_ONLY.fullmatch(compact) is None and not _has_cjk(compact))
 
 
 def _attachable(text: str) -> bool:
     """まとまりの 2 行目以降に付けてよい行（器具番号の行、参照先、端子番号・番号）。"""
     compact = tx.normalize(text).replace(" ", "")
-    return bool(compact) and not _has_cjk(compact) and (
-        _names_device(compact) or _SHEET_REF_ONLY.fullmatch(compact) is not None or _DIGITS.fullmatch(compact) is not None)
+    return bool(compact) and not _has_cjk(compact) and _TIMER_NOTE.fullmatch(compact) is None and compact not in _CARD_PINS and (
+        _names_device(compact) or _SHEET_REF_ONLY.fullmatch(compact) is not None or _DIGITS.fullmatch(compact) is not None
+        or _NUMERIC_DEVICE.fullmatch(compact) is not None)
+
+
+def _vertical(item: tx.TextItem) -> bool:
+    x0, y0, x1, y1 = tx._as_box(item["box"])
+    return len(tx.normalize(item["text"]).replace(" ", "")) >= 2 and (y1 - y0) > 1.6 * max(1.0, x1 - x0)
 
 
 def outside_lines(items: Iterable[tx.TextItem], boxes: list[tx.Box]) -> list[Line]:
     """OCR の行から、どの記号の枠にも入らない部分を取り出す。枠をまたぐ行（「9 |83DX-1」）は枠の外の部分だけ残す。"""
     lines: list[Line] = []
     for item in items:
+        if _vertical(item):
+            continue  # 縦書きの電線番号（01）・名前は、横に書く器具番号のまとまりに入れない
         run: list[tuple[str, tx.Box]] = []
         for char, char_box in [*tx._char_boxes(item), ("\0", item["box"])]:
             center = tx._center(char_box)
@@ -154,7 +169,22 @@ def build_blocks(lines: list[Line]) -> list[Block]:
         else:
             blocks.append(Block([line]))
     # 数字だけの器具番号（80）や、小さな D を 0 と読んだ器具番号（5D → 50）があるので、上の数字の行も残す。
+    # ただし記号の左の端子番号（1 桁の「4」、上下に並ぶ「12 / 4」）は器具番号ではないので、まとまりの頭から落とす。
+    for block in blocks:
+        while len(block.lines) > 1 and _DIGITS.fullmatch(_compact(block.lines[0].text)):
+            head, nxt = block.lines[0], block.lines[1]
+            h = min(head.height, nxt.height)
+            numeric_device = (len(_compact(head.text)) >= 2 and not _DIGITS.fullmatch(_compact(nxt.text))
+                              and (abs(head.box[0] - nxt.box[0]) <= 0.5 * h
+                                   or abs(head.box[0] + head.box[2] - nxt.box[0] - nxt.box[2]) <= h))
+            if numeric_device:
+                break
+            block.lines.pop(0)
     return [block for block in blocks if block.has_name]
+
+
+def _compact(text: str) -> str:
+    return tx.normalize(text).replace(" ", "")
 
 
 def direction_and_gap(symbol_box: tx.Box, block_box: tx.Box) -> tuple[Direction, float]:
@@ -234,23 +264,43 @@ def label_text(block: Block, class_name: str, lexicon: Counter | None) -> str:
         tokens = [tx.correct_token(trim_glued(t, lexicon), lexicon) for t in tokens]
     if class_name in tx.RELAY_REF_CLASSES:
         tokens = [tx.repair_device_token(t) for t in tokens]
-    return " ".join(tokens)
+    if tokens and _BAR_GLUED.fullmatch(tokens[0]):
+        tokens[0] = tokens[0][1:]  # 接点の棒（I・|）と器具番号がくっついた語（I30M-3）。器具番号は I と数字で始まらない
+    return repair_io_label(" ".join(tokens))
+
+
+def repair_io_label(label: str) -> str:
+    """I/O カードの接点のラベル（D001 B405）で、番地の B を 8 と読んだもの（D002 8856）を直す。"""
+    tokens = (label or "").split()
+    if len(tokens) >= 2 and _IO_POINT.fullmatch(tokens[0]) and _IO_ADDRESS_8.fullmatch(tokens[1]):
+        tokens[1] = "B" + tokens[1][1:]
+        return " ".join(tokens)
+    return label
+
+
+_BAR_GLUED = re.compile(r"[I|]\d.*[A-Z].*")
+_IO_POINT = re.compile(r"[D0]\d{3}")
+_IO_ADDRESS_8 = re.compile(r"8\d{3}")
 
 
 def link_labels(
     items: list[tx.TextItem], symbols: list[dict[str, Any]], *, lexicon: Counter | None = None,
     zones: list[dict[str, Any]] | None = None, max_gap: float = LINK_MAX_GAP_PX,
+    targets: list[dict[str, Any]] | None = None,
 ) -> dict[str, dict[str, Any]]:
     """記号 id ごとに、結び付けた文字のまとまりを返す。
 
     返り値: {symbol id: {"label", "label_box": [x0,y0,x1,y1], "status", "direction", "gap", "candidates"}}。
     結ぶ相手が無い記号は status「未検出」で label は空。
+    targets を渡すと、その記号だけが文字を取り合う（枠の中に器具番号が読めた記号は外の文字を取らない）。
+    targets を渡さなければ器具番号を書く記号すべて。どちらでも、すべての記号の枠の中の文字は外の文字に数えない。
     """
     boxes = owner_boxes(symbols)
     lines = [ln for ln in outside_lines(tx.drop_glyph_marks(items, zones), boxes)
              if not (zones and tx.zone_of(ln.box, zones))]
     blocks = build_blocks(lines)
-    targets = [s for s in symbols if (s.get("class_name") or "") in LINK_CLASSES]
+    wanted = {id(s) for s in targets} if targets is not None else None
+    targets = [s for s in symbols if (s.get("class_name") or "") in LINK_CLASSES and (wanted is None or id(s) in wanted)]
     pairs: list[tuple[float, int, int, Direction, float]] = []
     costs: dict[int, list[tuple[float, int]]] = {}
     block_costs: dict[int, list[tuple[float, int]]] = {}
@@ -317,7 +367,10 @@ def link_targets(symbols: list[dict[str, Any]], inside_labels: dict[int, str]) -
     - 印と名前を囲んだ図面: 枠の中が空の接点・コイルだけ。コネクタの枠の中の番号（13）は名前の一部なので結ばない。
     検出の枠の付け方は学習したモデルで決まるので、図面ごとに枠の中の文字から判断する。
     """
+    # コイルは印だけの枠でも丸の中に器具番号を書くので、接点があれば接点だけで判断する。
     relay = [s for s in symbols if (s.get("class_name") or "") in tx.RELAY_REF_CLASSES]
+    contacts = [s for s in relay if (s.get("class_name") or "") != "relay_coil"]
+    relay = contacts or relay
     named = sum(1 for s in relay if inside_label_is_name(inside_labels.get(id(s), ""), s.get("class_name") or ""))
     mark_only = not relay or named < NAMED_BOX_RATIO * len(relay)
     out = []

@@ -1,0 +1,264 @@
+[
+  {
+    "noise": 0.0,
+    "sheets": 200,
+    "before": {
+      "label": {
+        "symbols": 4142,
+        "accuracy": 0.832,
+        "box_accuracy": 0.9757,
+        "status": {
+          "inside": 1390,
+          "linked": 2499,
+          "要確認": 253
+        },
+        "wrong": {
+          "connector": 50,
+          "contact_a": 308,
+          "contact_b": 101,
+          "relay_coil": 237
+        }
+      },
+      "timer": {
+        "gold": 204,
+        "predicted": 0,
+        "precision": null,
+        "recall": 0.0
+      },
+      "latch_coil": {
+        "gold": 418,
+        "predicted": 0,
+        "precision": null,
+        "recall": 0.0
+      },
+      "signal_name": {
+        "gold": 1023,
+        "predicted": 0,
+        "precision": null,
+        "recall": 0.0
+      },
+      "external_io": {
+        "gold": 625,
+        "predicted": 0,
+        "precision": null,
+        "recall": 0.0
+      }
+    },
+    "after": {
+      "label": {
+        "symbols": 4142,
+        "accuracy": 0.9973,
+        "box_accuracy": 0.9829,
+        "status": {
+          "inside": 1338,
+          "linked": 2686,
+          "要確認": 118
+        },
+        "wrong": {
+          "contact_a": 1,
+          "relay_coil": 10
+        }
+      },
+      "timer": {
+        "gold": 204,
+        "predicted": 204,
+        "precision": 0.9853,
+        "recall": 0.9853
+      },
+      "latch_coil": {
+        "gold": 418,
+        "predicted": 416,
+        "precision": 0.9976,
+        "recall": 0.9928
+      },
+      "signal_name": {
+        "gold": 1023,
+        "predicted": 1023,
+        "precision": 1.0,
+        "recall": 1.0
+      },
+      "external_io": {
+        "gold": 625,
+        "predicted": 625,
+        "precision": 1.0,
+        "recall": 1.0
+      }
+    }
+  },
+  {
+    "noise": 0.5,
+    "sheets": 200,
+    "before": {
+      "label": {
+        "symbols": 4142,
+        "accuracy": 0.7709,
+        "box_accuracy": 0.955,
+        "status": {
+          "inside": 1407,
+          "linked": 2473,
+          "要確認": 262
+        },
+        "wrong": {
+          "connector": 72,
+          "contact_a": 420,
+          "contact_b": 149,
+          "relay_coil": 308
+        }
+      },
+      "timer": {
+        "gold": 204,
+        "predicted": 0,
+        "precision": null,
+        "recall": 0.0
+      },
+      "latch_coil": {
+        "gold": 418,
+        "predicted": 0,
+        "precision": null,
+        "recall": 0.0
+      },
+      "signal_name": {
+        "gold": 1023,
+        "predicted": 0,
+        "precision": null,
+        "recall": 0.0
+      },
+      "external_io": {
+        "gold": 625,
+        "predicted": 0,
+        "precision": null,
+        "recall": 0.0
+      }
+    },
+    "after": {
+      "label": {
+        "symbols": 4142,
+        "accuracy": 0.9411,
+        "box_accuracy": 0.9687,
+        "status": {
+          "inside": 1360,
+          "linked": 2661,
+          "要確認": 121
+        },
+        "wrong": {
+          "connector": 27,
+          "contact_a": 94,
+          "contact_b": 39,
+          "relay_coil": 84
+        }
+      },
+      "timer": {
+        "gold": 204,
+        "predicted": 204,
+        "precision": 0.9853,
+        "recall": 0.9853
+      },
+      "latch_coil": {
+        "gold": 418,
+        "predicted": 416,
+        "precision": 0.988,
+        "recall": 0.9833
+      },
+      "signal_name": {
+        "gold": 1023,
+        "predicted": 1015,
+        "precision": 0.9813,
+        "recall": 0.9736
+      },
+      "external_io": {
+        "gold": 625,
+        "predicted": 602,
+        "precision": 1.0,
+        "recall": 0.9632
+      }
+    }
+  },
+  {
+    "noise": 1.0,
+    "sheets": 200,
+    "before": {
+      "label": {
+        "symbols": 4142,
+        "accuracy": 0.7195,
+        "box_accuracy": 0.932,
+        "status": {
+          "inside": 1405,
+          "linked": 2434,
+          "要確認": 303
+        },
+        "wrong": {
+          "connector": 87,
+          "contact_a": 513,
+          "contact_b": 162,
+          "relay_coil": 400
+        }
+      },
+      "timer": {
+        "gold": 204,
+        "predicted": 0,
+        "precision": null,
+        "recall": 0.0
+      },
+      "latch_coil": {
+        "gold": 418,
+        "predicted": 0,
+        "precision": null,
+        "recall": 0.0
+      },
+      "signal_name": {
+        "gold": 1023,
+        "predicted": 0,
+        "precision": null,
+        "recall": 0.0
+      },
+      "external_io": {
+        "gold": 625,
+        "predicted": 0,
+        "precision": null,
+        "recall": 0.0
+      }
+    },
+    "after": {
+      "label": {
+        "symbols": 4142,
+        "accuracy": 0.8887,
+        "box_accuracy": 0.9495,
+        "status": {
+          "inside": 1372,
+          "linked": 2646,
+          "要確認": 124
+        },
+        "wrong": {
+          "connector": 51,
+          "contact_a": 184,
+          "contact_b": 47,
+          "relay_coil": 179
+        }
+      },
+      "timer": {
+        "gold": 204,
+        "predicted": 204,
+        "precision": 0.9853,
+        "recall": 0.9853
+      },
+      "latch_coil": {
+        "gold": 418,
+        "predicted": 386,
+        "precision": 0.9793,
+        "recall": 0.9043
+      },
+      "signal_name": {
+        "gold": 1023,
+        "predicted": 1002,
+        "precision": 0.9561,
+        "recall": 0.9365
+      },
+      "external_io": {
+        "gold": 625,
+        "predicted": 573,
+        "precision": 1.0,
+        "recall": 0.9168
+      }
+    }
+  }
+]

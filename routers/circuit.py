@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -455,3 +455,36 @@ def demo_api(payload: DemoRequest, db: Session = Depends(get_db)):
                          targets=payload.targets or None)
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
+
+
+@router.get("/io-table")
+def io_table_get():
+    """登録した I/O 表の件数と先頭の行（DD-0050）。"""
+    from services import io_table
+
+    return io_table.summary(io_table.load())
+
+
+@router.put("/io-table")
+async def io_table_put(file: UploadFile = File(...)):
+    """I/O 表（CSV / Excel）を登録する。回路を組むたびに、器具番号が一致する接点へ外部入力と信号名を入れる（DD-0050）。"""
+    from services import io_table
+
+    data = await file.read()
+    if len(data) > 10 * 1024 * 1024:
+        raise HTTPException(413, "I/O 表は 10 MB までです")
+    try:
+        rows = io_table.parse(data, file.filename or "")
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if not rows:
+        raise HTTPException(400, "I/O 表に行がありません")
+    return io_table.save(rows, file.filename or "io_table")
+
+
+@router.delete("/io-table")
+def io_table_delete():
+    from services import io_table
+
+    io_table.clear()
+    return io_table.summary(None)

@@ -217,6 +217,7 @@ ZIP を選択してインポートすると、`bundle.json` の有無で復元�
   - SPICE ネットリスト（`.cir`）: LTspice・ngspice で開ける
   - Lcapy のネットリスト・SKiDL のスクリプト（DD-0028）: リレーの動作は表せないため、電気の答え合わせと KiCad 用のネットリスト用。Lcapy・SKiDL は任意の依存（`requirements-interop.txt`）で、Windows EXE には入れない
 - 図面をまたぐつながりは、母線（PER…/NER…）、同じ器具番号のリレー、行先札・来先札の組（DD-0030）で作る。区別できない札は無理につながず、検査に出す
+- 属性の候補（DD-0050）: AI 解析は図面の文字から、タイマーの種類と時間（コイルの右の「1sec」、下の型式 TDPU / TDDO）、キープリレーのセット・リセット（並んだ丸の中の O・R）、信号名（母線の上の縦書き）、外部入力（I/O カードの点番号 D001 の接点）を推定し、AI 取込の記号に入れて注記に確かめる理由を書く。I/O 表（器具番号と信号名の一覧。デモ画面の「I/O 表を登録」）を登録すると、回路を組むたびに器具番号が一致する接点へ外部入力と信号名を入れる。人が登録した図面では入っている属性を変えず、AI 解析だけの図面では I/O 表を優先する
 - タイマー（限時継電器）はリレーコイルの属性で表す。タイマーの時間が無いものは 0 秒として扱い、確認が必要な箇所に出す（DD-0033）
 - 押しボタンなど入力の接点は、名前の規則（停止は b 接点、起動は a 接点）で a/b の読み違いを確認する（DD-0033）
 - 将来 LLM が図面を変更するときは、`GET /api/circuit/edit/tools` のツール定義（JSON Schema）で操作を出し、試行の結果を見て人が適用する。LLM の呼び出しそのものはアプリに入れていない（ローカル LLM を前提とし、外部 API は使わない）
@@ -309,6 +310,9 @@ ZIP を選択してインポートすると、`bundle.json` の有無で復元�
 | `GET` | `/api/circuit/devices.xlsx?project_ids=1,2` | 機器索引の Excel（機器一覧・接点の場所・電線番号・要確認の 4 シート） |
 | `POST` | `/api/circuit/consistency` | `{project_ids[]}`。解析方法どうしの矛盾と精査の結果・直し方（DD-0031） |
 | `POST` | `/api/circuit/consistency/apply` | `{project_ids[], issue_ids[]}`。選んだ直し方をアノテーションに適用し、もう一度チェックした結果を返す |
+| `GET` | `/api/circuit/io-table` | 登録した I/O 表の要約（`loaded`・`file_name`・`updated_at`・`rows`・`inputs`・先頭 5 行の `preview`。DD-0050） |
+| `PUT` | `/api/circuit/io-table` | multipart の `file`（CSV〈UTF-8 / Shift_JIS、カンマ・タブ〉か .xlsx、10 MB まで）。見出しから器具番号・信号名・入出力の列を決めて登録する。見出しが無ければ 400 |
+| `DELETE` | `/api/circuit/io-table` | I/O 表を外す |
 | `GET` | `/api/circuit/edit/tools` | 図面の変更の LLM 用ツール定義と操作ごとの JSON スキーマ（DD-0034） |
 | `POST` | `/api/circuit/edit/context` | `{project_ids[]}`。変更する図面の記号・端子・配線・回路コード（LLM に渡す文脈） |
 | `POST` | `/api/circuit/edit/preview` | `{project_ids[], ops[], title, reason, author, base_hash}`（`ops` は最大 200）。試行: 差分・検証・動作の変化・波及範囲。図面は変えない |

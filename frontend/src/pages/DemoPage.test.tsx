@@ -13,6 +13,9 @@ const api = vi.hoisted(() => ({
   createProjects: vi.fn(),
   startAnalysisJob: vi.fn(),
   getAnalysisJob: vi.fn(),
+  ioTable: vi.fn(),
+  uploadIoTable: vi.fn(),
+  deleteIoTable: vi.fn(),
   imageUrl: (id: number) => `/img/${id}`,
 }))
 vi.mock('../api/client', () => ({ api, BASE: '' }))
@@ -21,6 +24,8 @@ const rows = [
   { id: 1, name: 'a', sheet_no: 'EV31031', image_width: 1000, image_height: 700, symbol_count: 0, analysis_wire_count: 40 },
   { id: 2, name: 'b', sheet_no: 'EV31036', image_width: 1000, image_height: 700, symbol_count: 0, analysis_wire_count: null },
 ] as ProjectRow[]
+
+const NO_TABLE = { loaded: false, file_name: null, updated_at: null, rows: 0, inputs: 0, preview: [] }
 
 const IN = 'D009 B413'
 const OUT = '6X P33P22'
@@ -59,6 +64,7 @@ function demo(on: boolean): DemoView {
 beforeEach(() => {
   vi.clearAllMocks()
   api.listProjects.mockResolvedValue(rows)
+  api.ioTable.mockResolvedValue(NO_TABLE)
   api.demoView.mockImplementation(async (_ids: number[], inputs: Record<string, boolean>) => demo(Boolean(inputs[IN])))
 })
 
@@ -112,5 +118,19 @@ describe('DemoPage', () => {
     fireEvent.click(ui.getByRole('button', { name: /AI 解析（1 枚）/ }))
     await waitFor(() => expect(api.startAnalysisJob).toHaveBeenCalledWith([2]))
     expect(await ui.findByText(/解析中 0 \/ 1/)).toBeTruthy()
+  })
+
+  it('I/O 表を登録すると行数が出て、外せる', async () => {
+    api.uploadIoTable.mockResolvedValue({ ...NO_TABLE, loaded: true, file_name: 'io.csv', rows: 12, inputs: 8 })
+    api.deleteIoTable.mockResolvedValue(NO_TABLE)
+    const ui = render(<MemoryRouter><DemoPage /></MemoryRouter>)
+    await ui.findByRole('button', { name: /I\/O 表を登録/ })
+    const file = new File(['器具番号,信号名\nD001 B405,起動'], 'io.csv', { type: 'text/csv' })
+    fireEvent.change(ui.getByLabelText('I/O 表のファイル'), { target: { files: [file] } })
+    await waitFor(() => expect(api.uploadIoTable).toHaveBeenCalledWith(file))
+    expect(await ui.findByRole('button', { name: /I\/O 表（12 行）/ })).toBeTruthy()
+    fireEvent.click(ui.getByRole('button', { name: 'I/O 表を外す' }))
+    await waitFor(() => expect(api.deleteIoTable).toHaveBeenCalled())
+    expect(await ui.findByRole('button', { name: /I\/O 表を登録/ })).toBeTruthy()
   })
 })
