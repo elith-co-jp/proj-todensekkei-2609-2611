@@ -46,7 +46,7 @@ from services.annotation_service import (
     serialize_project,
     store_image_bytes,
 )
-from services.geometry import sanitize_box
+from services.geometry import label_box_columns, sanitize_box
 from services.jst import now_iso_jst
 from symbol_class_policy import canonical_symbol_class_key
 
@@ -406,6 +406,7 @@ def _restore_project_from_bundle(db: Session, proj: dict, images: dict[str, byte
             origin=s.get("origin") or "manual",
             confidence=s.get("confidence"),
             attributes_json=dump_attributes(s.get("attributes")),
+            **label_box_columns(s.get("label_box")),
         )
         db.add(sym)
         sym_by_ref[sym.ref] = sym

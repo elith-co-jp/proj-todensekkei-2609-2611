@@ -25,6 +25,7 @@ import {
 import {
   aiImportAddedCount,
   aiImportNotice,
+  applyLabelLinks,
   buildAnnotationPayload,
   buildMetaForm,
   clamp01,
@@ -32,6 +33,7 @@ import {
   fitInside,
   isAnnotationPayload,
   isMetaForm,
+  labelLinkNotice,
   mergeAiImport,
   MIN_BOX,
   nextSymbolRef,
@@ -90,6 +92,9 @@ export default function EditorPage() {
   const [metaSaveStatus, setMetaSaveStatus] = useState<SaveStatus>('saved')
   const [exporting, setExporting] = useState(false)
   const [aiApplying, setAiApplying] = useState(false)
+  /* ラベルの文字の位置を囲んでいる記号（DD-0049）。次のドラッグは記号ではなくこの記号のラベルの位置になる */
+  const [labelTarget, setLabelTarget] = useState<string | null>(null)
+  const [labelLinking, setLabelLinking] = useState(false)
   const [shortcutsVisible, setShortcutsVisible] = useState(false)
   const [inspectorOpen, setInspectorOpen] = useState(() =>
     typeof window === 'undefined' ? true : window.matchMedia('(min-width: 1024px)').matches,
@@ -616,6 +621,48 @@ export default function EditorPage() {
     }
   }
 
+  /* 印だけを囲んだ記号に、近くに書かれた器具番号の文字をラベルとして付ける（DD-0049）*/
+  const suggestLabels = async () => {
+    if (labelLinking) return
+    setLabelLinking(true)
+    try {
+      const payload = buildAnnotationPayload(symbols, connections).symbols
+      const result = await api.labelLinks(projectId, payload)
+      const applied = applyLabelLinks(symbols, result.links)
+      if (applied.filled + applied.located > 0) {
+        pushHistory()
+        setSymbols(applied.symbols)
+      }
+      setNotice(labelLinkNotice(applied, result.links.length))
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setLabelLinking(false)
+    }
+  }
+
+  const setLabelBox = (ref: string, x1: number, y1: number, x2: number, y2: number) => {
+    const raw = fitInside((x1 + x2) / 2, (y1 + y2) / 2, Math.abs(x2 - x1), Math.abs(y2 - y1))
+    if (raw.w < MIN_BOX || raw.h < MIN_BOX) return
+    pushHistory()
+    setSymbols((prev) => prev.map((s) => (s.ref === ref ? { ...s, label_box: raw } : s)))
+    setNotice(`${ref} のラベルの文字の位置を付けました`)
+  }
+
+  const clearLabelBox = (ref: string) => {
+    pushHistory()
+    setSymbols((prev) => prev.map((s) => (s.ref === ref ? { ...s, label_box: null } : s)))
+  }
+
+  useEffect(() => {
+    if (!labelTarget) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setLabelTarget(null)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [labelTarget])
+
   const addTerminal = (ref: string, nx: number, ny: number) => {
     pushHistory()
     setSymbols((prev) =>
@@ -771,6 +818,11 @@ export default function EditorPage() {
     if (e.button !== 0) return
     e.preventDefault()
 
+    if (labelTarget) {
+      startDrag({ kind: 'draw', x1: nx, y1: ny, x2: nx, y2: ny, labelFor: labelTarget })
+      return
+    }
+
     if (mode === 'connect') {
       const t = hitTerminal(nx, ny)
       const s = t?.symbol ?? hitSymbol(nx, ny)
@@ -877,7 +929,10 @@ export default function EditorPage() {
     }
     const up = (e: PointerEvent) => {
       if (e.pointerId !== activePointerIdRef.current) return
-      if (drag.kind === 'draw') addSymbol(drag.x1, drag.y1, drag.x2, drag.y2)
+      if (drag.kind === 'draw' && drag.labelFor) {
+        setLabelBox(drag.labelFor, drag.x1, drag.y1, drag.x2, drag.y2)
+        setLabelTarget(null)
+      } else if (drag.kind === 'draw') addSymbol(drag.x1, drag.y1, drag.x2, drag.y2)
       cancelActivePointer()
     }
     const cancel = (e: PointerEvent) => {
@@ -892,7 +947,7 @@ export default function EditorPage() {
       window.removeEventListener('pointerup', up)
       window.removeEventListener('pointercancel', cancel)
     }
-  }, [addSymbol, cancelActivePointer, drag, fitInside, iw, toNorm])
+  }, [addSymbol, cancelActivePointer, drag, fitInside, iw, setLabelBox, toNorm])
 
   const onWheel = (e: React.WheelEvent) => {
     e.preventDefault()
@@ -1175,7 +1230,7 @@ export default function EditorPage() {
         onToggleInspector={() => setInspectorOpen((value) => !value)}
       />
 
-      {(pending || notice || visibleError) && (
+      {(pending || notice || visibleError || labelTarget) && (
         <div
           className={`flex flex-none items-center gap-3 border-b px-4 py-2 text-xs ${
             visibleError
@@ -1192,6 +1247,8 @@ export default function EditorPage() {
           <span className="min-w-0 flex-1 break-words">
             {visibleError
               ? visibleError
+              : labelTarget
+              ? `${labelTarget} のラベル（器具番号）の文字をドラッグで囲んでください（Escで取消）`
               : pending
               ? `始点: ${pending.symbolRef}${pending.terminalRef ? `:${pending.terminalRef.split('-').pop()}` : ''} → 終点をクリック（Escで取消）`
               : notice}
@@ -1226,7 +1283,7 @@ export default function EditorPage() {
           className="surface-grid relative min-h-0 min-w-0 touch-none flex-1 overflow-hidden"
           aria-hidden={inspectorOpen && !desktopInspector}
           inert={inspectorOpen && !desktopInspector ? true : undefined}
-          style={{ cursor: mode === 'box' ? 'crosshair' : drag.kind === 'pan' ? 'grabbing' : 'default' }}
+          style={{ cursor: mode === 'box' || labelTarget ? 'crosshair' : drag.kind === 'pan' ? 'grabbing' : 'default' }}
         >
           <p id="annotation-keyboard-help" className="sr-only">
             シンボルモードではEnterキーで中央に矩形を作成できます。選択した矩形は矢印キーで移動し、
@@ -1289,6 +1346,7 @@ export default function EditorPage() {
               colorOf={colorOf}
               draftRect={draftRect}
               draftClassKey={classKey}
+              draftIsLabel={drag.kind === 'draw' && Boolean(drag.labelFor)}
             />
           </div>
         </div>
@@ -1323,6 +1381,11 @@ export default function EditorPage() {
             annotationSaveStatus={saveStatus}
             onQueueMetaSave={queueMetaSave}
             onSplitCoilWires={splitCoilWires}
+            labelTarget={labelTarget}
+            onStartLabelBox={(ref) => setLabelTarget((cur) => (cur === ref ? null : ref))}
+            onClearLabelBox={clearLabelBox}
+            onSuggestLabels={suggestLabels}
+            labelLinking={labelLinking}
           />
         )}
       </div>

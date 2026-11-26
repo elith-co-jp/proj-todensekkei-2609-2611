@@ -16,6 +16,7 @@ const apiMocks = vi.hoisted(() => ({
   getPredictions: vi.fn(),
   getReviewSummary: vi.fn(),
   imageUrl: vi.fn((id: number) => `/api/projects/${id}/image`),
+  labelLinks: vi.fn(),
   listClasses: vi.fn(),
   listProjects: vi.fn(),
   saveAnnotations: vi.fn(),
@@ -495,6 +496,66 @@ describe('EditorPage interactions', () => {
     })
     expect(saved.symbols.map((s: { ref: string }) => s.ref)).toEqual(['SYM-0001', 'SYM-0002', 'SYM-0003'])
     expect(saved.connections).toEqual([expect.objectContaining({ to_symbol_ref: 'SYM-0003', origin: 'inference' })])
+  })
+
+  it('近くの文字からラベルを付け、要確認の候補はメモに書いて保存する（DD-0049）', async () => {
+    apiMocks.labelLinks.mockResolvedValue({
+      source: 'analysis',
+      links: [
+        {
+          ref: 'SYM-0001', label: '83DX-1 P33P22', status: 'linked', direction: 'right',
+          label_box: { cx: 0.4, cy: 0.4, w: 0.05, h: 0.03 }, candidates: [],
+        },
+        {
+          ref: 'SYM-0002', label: 'TB3', status: '要確認', direction: 'above',
+          label_box: { cx: 0.6, cy: 0.5, w: 0.03, h: 0.02 },
+          candidates: [
+            { text: 'TB3', box: { cx: 0.6, cy: 0.5, w: 0.03, h: 0.02 } },
+            { text: 'TB4', box: { cx: 0.7, cy: 0.5, w: 0.03, h: 0.02 } },
+          ],
+        },
+      ],
+    })
+    const { container, findByRole, findByText, getByRole } = renderEditor()
+    await findByRole('region', { name: '図面アノテーションキャンバス' })
+
+    fireEvent.click(getByRole('button', { name: '近くの文字からラベル' }))
+
+    expect(
+      await findByText(
+        '近くの文字から 2 個の記号にラベルを付けました。うち 1 個は候補が複数あるため、メモに候補を書きました。確かめてください。',
+      ),
+    ).toBeTruthy()
+    expect(apiMocks.labelLinks.mock.calls[0][0]).toBe(1)
+    expect(container.querySelectorAll('[data-label-box]')).toHaveLength(2)
+
+    fireEvent.click(await findByRole('button', { name: '変更を検出' }))
+    await waitFor(() => expect(apiMocks.saveAnnotations).toHaveBeenCalledTimes(1))
+    const saved = apiMocks.saveAnnotations.mock.calls[0][1]
+    expect(saved.symbols[0]).toMatchObject({ label: '83DX-1 P33P22', label_box: { cx: 0.4, cy: 0.4, w: 0.05, h: 0.03 } })
+    expect(saved.symbols[1]).toMatchObject({ label: 'TB3', note: 'ラベル要確認（候補: TB3 / TB4）' })
+  })
+
+  it('選んだ記号のラベルの文字の位置を図面で囲んで付ける（DD-0049）', async () => {
+    Object.defineProperties(HTMLElement.prototype, {
+      setPointerCapture: { configurable: true, value: vi.fn() },
+      releasePointerCapture: { configurable: true, value: vi.fn() },
+      hasPointerCapture: { configurable: true, value: () => true },
+    })
+    const { container, findByRole, findByText, getByRole, queryByRole } = renderEditor()
+    const canvas = await findByRole('region', { name: '図面アノテーションキャンバス' })
+    fireEvent.click(getByRole('button', { name: /^SYM-0001リレー$/ }))
+
+    fireEvent.click(getByRole('button', { name: '図面で囲む' }))
+    expect(await findByText('SYM-0001 のラベル（器具番号）の文字をドラッグで囲んでください（Escで取消）')).toBeTruthy()
+    fireEvent.pointerDown(canvas, { pointerId: 3, button: 0, clientX: 400, clientY: 300 })
+    fireEvent.pointerMove(window, { pointerId: 3, clientX: 460, clientY: 330 })
+    fireEvent.pointerUp(window, { pointerId: 3, clientX: 460, clientY: 330 })
+
+    expect(await findByText('SYM-0001 のラベルの文字の位置を付けました')).toBeTruthy()
+    expect(container.querySelectorAll('[data-label-box="SYM-0001"]')).toHaveLength(1)
+    // 囲んだのはラベルの位置で、新しい記号は増えない。
+    expect(queryByRole('button', { name: /^SYM-0003/ })).toBeNull()
   })
 
   it('AI 推論で足すものが無いときは画面を変えず、AI 解析で端子と配線を取り込めることを伝える', async () => {

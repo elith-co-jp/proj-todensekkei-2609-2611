@@ -772,6 +772,52 @@ def link_relay_table(rows: list[dict[str, str]], symbols: list[dict[str, Any]]) 
     return links
 
 
+def _reread_link_crops(
+    image: Image.Image, symbols: list[dict[str, Any]], marks: list[Box], links: dict[str, dict[str, Any]], reader: Any,
+    lexicon: Counter,
+) -> dict[int, str]:
+    """近くの文字を結んだ接点・コイル・コネクタのラベルを、文字のまとまりを拡大して読み直す（DD-0049）。
+
+    ページ全体の読みでは、器具番号の短い行（5D・86T）を読み落としたり 50 と読んだりする。まとまりの 1 行上まで広げて
+    4 倍で読み、同じ位置のまとまりの文字を返す。
+    """
+    from analysis import label_link
+
+    jobs = []
+    for symbol in symbols:
+        link = links.get(str(symbol.get("id")))
+        if (symbol.get("class_name") or "") not in CROP_OCR_CLASSES or not link or not link["label_box"]:
+            continue
+        x0, y0, x1, y1 = link["label_box"]
+        line_h = link.get("line_height") or 12.0
+        jobs.append((symbol, link, (x0 - 1, y0 - 1.3 * line_h, x1 + 4, y1 + 2)))
+    if not jobs:
+        return {}
+    results = run_all([partial(read_crop_text, image, box, reader) for _s, _l, box in jobs])
+    out: dict[int, str] = {}
+    for (symbol, link, _box), crop_items in zip(jobs, results, strict=True):
+        blocks = label_link.build_blocks(label_link.outside_lines(crop_items, marks))
+        target = tuple(link["label_box"])
+        best = max(blocks, key=lambda b: _overlap_area(b.box, target), default=None)
+        if best is not None and _overlap_area(best.box, target) > 0:
+            out[id(symbol)] = label_link.label_text(best, symbol.get("class_name") or "", lexicon)
+    return out
+
+
+def linked_label(page_label: str, crop_label: str | None, lexicon: Counter) -> str:
+    """近くの文字から作ったラベルを、拡大読みと比べて決める。拡大読みが行を多く読めていれば（ページ読みが落とした
+    器具番号の行）それを採り、それ以外は記号の枠の拡大読みと同じ規則（best_label）で選ぶ。"""
+    if not crop_label:
+        return page_label
+    if len(crop_label.split()) > len(page_label.split()):
+        return crop_label
+    return best_label(crop_label, page_label, lexicon)
+
+
+def _overlap_area(a: Box, b: Box) -> float:
+    return max(0.0, min(a[2], b[2]) - max(a[0], b[0])) * max(0.0, min(a[3], b[3]) - max(a[1], b[1]))
+
+
 def extract_text_structure(
     image: Image.Image, symbols: list[dict[str, Any]], regions: list[dict[str, Any]], reader: Any,
     label_reader: LabelReader | None = None, text_reader: LabelReader | None = None, text_source: str = "llm",
@@ -783,6 +829,8 @@ def extract_text_structure(
     crop_reader があれば枠ごとの拡大 OCR だけをそれで読む（図面の字体に合わせた文字認識、#50）。
     label_reader があれば器具番号の形でない接点・コイルのラベルを、text_reader があれば日本語の名称・注記を読み直す。
     """
+    from analysis import label_link  # label_link はこのモジュールの関数を使うので、ここで読み込む
+
     width, height = image.size
     # ページのタイルと記号ごとの拡大読みは互いに依存しないので、まとめて並べて読む（analysis.parallel）。
     tiles = page_tiles(image)
@@ -795,6 +843,12 @@ def extract_text_structure(
     crop_items_of = {id(s): crop_items for s, crop_items in zip(cropped, results[len(tiles):], strict=True)}
     lexicon = page_lexicon(items)
     zones = text_zones(items, width, height)
+    links = label_link.link_labels(items, symbols, lexicon=lexicon, zones=zones)
+    # 近くの文字を使う記号を決め（label_link.link_targets）、その記号だけ結んだ文字を拡大して読み直す。
+    page_labels = {id(s): symbol_label(items, s["bbox"], s.get("class_name") or "", lexicon) for s in symbols}
+    unnamed = label_link.link_targets(symbols, page_labels)
+    unnamed_ids = {id(s) for s in unnamed}
+    link_crops = _reread_link_crops(image, unnamed, label_link.owner_boxes(symbols), links, crop_reader or reader, lexicon)
     for symbol in symbols:
         class_name = symbol.get("class_name") or ""
         label = symbol_label(items, symbol["bbox"], class_name, lexicon)
@@ -807,6 +861,15 @@ def extract_text_structure(
                 x0, y0, x1, y1 = _as_box(symbol["bbox"])
                 pad = CROP_PADDING_PX
                 symbol["text_items"] = words_in_box(drop_glyph_marks(crop_items), (x0 - pad, y0 - pad, x1 + pad, y1 + pad))
+        link = links.get(str(symbol.get("id")))
+        if link is not None and id(symbol) in unnamed_ids and link["label"] and link["status"] != "未検出":
+            # 印だけを囲んだ枠（DD-0049）: 枠の中に器具番号が無いので、近くに書かれた文字のまとまりをラベルにする。
+            link["label"] = linked_label(link["label"], link_crops.get(id(symbol)), lexicon)
+            label = link["label"]
+            symbol["label_box"] = link["label_box"]
+            symbol["label_link"] = {k: link[k] for k in ("status", "direction", "gap", "candidates")}
+        elif link is not None and id(symbol) in unnamed_ids:
+            symbol["label_link"] = {k: link[k] for k in ("status", "direction", "gap", "candidates")}
         reread = reread_label(image, symbol["bbox"], class_name, label, label_reader)
         if reread is not None:
             symbol["ocr_label"], symbol["label_source"], label = label, "llm", reread

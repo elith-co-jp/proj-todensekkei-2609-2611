@@ -20,12 +20,34 @@ export type Terminal = {
 
 export type SymbolOrigin = 'manual' | 'inference'
 
+/** ラベル（器具番号）の文字が図面に書かれた位置。正規化座標（DD-0049） */
+export type LabelBox = { cx: number; cy: number; w: number; h: number }
+
+/** 近くの文字から作ったラベルの候補（POST /api/projects/{id}/label-links） */
+export type LabelLink = {
+  ref: string
+  label: string
+  /** linked=決まった / 要確認=近い候補が複数 / 未検出=近くに文字が無い */
+  status: 'linked' | '要確認' | '未検出'
+  direction: 'inside' | 'right' | 'left' | 'above' | 'below' | null
+  label_box: LabelBox | null
+  candidates: { text: string; box: LabelBox }[]
+}
+
+export type LabelLinkResult = {
+  /** 使った文字: analysis=AI 解析で読んだ文字 / pdf_text=PDF の文字 / ocr=その場で読んだ文字 */
+  source: 'analysis' | 'pdf_text' | 'ocr'
+  links: LabelLink[]
+}
+
 export type SymbolBox = {
   ref: string
   class_key: string
   class_label?: string
   yolo_index?: number
   label: string | null
+  /** ラベルの文字の位置。記号の枠は印だけを囲み、器具番号の文字は枠の外にある（DD-0049） */
+  label_box?: LabelBox | null
   /** すべて正規化座標 (0-1)。YOLO 形式と同じ表現 */
   cx: number
   cy: number

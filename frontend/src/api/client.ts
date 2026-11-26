@@ -25,6 +25,7 @@ import type {
   ClassStats,
   HardDrawings,
   InferenceImportResult,
+  LabelLinkResult,
   InferenceRunResponse,
   MlModel,
   MlStatus,
@@ -135,6 +136,13 @@ export const api = {
     }),
 
   deleteProject: (id: number) => req<{ deleted: number }>(`/api/projects/${id}`, { method: 'DELETE' }),
+
+  labelLinks: (id: number, symbols: unknown[]) =>
+    req<LabelLinkResult>(`/api/projects/${id}/label-links`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ symbols }),
+    }),
 
   suggestSheetNumber: (id: number) =>
     req<{ candidates: SheetNumberCandidate[] }>(`/api/projects/${id}/sheet-number/suggest`, {

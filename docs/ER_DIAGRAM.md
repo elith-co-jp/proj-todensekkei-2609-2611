@@ -65,6 +65,10 @@ erDiagram
         string origin "manual / inference"
         float confidence "推論由来の信頼度（NULL 可）"
         text attributes_json "メーカー・型式などの属性（DD-0010）"
+        float label_cx "ラベルの文字の位置（正規化、NULL 可。DD-0049）"
+        float label_cy
+        float label_w
+        float label_h
         datetime created_at
     }
     symbol_terminals {
@@ -251,7 +255,8 @@ NULL は「まだ写していない」の意味です。`GET /api/ml/projects/{i
 ### 既存 DB の移行
 
 `db_migrations.py` の `STEPS` を起動のたびに順に実行します。どの手順も済んでいれば何もしません。
-列の追加、件数の列の埋め戻し、文字の列（`texts_json`）の埋め戻し（DD-0042）、親の無い行の片付け、配線の参照名の振り直し（欠けと重複）、
+列の追加（DD-0049 のラベルの文字の位置 `annotation_symbols.label_cx/cy/w/h` を含む。NULL 可なので埋め戻しは無く、
+戻すときは列を使わないだけでよい）、件数の列の埋め戻し、文字の列（`texts_json`）の埋め戻し（DD-0042）、親の無い行の片付け、配線の参照名の振り直し（欠けと重複）、
 索引の作成、主キーに重ねた索引の削除、の順です。
 
 ### AI 改善サイクルのデータ

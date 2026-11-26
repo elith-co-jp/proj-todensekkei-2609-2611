@@ -145,6 +145,7 @@ from-to を Union-Find で連結し、導通する端子集合（ネット）に
           "ref": "SYM-0001",
           "class_key": "relay_coil", "class_label": "リレーコイル", "yolo_index": 0,
           "label": "33HB",
+          "label_box": { "cx": 0.401, "cy": 0.47, "w": 0.02, "h": 0.012 },
           "cx": 0.382353, "cy": 0.499653, "w": 0.058824, "h": 0.083187,
           "note": null,
           "terminals": [
@@ -170,6 +171,8 @@ from-to を Union-Find で連結し、導通する端子集合（ネット）に
 - `ref` はプロジェクト内で一意な文字列。DB の主キーではないため、別環境に取り込んでも一致します。
 - 端子の `ref` は `<シンボルref>-T<連番>` を既定とします。
 - 配線の `*_terminal_ref` が `null` の場合はシンボル単位の接続を意味します。
+- 記号の `label_box` は、ラベル（器具番号）の文字が図面に書かれた位置（正規化の中心と幅・高さ）。記号の枠は印だけを囲み、
+  文字は枠の外にあるので、どの文字をラベルにしたかをここで示す（DD-0049）。付けていなければ `null`。YOLO のラベルには入りません。
 - インポート時、同じ `key` のクラスは既存の `yolo_index` を再利用し、未知のクラスは末尾に採番します。
   **class id を厳密に一致させたい場合は、取り込み先を空の状態にしてからインポートしてください。**
 
@@ -248,6 +251,7 @@ AI 改善サイクル画面の構造解析をまとめて書き出したファ�
 | `symbols[].other_kind` | 「その他」の区分（暫定）。`destination`（行先・来先）、`card`、`terminal_unit`（端子台ユニット）、`equipment`（盤・装置）、`breaker`（遮断器）、`unknown` |
 | `symbols[].relay_link` | 書き出し時だけ付く。ラベルに別のシート番号がある接点・コイルについて、その図面（`project_id`）の同じ器具番号のコイル（`coil_symbol_ids`）とリレー表の行番号（`relay_table_rows`）。参照先の図面を同時に書き出していなければ付かない |
 | `symbols[].label_source` | `llm` のときローカル LLM が読み直したラベル。元の OCR の読みは `ocr_label` |
+| `symbols[].label_box` / `label_link` | 枠の中に器具番号が無い記号（印だけの枠）に、近くの文字のまとまりを結んだとき（DD-0049）。`label_box` はその文字の位置 `[x0, y0, x1, y1]`。`label_link` は `status`（linked / 要確認 / 未検出）、`direction`（right・above など）、`gap`（枠どうしの隙間 px）、`candidates`（近い順の候補 3 つ） |
 | `texts[]` | 読めた文字。`kind` は `device_number`（器具番号）、`number`（端子番号・電線番号）、`destination`（行先・来先）、`relay_terminals`（リレー端子 5-9-1）、`name`（装置名・信号名称。`symbol_id` の記号に結び付く）、`note`（注記）、`other`。`zone` はリレー表・表題欄の中なら `relay_table` / `title_block`。読み直したものは `source`（`name_ocr`: 同梱の日本語対応 OCR、`llm`: ローカル LLM）と元の読み `ocr_text` を持つ |
 | `relay_table.rows[]` | リレー表の行。`device`（器具番号）、`terminal`（5-9-1）、`contact`（a / b）、`sheet`（「本」またはシート番号）、`position`（行列 10D） |
 | `relay_table.links[]` | 器具番号ごとに、表の行（`rows`）と同じ図面のコイル（`coil_symbol_ids`）・接点（`contact_symbol_ids`）。コイルが無い、または「本」の接点が足りないときは `status: "要確認"`。`row_links[]` は行ごとの行列の位置での紐付け（`row`、`position`、`sheet`、`symbol_id`、`status`、`reasons`） |
@@ -389,6 +393,7 @@ CVAT for images 1.1 の XML。`GET /api/exchange/cvat?project_ids=1,2` で書き
 | 要素 | CVAT の形 | 属性 |
 |---|---|---|
 | 記号 | box | `ref`・`text` |
+| ラベルの文字の位置（DD-0049） | box（label = `label_text`） | `text`。`group_id` で記号に結ぶ |
 | 端子 | points | `group_id` で記号に結ぶ |
 | 配線 | polyline | `from`・`to`・`wire_no`・`judge` |
 

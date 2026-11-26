@@ -139,6 +139,12 @@ class AnnotationSymbol(Base):
     # メーカー・型式・定格などの属性（キー → 値の JSON）。DD-0010
     attributes_json = Column(Text, nullable=True)
     confidence = Column(Float, nullable=True)  # 推論由来のときの信頼度 (0-1)
+    # ラベル（器具番号）の文字が図面に書かれた位置（正規化座標）。記号の枠は印だけを囲み、文字は枠の外にあるので、
+    # どの文字をラベルにしたかをここに持つ（DD-0049）。位置を付けていない記号は NULL。
+    label_cx = Column(Float, nullable=True)
+    label_cy = Column(Float, nullable=True)
+    label_w = Column(Float, nullable=True)
+    label_h = Column(Float, nullable=True)
     created_at = Column(DateTime, default=utc_now_naive)
 
     __table_args__ = (UniqueConstraint("project_id", "ref", name="uq_symbol_ref_per_project"),)

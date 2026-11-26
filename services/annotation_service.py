@@ -26,7 +26,7 @@ from models import (
     utc_now_naive,
 )
 from services.blob_store import store_blob
-from services.geometry import sanitize_box
+from services.geometry import label_box_columns, label_box_dict, sanitize_box
 from services.jst import iso_jst
 from symbol_class_policy import canonical_symbol_class_key
 
@@ -198,6 +198,7 @@ def replace_annotations(db: Session, project: AnnotationProject, payload) -> dic
             origin=(item.origin or "manual"),
             confidence=item.confidence,
             attributes_json=dump_attributes(item.attributes),
+            **label_box_columns(item.label_box),
         )
         db.add(sym)
         symbol_by_ref[ref] = sym
@@ -329,6 +330,7 @@ def _page_dict(project, symbols_in, terminals_of: dict, connections_in, cls_by_i
                 "class_label": cls.label if cls else "その他",
                 "yolo_index": cls.yolo_index if cls else 0,
                 "label": s.label,
+                "label_box": label_box_dict(s),
                 "cx": s.cx,
                 "cy": s.cy,
                 "w": s.w,

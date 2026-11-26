@@ -47,6 +47,11 @@ export function EditorInspector({
   annotationSaveStatus,
   onQueueMetaSave,
   onSplitCoilWires,
+  labelTarget = null,
+  onStartLabelBox,
+  onClearLabelBox,
+  onSuggestLabels,
+  labelLinking = false,
 }: {
   inspectorRef: React.RefObject<HTMLElement | null>
   desktopInspector: boolean
@@ -75,6 +80,13 @@ export function EditorInspector({
   annotationSaveStatus: SaveStatus
   onQueueMetaSave: (projectId: number, payload: MetaForm, immediate?: boolean) => void
   onSplitCoilWires: () => Promise<void>
+  /** ラベルの文字の位置を囲んでいる記号（DD-0049） */
+  labelTarget?: string | null
+  onStartLabelBox?: (ref: string) => void
+  onClearLabelBox?: (ref: string) => void
+  /** 近くの文字からラベルを付ける */
+  onSuggestLabels?: () => Promise<void>
+  labelLinking?: boolean
 }) {
   const symbolListRef = useRef<HTMLDivElement | null>(null)
   const [attributeDefs, setAttributeDefs] = useState<AttributeDefinitions | null>(null)
@@ -197,6 +209,17 @@ export function EditorInspector({
                     </button>
                   ))}
                 </div>
+                {onSuggestLabels && (
+                  <button
+                    type="button"
+                    className="btn btn-sm ml-auto"
+                    disabled={labelLinking}
+                    title="印だけを囲んだ記号に、近くに書かれた器具番号の文字をラベルとして付けます（入力済みのラベルは変えません）"
+                    onClick={() => void onSuggestLabels()}
+                  >
+                    {labelLinking ? '文字を読んでいます…' : '近くの文字からラベル'}
+                  </button>
+                )}
               </div>
             )}
             <div ref={symbolListRef} className="thin-scroll min-h-0 flex-1 overflow-auto">
@@ -289,6 +312,31 @@ export function EditorInspector({
                             />
                           </label>
                         </div>
+                        {onStartLabelBox && (
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <span className="text-[10px] font-bold text-slate-500">ラベルの文字の位置</span>
+                            <span className="text-[11px] text-slate-500">
+                              {s.label_box ? '図面に点線で表示' : '未設定'}
+                            </span>
+                            <button
+                              type="button"
+                              className="btn btn-sm"
+                              aria-pressed={labelTarget === s.ref}
+                              title="記号の枠は印だけを囲み、器具番号の文字はここで囲みます"
+                              onClick={() => onStartLabelBox(s.ref)}
+                            >
+                              {labelTarget === s.ref ? '囲むのをやめる' : s.label_box ? '囲み直す' : '図面で囲む'}
+                            </button>
+                            {s.label_box && onClearLabelBox && (
+                              <button type="button" className="btn btn-sm" onClick={() => onClearLabelBox(s.ref)}>
+                                位置を消す
+                              </button>
+                            )}
+                          </div>
+                        )}
+                        {s.note?.startsWith('ラベル要確認') && (
+                          <div className="rounded bg-amber-50 px-2 py-1 text-[11px] text-amber-800">{s.note}</div>
+                        )}
                         <div className="font-mono text-[10px] text-slate-400">
                           cx {s.cx.toFixed(4)} / cy {s.cy.toFixed(4)} / w {s.w.toFixed(4)} / h {s.h.toFixed(4)}
                         </div>

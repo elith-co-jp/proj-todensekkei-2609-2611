@@ -52,10 +52,20 @@ class TerminalPayload(BaseModel):
     origin: SymbolOrigin = "manual"
 
 
+class LabelBoxPayload(BaseModel):
+    """ラベル（器具番号）の文字が書かれた位置。記号と同じ正規化座標（中心と幅・高さ）。DD-0049"""
+
+    cx: float
+    cy: float
+    w: float
+    h: float
+
+
 class SymbolPayload(BaseModel):
     ref: str | None = None
     class_key: str
     label: str | None = None
+    label_box: LabelBoxPayload | None = None
     cx: float
     cy: float
     w: float
@@ -91,6 +101,12 @@ class AnnotationUpdatePayload(BaseModel):
 
     symbols: list[SymbolPayload] = []
     connections: list[ConnectionPayload] = []
+
+
+class LabelLinkRequest(BaseModel):
+    """編集中の記号（未保存でもよい）。近くの文字からラベルの候補を作る（DD-0049）。"""
+
+    symbols: list[SymbolPayload] = []
 
 
 class ProjectMetaPayload(BaseModel):

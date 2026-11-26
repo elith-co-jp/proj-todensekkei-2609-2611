@@ -29,6 +29,10 @@ ADDED_COLUMNS: list[tuple[str, str, str]] = [
     ("structure_predictions", "wire_count", "INTEGER"),
     ("structure_predictions", "connection_count", "INTEGER"),
     ("structure_predictions", "texts_json", "TEXT"),
+    ("annotation_symbols", "label_cx", "FLOAT"),
+    ("annotation_symbols", "label_cy", "FLOAT"),
+    ("annotation_symbols", "label_w", "FLOAT"),
+    ("annotation_symbols", "label_h", "FLOAT"),
 ]
 
 

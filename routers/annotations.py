@@ -24,6 +24,7 @@ from routers.common import get_project_or_404, safe_upload_name
 from schemas import (
     AnnotationUpdatePayload,
     BulkIdsRequest,
+    LabelLinkRequest,
     ProjectMetaPayload,
     SymbolClassPayload,
     YoloExportRequest,
@@ -41,6 +42,7 @@ from services.annotation_service import (
 )
 from services.export_service import import_zip, write_export_zip
 from services.jst import file_stamp_jst, iso_jst
+from services.label_link_service import suggest_label_links
 from services.page_orientation import upright_page
 from services.pdf_service import render_pdf_pages
 from services.sheet_number_service import suggest_sheet_numbers
@@ -288,6 +290,19 @@ def suggest_sheet_number(project_id: int, db: Session = Depends(get_db)):
         _logger.exception("Sheet number OCR failed")
         raise HTTPException(500, "シート番号の読み取りに失敗しました。手入力してください。") from exc
     return {"candidates": candidates}
+
+
+@router.post("/projects/{project_id}/label-links")
+def label_links(project_id: int, payload: LabelLinkRequest, db: Session = Depends(get_db)):
+    """印だけを囲んだ記号に、近くに書かれた器具番号の文字をラベルの候補として返す（DD-0049）。保存はしない。"""
+    p = get_project_or_404(db, project_id)
+    try:
+        return suggest_label_links(db, p, payload.symbols)
+    except RuntimeError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except Exception as exc:
+        _logger.exception("Label link failed")
+        raise HTTPException(500, "ラベルの候補を作れませんでした。手で入力してください。") from exc
 
 
 @router.put("/projects/{project_id}/annotations")
