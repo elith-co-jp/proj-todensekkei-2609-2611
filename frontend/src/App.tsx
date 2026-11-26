@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useReducer, useRef, useState } from 'react'
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import {
   ArrowDownUp,
@@ -18,6 +18,7 @@ import {
 import { api } from './api/client'
 import { Logo, LogoMark } from './components/Logo'
 import { OnboardingTour } from './components/OnboardingTour'
+import { desktopSessionReducer } from './hooks/desktopSession'
 import { useModalFocus } from './hooks/useModalFocus'
 import { isEditorPath } from './utils/workspace'
 
@@ -40,9 +41,11 @@ export default function App() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
   const [tourOpen, setTourOpen] = useState(false)
-  const [desktopMode, setDesktopMode] = useState(false)
-  const [shutdownPending, setShutdownPending] = useState(false)
-  const [desktopTerminated, setDesktopTerminated] = useState(false)
+  // デスクトップ版のつながり（web / connected / shutting_down / terminated）。移り方は hooks/desktopSession.ts
+  const [desktopSession, dispatchDesktop] = useReducer(desktopSessionReducer, 'web')
+  const desktopMode = desktopSession !== 'web'
+  const shutdownPending = desktopSession === 'shutting_down'
+  const desktopTerminated = desktopSession === 'terminated'
   const [desktopNavigation, setDesktopNavigation] = useState(() =>
     typeof window === 'undefined' ? true : window.matchMedia('(min-width: 1024px)').matches,
   )
@@ -67,7 +70,7 @@ export default function App() {
         /* サーバ応答なし → 終了扱い */
       }
       stopHeartbeat()
-      setDesktopTerminated(true)
+      dispatchDesktop('STOPPED')
     })
   }, [stopHeartbeat])
 
@@ -84,14 +87,14 @@ export default function App() {
     if (shutdownPending) return
     const confirmed = window.confirm('TodenYOLO を終了します。保存済みであることを確認してください。')
     if (!confirmed) return
-    setShutdownPending(true)
+    dispatchDesktop('REQUEST_SHUTDOWN')
     try {
       await api.shutdownDesktop()
       stopHeartbeat()
-      setDesktopTerminated(true)
+      dispatchDesktop('STOPPED')
       window.setTimeout(() => window.close(), 300)
     } catch (caught) {
-      setShutdownPending(false)
+      dispatchDesktop('SHUTDOWN_FAILED')
       window.alert(caught instanceof Error ? caught.message : String(caught))
     }
   }, [shutdownPending, stopHeartbeat])
@@ -118,7 +121,7 @@ export default function App() {
       try {
         const status = await api.health()
         if (!active || !status.desktop) return
-        setDesktopMode(true)
+        dispatchDesktop('CONNECT')
         sendHeartbeat()
         heartbeatTimerRef.current = window.setInterval(sendHeartbeat, 15000)
       } catch {

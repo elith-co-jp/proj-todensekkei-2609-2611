@@ -67,6 +67,10 @@ def _start_desktop_watchdog() -> None:
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     init_db()
+    # 前回のプロセスで学習中のまま残った学習ジョブを失敗にする（DD-0047。スレッドは再起動で消えている）
+    from services.training_service import recover_interrupted_runs
+
+    recover_interrupted_runs()
     if _DESKTOP_MODE:
         _touch_desktop_heartbeat()
         _start_desktop_watchdog()
