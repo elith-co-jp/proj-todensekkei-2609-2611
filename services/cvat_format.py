@@ -3,6 +3,8 @@
 会議資料 06 の提案: 枠・点・折れ線は CVAT などで付けられるが、ページ横断の対応は別表（対応表・JSON）で持つ。
 
 - 記号: box（label = クラスのキー）。属性 ref（記号 ref）、text（原文 = ラベル）。
+- ラベルの文字の位置: box（label = "label_text"）。group_id で記号の box に結ぶ。属性 text（ラベル）。記号の枠は印だけを
+  囲み、器具番号の文字はこの枠で示す（DD-0049）。
 - 端子: points（label = "terminal"）。group_id で記号の box に結ぶ。属性 ref、name（端子名）。
 - 配線: polyline（label = "wire"）。最初と最後の点を端子に着ける。属性 from・to（「記号 ref/端子 ref」）、
   wire_no（電線番号）、judge（接続 / 非接続 / 不明）。「非接続」の線（単なる交差の例）は取り込みで配線にしない。
@@ -20,6 +22,7 @@ from typing import Any
 
 TERMINAL = "terminal"
 WIRE = "wire"
+LABEL_TEXT = "label_text"
 SNAP_PX = 12.0  # 折れ線の端を端子に着ける距離（画素）
 
 
@@ -55,6 +58,7 @@ def export_xml(pages: list[dict[str, Any]], class_keys: list[str] | None = None)
 
     for k in keys:
         label(k, "rectangle", ["ref", "text"])
+    label(LABEL_TEXT, "rectangle", ["text"])
     label(TERMINAL, "points", ["ref", "name"])
     label(WIRE, "polyline", ["from", "to", "wire_no", "judge", "kind", "external_ref"])
 
@@ -71,6 +75,12 @@ def export_xml(pages: list[dict[str, Any]], class_keys: list[str] | None = None)
                                 occluded="0", xtl=_f(x0), ytl=_f(y0), xbr=_f(x1), ybr=_f(y1), z_order="0", group_id=str(g))
             ET.SubElement(box, "attribute", name="ref").text = s["ref"]
             ET.SubElement(box, "attribute", name="text").text = s.get("label") or ""
+            if lb := s.get("label_box"):
+                text_box = ET.SubElement(
+                    img, "box", label=LABEL_TEXT, source="manual", occluded="0",
+                    xtl=_f((lb["cx"] - lb["w"] / 2) * w), ytl=_f((lb["cy"] - lb["h"] / 2) * h),
+                    xbr=_f((lb["cx"] + lb["w"] / 2) * w), ybr=_f((lb["cy"] + lb["h"] / 2) * h), z_order="0", group_id=str(g))
+                ET.SubElement(text_box, "attribute", name="text").text = s.get("label") or ""
             for t in s.get("terminals") or []:
                 if t.get("tx") is None:
                     continue
@@ -126,7 +136,11 @@ def parse_xml(text: str) -> list[dict[str, Any]]:
         warnings: list[str] = []
         symbols: list[dict[str, Any]] = []
         by_group: dict[str, dict[str, Any]] = {}
+        text_boxes: list[ET.Element] = []
         for seq, box in enumerate(img.findall("box"), start=1):
+            if box.get("label") == LABEL_TEXT:
+                text_boxes.append(box)
+                continue
             a = _attrs(box)
             x0, y0, x1, y1 = (float(box.get(k)) for k in ("xtl", "ytl", "xbr", "ybr"))
             ref = a.get("ref") or f"CV-{seq:04d}"
@@ -136,6 +150,15 @@ def parse_xml(text: str) -> list[dict[str, Any]]:
             symbols.append(s)
             if box.get("group_id"):
                 by_group[box.get("group_id")] = s
+        for box in text_boxes:
+            x0, y0, x1, y1 = (float(box.get(k)) for k in ("xtl", "ytl", "xbr", "ybr"))
+            owner = by_group.get(box.get("group_id") or "")
+            if owner is None:
+                warnings.append(f"ラベルの文字の枠（{_attrs(box).get('text') or '名前なし'}）が記号に結ばれていません")
+                continue
+            owner["label_box"] = {"cx": (x0 + x1) / 2 / w, "cy": (y0 + y1) / 2 / h, "w": (x1 - x0) / w, "h": (y1 - y0) / h}
+            if not owner.get("label") and _attrs(box).get("text"):
+                owner["label"] = _attrs(box)["text"]
         terminal_xy: list[tuple[dict[str, Any], dict[str, Any], float, float]] = []
         for pt in img.findall("points"):
             if pt.get("label") != TERMINAL:

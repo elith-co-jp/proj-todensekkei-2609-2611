@@ -4,6 +4,8 @@ export type DraftRect = { x: number; y: number; w: number; h: number }
 
 /* AI の候補（origin=inference）の色。一覧の「AI」バッジと同じ色にする */
 const AI_COLOR = '#0891b2'
+/* ラベルの文字の位置（DD-0049）の枠の色 */
+const LABEL_BOX_COLOR = '#64748b'
 
 export function EditorCanvasSvg({
   iw,
@@ -20,6 +22,7 @@ export function EditorCanvasSvg({
   colorOf,
   draftRect,
   draftClassKey,
+  draftIsLabel = false,
 }: {
   iw: number
   ih: number
@@ -35,6 +38,8 @@ export function EditorCanvasSvg({
   colorOf: (key: string) => string
   draftRect: DraftRect | null
   draftClassKey: string
+  /** 囲んでいるのが記号ではなくラベルの文字の位置 */
+  draftIsLabel?: boolean
 }) {
   return (
     <svg
@@ -90,6 +95,34 @@ export function EditorCanvasSvg({
               strokeWidth={(active ? 2.5 : 1.5) / zoom}
               strokeDasharray={s.origin === 'inference' ? `${6 / zoom} ${3 / zoom}` : undefined}
             />
+            {s.label_box && (showLabels || active) && (
+              <g data-label-box={s.ref}>
+                <line
+                  x1={Math.min(Math.max(s.label_box.cx * iw, x), x + w)}
+                  y1={Math.min(Math.max(s.label_box.cy * ih, y), y + h)}
+                  x2={Math.min(
+                    Math.max(s.cx * iw, (s.label_box.cx - s.label_box.w / 2) * iw),
+                    (s.label_box.cx + s.label_box.w / 2) * iw,
+                  )}
+                  y2={Math.min(
+                    Math.max(s.cy * ih, (s.label_box.cy - s.label_box.h / 2) * ih),
+                    (s.label_box.cy + s.label_box.h / 2) * ih,
+                  )}
+                  stroke={active ? color : LABEL_BOX_COLOR}
+                  strokeWidth={1 / zoom}
+                />
+                <rect
+                  x={(s.label_box.cx - s.label_box.w / 2) * iw}
+                  y={(s.label_box.cy - s.label_box.h / 2) * ih}
+                  width={s.label_box.w * iw}
+                  height={s.label_box.h * ih}
+                  fill="none"
+                  stroke={active ? color : LABEL_BOX_COLOR}
+                  strokeWidth={(active ? 1.5 : 1) / zoom}
+                  strokeDasharray={`${3 / zoom} ${2 / zoom}`}
+                />
+              </g>
+            )}
             {(showLabels || active) && (
               <text
                 x={x}
@@ -158,9 +191,9 @@ export function EditorCanvasSvg({
           y={draftRect.y}
           width={draftRect.w}
           height={draftRect.h}
-          fill={colorOf(draftClassKey)}
+          fill={draftIsLabel ? LABEL_BOX_COLOR : colorOf(draftClassKey)}
           fillOpacity={0.15}
-          stroke={colorOf(draftClassKey)}
+          stroke={draftIsLabel ? LABEL_BOX_COLOR : colorOf(draftClassKey)}
           strokeWidth={2 / zoom}
           strokeDasharray={`${5 / zoom} ${3 / zoom}`}
         />

@@ -56,6 +56,26 @@ class AiSymbol:
     confidence: float | None = None
     label: str | None = None
     terminals: tuple[AiTerminal, ...] = ()
+    # 枠の外から結んだラベルの文字の位置（正規化の cx, cy, w, h）と、決めきれなかったときの注記（DD-0049）。
+    label_box: tuple[float, float, float, float] | None = None
+    note: str | None = None
+
+
+LABEL_REVIEW_NOTE = "ラベル要確認: 近くの文字の候補が複数あります（{candidates}）"
+
+
+def _label_link(s: dict[str, Any], width: float, height: float) -> tuple[tuple[float, float, float, float] | None, str | None]:
+    """構造 JSON の記号から、結んだラベルの文字の位置（正規化）と、要確認のときの注記を作る（DD-0049）。"""
+    box = s.get("label_box")
+    link = s.get("label_link") or {}
+    normalized = None
+    if box:
+        x0, y0, x1, y1 = (float(v) for v in box)
+        normalized = sanitize_box((x0 + x1) / 2 / width, (y0 + y1) / 2 / height, (x1 - x0) / width, (y1 - y0) / height)
+    note = None
+    if link.get("status") == "要確認":
+        note = LABEL_REVIEW_NOTE.format(candidates=" / ".join(c["text"] for c in link.get("candidates") or []))
+    return normalized, note
 
 
 @dataclass(frozen=True)
@@ -144,9 +164,11 @@ def from_structure(structure: dict[str, Any], class_keys: Iterable[str]) -> AiCa
                 terminals += (AiTerminal(t.tx, 2 * cy - t.ty, None) if vertical else AiTerminal(2 * cx - t.tx, t.ty, None),)
                 mirrored.append(index)
         px, py = (dot[0] / width, dot[1] / height) if dot else (cx, cy)
+        label_box, note = _label_link(s, width, height)
         symbols.append(AiSymbol(
             class_key, cx, cy, w, h, px, py,
             confidence=s.get("confidence"), label=(s.get("label") or "").strip() or None, terminals=terminals,
+            label_box=label_box, note=note,
         ))
     links: list[tuple[Endpoint, Endpoint]] = [((i, 0), (i, 1)) for i in mirrored]
     seen: set[frozenset[Endpoint]] = {frozenset(link) for link in links}
@@ -304,7 +326,8 @@ def plan_import(
         else:
             new_symbols.append({
                 "ref": ref, "class_key": a.class_key, "label": a.label,
-                "cx": a.cx, "cy": a.cy, "w": a.w, "h": a.h, "note": None,
+                "label_box": dict(zip(("cx", "cy", "w", "h"), a.label_box, strict=True)) if a.label_box else None,
+                "cx": a.cx, "cy": a.cy, "w": a.w, "h": a.h, "note": a.note,
                 "origin": "inference", "confidence": a.confidence, "terminals": added,
             })
 

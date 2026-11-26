@@ -38,3 +38,29 @@ def sanitize_box(cx: float, cy: float, bw: float, bh: float) -> tuple[float, flo
     bw = max(MIN_SIZE, min(1.0, float(bw)))
     bh = max(MIN_SIZE, min(1.0, float(bh)))
     return clamp01(float(cx)), clamp01(float(cy)), bw, bh
+
+
+LABEL_BOX_COLUMNS = ("label_cx", "label_cy", "label_w", "label_h")
+
+
+def label_box_columns(box: object) -> dict[str, float | None]:
+    """ラベルの文字の位置（{cx, cy, w, h} の dict か、同じ名前の属性を持つもの）を記号の列の値にする（DD-0049）。
+
+    無い・壊れた値は 4 列とも None。座標は sanitize_box と同じく画像の内側に丸める。
+    """
+    if box is None:
+        return dict.fromkeys(LABEL_BOX_COLUMNS)
+    get = box.get if isinstance(box, dict) else (lambda k: getattr(box, k, None))
+    try:
+        values = sanitize_box(*(float(get(k)) for k in ("cx", "cy", "w", "h")))
+    except (TypeError, ValueError):
+        return dict.fromkeys(LABEL_BOX_COLUMNS)
+    return dict(zip(LABEL_BOX_COLUMNS, values, strict=True))
+
+
+def label_box_dict(row: object) -> dict[str, float] | None:
+    """記号の行（ORM・SELECT のどちらでも）からラベルの文字の位置を読む。付けていなければ None。"""
+    values = [getattr(row, k, None) for k in LABEL_BOX_COLUMNS]
+    if any(v is None for v in values):
+        return None
+    return dict(zip(("cx", "cy", "w", "h"), values, strict=True))

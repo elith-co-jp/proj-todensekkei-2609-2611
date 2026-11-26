@@ -1,6 +1,6 @@
 import { Cable, CircleDot, MousePointer2, Square } from 'lucide-react'
 
-import type { AiImportResult, Connection, ProjectDetail, SymbolBox } from '../../types'
+import type { AiImportResult, Connection, LabelLink, ProjectDetail, SymbolBox } from '../../types'
 
 export type Mode = 'select' | 'box' | 'terminal' | 'connect'
 export type Corner = 'nw' | 'ne' | 'sw' | 'se'
@@ -13,6 +13,7 @@ export function buildAnnotationPayload(symbols: SymbolBox[], connections: Connec
       ref: symbol.ref,
       class_key: symbol.class_key,
       label: symbol.label,
+      label_box: symbol.label_box ?? null,
       cx: symbol.cx,
       cy: symbol.cy,
       w: symbol.w,
@@ -68,6 +69,14 @@ function isAttributes(value: unknown) {
   )
 }
 
+function isLabelBox(value: unknown) {
+  return (
+    value === undefined ||
+    value === null ||
+    (isRecord(value) && ['cx', 'cy', 'w', 'h'].every((k) => isFiniteNumber(value[k])))
+  )
+}
+
 function isOrigin(value: unknown) {
   return value === undefined || value === 'manual' || value === 'inference'
 }
@@ -80,6 +89,7 @@ export function isAnnotationPayload(value: unknown): value is AnnotationPayload 
       typeof symbol.ref === 'string' &&
       typeof symbol.class_key === 'string' &&
       isNullableString(symbol.label) &&
+      isLabelBox(symbol.label_box) &&
       isFiniteNumber(symbol.cx) &&
       isFiniteNumber(symbol.cy) &&
       isFiniteNumber(symbol.w) &&
@@ -131,6 +141,51 @@ export function mergeAiImport(symbols: SymbolBox[], connections: Connection[], r
     ],
     connections: withWireRefs([...connections, ...result.connections]),
   }
+}
+
+function deviceKey(label: string | null | undefined) {
+  return (label ?? '').normalize('NFKC').toUpperCase().trim().split(/\s+/)[0] ?? ''
+}
+
+/**
+ * 近くの文字から作ったラベルの候補を記号に当てる（DD-0049）。
+ * - ラベルが空の記号: ラベルと文字の位置を入れる。要確認のものはメモ（空のとき）に候補を書く。
+ * - ラベルが入っていて位置が無い記号: 候補の器具番号（最初の語）が同じなら位置だけ入れる。
+ * 人が入れたラベルは書き換えない。
+ */
+export function applyLabelLinks(symbols: SymbolBox[], links: LabelLink[]) {
+  const byRef = new Map(links.map((l) => [l.ref, l]))
+  let filled = 0
+  let review = 0
+  let located = 0
+  const next = symbols.map((s) => {
+    const link = byRef.get(s.ref)
+    if (!link || link.status === '未検出' || !link.label_box || !link.label) return s
+    if (!s.label) {
+      filled += 1
+      const needsReview = link.status === '要確認'
+      if (needsReview) review += 1
+      const note =
+        needsReview && !s.note ? `ラベル要確認（候補: ${link.candidates.map((c) => c.text).join(' / ')}）` : s.note
+      return { ...s, label: link.label, label_box: link.label_box, note }
+    }
+    if (!s.label_box && deviceKey(s.label) === deviceKey(link.label)) {
+      located += 1
+      return { ...s, label_box: link.label_box }
+    }
+    return s
+  })
+  return { symbols: next, filled, review, located }
+}
+
+export function labelLinkNotice(result: { filled: number; review: number; located: number }, total: number) {
+  if (result.filled + result.located === 0) {
+    return `近くに器具番号らしい文字が見つかりませんでした（記号 ${total} 個）。ラベルは手で入力してください。`
+  }
+  const parts = [`近くの文字から ${result.filled} 個の記号にラベルを付けました`]
+  if (result.review > 0) parts.push(`うち ${result.review} 個は候補が複数あるため、メモに候補を書きました。確かめてください`)
+  if (result.located > 0) parts.push(`${result.located} 個は入力済みのラベルの文字の位置を付けました`)
+  return `${parts.join('。')}。`
 }
 
 function wireRef(n: number) {
@@ -268,7 +323,8 @@ export const SAVE_STATUS_LABELS: Record<SaveStatus, { short: string; long: strin
 export type Drag =
   | { kind: 'none' }
   | { kind: 'pan'; sx: number; sy: number; ox: number; oy: number }
-  | { kind: 'draw'; x1: number; y1: number; x2: number; y2: number }
+  /** labelFor があれば、記号ではなくその記号のラベルの文字の位置を囲む（DD-0049） */
+  | { kind: 'draw'; x1: number; y1: number; x2: number; y2: number; labelFor?: string }
   | { kind: 'move'; ref: string; dx: number; dy: number }
   | { kind: 'resize'; ref: string; corner: Corner }
 
