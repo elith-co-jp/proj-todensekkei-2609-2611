@@ -3,6 +3,7 @@ import { Link, useSearchParams } from 'react-router-dom'
 import { AlertTriangle, FileSpreadsheet, Loader2, MapPin, Play, Presentation, RotateCcw, Sparkles, Upload } from 'lucide-react'
 
 import { api } from '../api/client'
+import { ConfirmDeleteDialog } from '../components/ConfirmDeleteDialog'
 import type { AnalysisJob, DemoLocation, DemoView, IoTableSummary, ProjectRow } from '../types'
 import DrawingViewer from './circuit/DrawingViewer'
 import type { ViewerFocus, ViewerMark } from './circuit/DrawingViewer'
@@ -67,6 +68,7 @@ export default function DemoPage() {
   const fileRef = useRef<HTMLInputElement | null>(null)
   const ioRef = useRef<HTMLInputElement | null>(null)
   const [ioTable, setIoTable] = useState<IoTableSummary | null>(null)
+  const [confirmIoClear, setConfirmIoClear] = useState(false)
   const handledParam = useRef<string | null>(null)
 
   const loadRows = () => api.listProjects().then(setRows).catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
@@ -89,6 +91,7 @@ export default function DemoPage() {
   const clearIo = async () => {
     try {
       setIoTable(await api.deleteIoTable())
+      setConfirmIoClear(false)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     }
@@ -250,9 +253,19 @@ export default function DemoPage() {
           <FileSpreadsheet size={12} /> I/O 表{ioTable?.loaded ? `（${ioTable.rows} 行）` : 'を登録'}
         </button>
         {ioTable?.loaded && (
-          <button type="button" className="btn btn-sm" onClick={() => void clearIo()} title={`${ioTable.file_name ?? ''} を外します`}>
+          <button type="button" className="btn btn-sm" onClick={() => setConfirmIoClear(true)} title={`${ioTable.file_name ?? ''} を外します`}>
             I/O 表を外す
           </button>
+        )}
+        {confirmIoClear && ioTable?.loaded && (
+          <ConfirmDeleteDialog
+            title="I/O 表を外しますか？"
+            removes={[`登録した I/O 表「${ioTable.file_name ?? ''}」（${ioTable.rows} 行）`, '接点に付けていた外部入力の印と信号名（次に回路を組んだときから）']}
+            keeps={['図面とアノテーション（I/O 表は図面には書き込んでいません）', '元の CSV・Excel のファイル（もう一度登録できます）']}
+            confirmLabel="外す"
+            onConfirm={() => void clearIo()}
+            onCancel={() => setConfirmIoClear(false)}
+          />
         )}
         {analyzing && job && <span className="text-[11px] text-slate-500">解析中 {job.done} / {job.total}{job.current ? `（${job.current}）` : ''}</span>}
         {job && job.status !== 'running' && (

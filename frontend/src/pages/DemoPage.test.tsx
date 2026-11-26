@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, within, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { MemoryRouter } from 'react-router-dom'
 
@@ -120,7 +120,7 @@ describe('DemoPage', () => {
     expect(await ui.findByText(/解析中 0 \/ 1/)).toBeTruthy()
   })
 
-  it('I/O 表を登録すると行数が出て、外せる', async () => {
+  it('I/O 表を登録すると行数が出て、確認してから外せる', async () => {
     api.uploadIoTable.mockResolvedValue({ ...NO_TABLE, loaded: true, file_name: 'io.csv', rows: 12, inputs: 8 })
     api.deleteIoTable.mockResolvedValue(NO_TABLE)
     const ui = render(<MemoryRouter><DemoPage /></MemoryRouter>)
@@ -130,6 +130,10 @@ describe('DemoPage', () => {
     await waitFor(() => expect(api.uploadIoTable).toHaveBeenCalledWith(file))
     expect(await ui.findByRole('button', { name: /I\/O 表（12 行）/ })).toBeTruthy()
     fireEvent.click(ui.getByRole('button', { name: 'I/O 表を外す' }))
+    const dialog = await ui.findByRole('dialog', { name: 'I/O 表を外しますか？' })
+    expect(api.deleteIoTable).not.toHaveBeenCalled()
+    expect(dialog.textContent).toContain('io.csv')
+    fireEvent.click(within(dialog).getByRole('button', { name: /外す/ }))
     await waitFor(() => expect(api.deleteIoTable).toHaveBeenCalled())
     expect(await ui.findByRole('button', { name: /I\/O 表を登録/ })).toBeTruthy()
   })

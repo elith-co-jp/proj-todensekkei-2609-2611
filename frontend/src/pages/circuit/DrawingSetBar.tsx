@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from 'react'
-import { AlertTriangle, CheckCircle2, FolderPlus, Layers, Save, Sparkles } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, FolderPlus, Layers, Save, Sparkles, Trash2 } from 'lucide-react'
 
 import { api } from '../../api/client'
+import { ConfirmDeleteDialog } from '../../components/ConfirmDeleteDialog'
 import type { DrawingSet, DrawingSetCoverage, DrawingSetSuggestion } from '../../types'
 
 type Props = {
@@ -26,6 +27,8 @@ export default function DrawingSetBar({ selected, onSelect }: Props) {
   const [name, setName] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [confirmRemove, setConfirmRemove] = useState(false)
+  const [removeError, setRemoveError] = useState<string | null>(null)
 
   const fail = (e: unknown) => setError(e instanceof Error ? e.message : String(e))
 
@@ -63,6 +66,22 @@ export default function DrawingSetBar({ selected, onSelect }: Props) {
       loadCoverage(saved.id)
     } catch (e) {
       fail(e)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const remove = async () => {
+    if (!active) return
+    setBusy(true)
+    try {
+      await api.deleteDrawingSet(active.id)
+      setSets((prev) => prev.filter((s) => s.id !== active.id))
+      setActiveId(null)
+      setCoverage(null)
+      setConfirmRemove(false)
+    } catch (e) {
+      setRemoveError(e instanceof Error ? e.message : String(e))
     } finally {
       setBusy(false)
     }
@@ -113,6 +132,12 @@ export default function DrawingSetBar({ selected, onSelect }: Props) {
               <FolderPlus size={12} /> 選択をセットとして保存
             </button>
           </>
+        )}
+        {active && (
+          <button type="button" className="icon-button text-rose-500" disabled={busy} title="セットを削除"
+            aria-label={`図面セット ${active.name} を削除`} onClick={() => { setRemoveError(null); setConfirmRemove(true) }}>
+            <Trash2 size={13} />
+          </button>
         )}
         <button type="button" className="btn btn-sm ml-auto" onClick={() => void suggest()} title="行先札でつながる図面のまとまりを探します">
           <Sparkles size={12} /> 行先札から候補
@@ -174,6 +199,17 @@ export default function DrawingSetBar({ selected, onSelect }: Props) {
         </div>
       )}
       {error && <p className="mt-2 text-[11px] text-red-700">{error}</p>}
+      {confirmRemove && active && (
+        <ConfirmDeleteDialog
+          title={`図面セット「${active.name}」を削除しますか？`}
+          removes={[`セットの名前とメモ、${active.project_ids.length} 枚の図面の組み合わせ`]}
+          keeps={['セットに入っていた図面とアノテーション（ほかのセットへの登録も含む）']}
+          busy={busy}
+          error={removeError}
+          onConfirm={() => void remove()}
+          onCancel={() => setConfirmRemove(false)}
+        />
+      )}
     </div>
   )
 }

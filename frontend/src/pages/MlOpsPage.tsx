@@ -19,6 +19,7 @@ import {
 
 import { api } from '../api/client'
 import { DEFAULT_CONNECTOR_CONF, DEFAULT_DETECTION_CONF } from '../api/defaults'
+import { ConfirmDeleteDialog } from '../components/ConfirmDeleteDialog'
 import { LoadingOverlay } from '../components/LoadingOverlay'
 import { AdoptionReviewNote, PerClassComparison, TrainingDataPanel } from '../components/TrainingQuality'
 import type {
@@ -123,6 +124,12 @@ export default function MlOpsPage() {
   const [holdout, setHoldout] = useState(true)
   const [trainIds, setTrainIds] = useState<Set<number>>(new Set())
   const [logOpen, setLogOpen] = useState<number | null>(null)
+
+  // 削除の確認（DD-0052）
+  const [pendingDelete, setPendingDelete] = useState<
+    { kind: 'model'; model: MlModel } | { kind: 'run'; run: TrainingRun } | null
+  >(null)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
 
   const modelFileRef = useRef<HTMLInputElement | null>(null)
   const zipFileRef = useRef<HTMLInputElement | null>(null)
@@ -296,14 +303,22 @@ export default function MlOpsPage() {
     }
   }
 
-  const removeModel = async (id: number) => {
-    if (!window.confirm('このモデルを削除しますか？（推論結果は残ります）')) return
-    setBusy(`delete-${id}`)
+  const askDelete = (target: { kind: 'model'; model: MlModel } | { kind: 'run'; run: TrainingRun }) => {
+    setDeleteError(null)
+    setPendingDelete(target)
+  }
+
+  const confirmDelete = async () => {
+    if (!pendingDelete) return
+    const key = pendingDelete.kind === 'model' ? `delete-${pendingDelete.model.id}` : `delete-run-${pendingDelete.run.id}`
+    setBusy(key)
     try {
-      await api.deleteModel(id)
+      if (pendingDelete.kind === 'model') await api.deleteModel(pendingDelete.model.id)
+      else await api.deleteTrainingRun(pendingDelete.run.id)
+      setPendingDelete(null)
       await reload()
     } catch (e) {
-      setNotice({ kind: 'error', title: '削除に失敗しました', body: e instanceof Error ? e.message : String(e) })
+      setDeleteError(e instanceof Error ? e.message : String(e))
     } finally {
       setBusy(null)
     }
@@ -838,7 +853,7 @@ export default function MlOpsPage() {
                     <a className="icon-button" href={api.modelDownloadUrl(m.id)} title="ダウンロード" download>
                       <Download size={14} />
                     </a>
-                    <button type="button" className="icon-button text-rose-500" onClick={() => void removeModel(m.id)} title="削除" disabled={busy !== null}>
+                    <button type="button" className="icon-button text-rose-500" onClick={() => askDelete({ kind: 'model', model: m })} title="削除" aria-label={`モデル ${m.name} v${m.version} を削除`} disabled={busy !== null}>
                       <Trash2 size={14} />
                     </button>
                   </div>
@@ -962,6 +977,16 @@ export default function MlOpsPage() {
                               ログ
                             </button>
                           )}
+                          <button
+                            type="button"
+                            className="icon-button text-rose-500"
+                            onClick={() => askDelete({ kind: 'run', run: r })}
+                            title={r.status === 'running' ? '学習中は削除できません' : '履歴を削除'}
+                            aria-label={`学習履歴 #${r.id} を削除`}
+                            disabled={busy !== null || r.status === 'running'}
+                          >
+                            <Trash2 size={14} />
+                          </button>
                         </div>
                         {r.eval_scope && (
                           <div className="mt-1.5">
@@ -983,6 +1008,37 @@ export default function MlOpsPage() {
         </div>
       </div>
       </div>
+      {pendingDelete?.kind === 'model' && (
+        <ConfirmDeleteDialog
+          title={`モデル「${pendingDelete.model.name} v${pendingDelete.model.version}」を削除しますか？`}
+          lead={pendingDelete.model.is_active
+            ? '使用中のモデルです。削除すると、ほかのモデルを「使用する」にするまで AI 解析ができません。'
+            : undefined}
+          removes={['モデルの登録', 'モデルのファイル（同じファイルをほかの登録が使っていなければ）']}
+          keeps={[
+            'このモデルで作った AI の検出候補と構造解析の結果',
+            '学習の履歴（できたモデルの欄が空になります）',
+          ]}
+          busy={busy !== null}
+          error={deleteError}
+          onConfirm={() => void confirmDelete()}
+          onCancel={() => setPendingDelete(null)}
+        />
+      )}
+      {pendingDelete?.kind === 'run' && (
+        <ConfirmDeleteDialog
+          title={`学習履歴 #${pendingDelete.run.id} を削除しますか？`}
+          lead={pendingDelete.run.decision === 'pending'
+            ? '採用待ちです。削除すると、ここで採用・見送りを選べなくなります（できたモデルはモデル管理で「使用する」にできます）。'
+            : undefined}
+          removes={['学習の記録（評価の結果・ログ）', '学習の作業フォルダ（書き出した学習データと途中の重み）']}
+          keeps={['学習でできたモデル（モデル管理から別に削除できます）', '学習に使った図面とアノテーション']}
+          busy={busy !== null}
+          error={deleteError}
+          onConfirm={() => void confirmDelete()}
+          onCancel={() => setPendingDelete(null)}
+        />
+      )}
     </div>
   )
 }

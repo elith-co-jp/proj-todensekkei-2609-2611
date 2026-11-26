@@ -852,3 +852,25 @@ export interface DemoView {
     deps: Record<string, { signal: string; negated: boolean; port: string }[]>
   }) | null
 }
+
+/** 図面を消す前の確認（DD-0052）。counts は消す図面に付いている件数 */
+export interface DeletePreview {
+  project_ids: number[]
+  names: string[]
+  missing_ids: number[]
+  counts: {
+    symbols: number
+    terminals: number
+    connections: number
+    predictions: number
+    structures: number
+    drawing_sets: number
+    change_sets: number
+    image_files: number
+    training_runs: number
+  }
+  /** 実行中の解析・学習が使っているなど、今は消せない理由 */
+  blockers: string[]
+  /** 解析結果だけを消すときに今は消せない理由 */
+  analysis_blockers: string[]
+}

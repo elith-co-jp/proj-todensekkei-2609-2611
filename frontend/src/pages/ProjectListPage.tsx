@@ -21,9 +21,10 @@ import {
 } from 'lucide-react'
 
 import { api } from '../api/client'
+import { ConfirmDeleteDialog } from '../components/ConfirmDeleteDialog'
 import { LoadingOverlay } from '../components/LoadingOverlay'
-import { useModalFocus } from '../hooks/useModalFocus'
-import type { ProjectRow, Stats } from '../types'
+import type { DeletePreview, ProjectRow, Stats } from '../types'
+import { analysisClearLists, projectDeleteLists } from '../utils/deletion'
 import { STATUS_LABEL } from '../types'
 
 const STATUS_CLASS: Record<string, string> = {
@@ -128,15 +129,25 @@ export default function ProjectListPage() {
   const [justRegistered, setJustRegistered] = useState<number[] | null>(null)
   const fileRef = useRef<HTMLInputElement | null>(null)
   const anchorRef = useRef<number | null>(null)
-  const deleteDialogRef = useRef<HTMLElement | null>(null)
+  // 削除の確認（DD-0052）: 図面ごと消すか、AI の解析結果だけ消すか。消えるものは開いたときにサーバで数える
+  const [deleteMode, setDeleteMode] = useState<'project' | 'analysis'>('project')
+  const [deletePreview, setDeletePreview] = useState<DeletePreview | null>(null)
   const loadGenerationRef = useRef(0)
-  const closeDeleteDialog = useCallback(() => setDeleteDialogOpen(false), [])
-
-  useModalFocus({
-    open: deleteDialogOpen,
-    containerRef: deleteDialogRef,
-    onClose: closeDeleteDialog,
-  })
+  const closeDeleteDialog = useCallback(() => {
+    setDeleteDialogOpen(false)
+    setDeletePreview(null)
+  }, [])
+  const openDeleteDialog = async () => {
+    setError(null)
+    setDeleteMode('project')
+    setDeletePreview(null)
+    setDeleteDialogOpen(true)
+    try {
+      setDeletePreview(await api.deletePreview(Array.from(checked)))
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught))
+    }
+  }
 
   useEffect(() => {
     const timer = window.setTimeout(() => setDebouncedQuery(q.trim()), 250)
@@ -238,18 +249,23 @@ export default function ProjectListPage() {
 
   const removeChecked = async () => {
     if (checked.size === 0) return
+    const analysisOnly = deleteMode === 'analysis'
     setBusy(true)
-    setBusyLabel({
-      message: '選択した図面を削除しています',
-      hint: '図面とアノテーションデータを削除しています。',
-    })
+    setBusyLabel(analysisOnly
+      ? { message: 'AI の解析結果を削除しています', hint: '図面とアノテーションはそのまま残ります。' }
+      : { message: '選択した図面を削除しています', hint: '図面と、図面に付いたデータを削除しています。' })
     try {
-      await api.bulkDelete(Array.from(checked))
-      setChecked(new Set())
-      setJustRegistered(null)
-      setMsg('選択した図面を削除しました')
+      if (analysisOnly) {
+        const result = await api.clearAnalysis(Array.from(checked))
+        setMsg(`AI の解析結果を削除しました（検出候補 ${result.predictions} 件・構造解析 ${result.structures} 枚）`)
+      } else {
+        const result = await api.bulkDelete(Array.from(checked))
+        setChecked(new Set())
+        setJustRegistered(null)
+        setMsg(`${result.deleted.length} 枚の図面を削除しました`)
+      }
       await load()
-      setDeleteDialogOpen(false)
+      closeDeleteDialog()
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught))
     } finally {
@@ -499,10 +515,7 @@ export default function ProjectListPage() {
           <button
             type="button"
             className="btn btn-sm btn-danger"
-            onClick={() => {
-              setError(null)
-              setDeleteDialogOpen(true)
-            }}
+            onClick={() => void openDeleteDialog()}
             disabled={busy || checked.size === 0}
           >
             <Trash2 size={14} /> 削除
@@ -814,37 +827,38 @@ export default function ProjectListPage() {
 
       </div>
 
-      {deleteDialogOpen && (
-        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-sm">
-          <section
-            ref={deleteDialogRef}
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="delete-dialog-title"
-            tabIndex={-1}
-            className="w-full max-w-md rounded-3xl border border-white/60 bg-white p-6 shadow-2xl"
+      {deleteDialogOpen && (() => {
+        const lists = deletePreview ? (deleteMode === 'analysis' ? analysisClearLists(deletePreview) : projectDeleteLists(deletePreview)) : null
+        return (
+          <ConfirmDeleteDialog
+            title={deleteMode === 'analysis' ? '選択した図面の AI 解析結果を削除しますか？' : '選択した図面を削除しますか？'}
+            lead={<>{checked.size} 件の図面を選んでいます。消す範囲を選んでください。</>}
+            removes={lists?.removes ?? []}
+            keeps={lists?.keeps ?? []}
+            blockers={(deleteMode === 'analysis' ? deletePreview?.analysis_blockers : deletePreview?.blockers) ?? []}
+            loading={deletePreview === null && !error}
+            busy={busy}
+            error={error}
+            confirmLabel={deleteMode === 'analysis' ? '解析結果を削除する' : '図面を削除する'}
+            onConfirm={() => void removeChecked()}
+            onCancel={closeDeleteDialog}
           >
-            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-rose-50 text-rose-600">
-              <Trash2 size={22} />
-            </div>
-            <h2 id="delete-dialog-title" className="mt-4 text-lg font-black text-slate-950">選択した図面を削除しますか？</h2>
-            <p className="mt-2 text-sm leading-6 text-slate-500">
-              {checked.size}件の図面と、そのアノテーションデータが削除されます。この操作は取り消せません。
-            </p>
-            {error && (
-              <div className="mt-4 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700" role="alert">
-                {error}
-              </div>
-            )}
-            <div className="mt-6 flex justify-end gap-2">
-              <button type="button" data-autofocus className="btn" onClick={closeDeleteDialog} disabled={busy}>キャンセル</button>
-              <button type="button" className="btn btn-danger" onClick={() => void removeChecked()} disabled={busy}>
-                <Trash2 size={15} /> {busy ? '削除中…' : '削除する'}
-              </button>
-            </div>
-          </section>
-        </div>
-      )}
+            <fieldset className="mt-4 grid gap-2" disabled={busy}>
+              <legend className="sr-only">消す範囲</legend>
+              <label className="flex items-start gap-2 rounded-xl border border-slate-200 px-3 py-2 text-sm">
+                <input type="radio" name="delete-mode" className="mt-1" checked={deleteMode === 'project'}
+                  onChange={() => setDeleteMode('project')} />
+                <span><b>図面ごと削除</b><br /><span className="text-xs text-slate-500">図面と、図面に付いたデータをすべて消します</span></span>
+              </label>
+              <label className="flex items-start gap-2 rounded-xl border border-slate-200 px-3 py-2 text-sm">
+                <input type="radio" name="delete-mode" className="mt-1" checked={deleteMode === 'analysis'}
+                  onChange={() => setDeleteMode('analysis')} />
+                <span><b>AI の解析結果だけ削除</b><br /><span className="text-xs text-slate-500">図面とアノテーションは残し、AI をやり直せる状態にします</span></span>
+              </label>
+            </fieldset>
+          </ConfirmDeleteDialog>
+        )
+      })()}
     </div>
   )
 }
