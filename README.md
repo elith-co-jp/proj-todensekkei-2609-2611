@@ -224,6 +224,7 @@ uvicorn main:app --port 8010               # http://localhost:8010 で UI と AP
 | `SEQANNO_DATA_DIR` | `./data` | DB と画像の保存先 |
 | `SEQANNO_DATABASE_URL` | `sqlite:///<data>/seqanno.db` | PostgreSQL 等へ差し替え可能（Docker は PostgreSQL） |
 | `SEQANNO_CORS_ORIGINS` | `http://localhost:5173,http://127.0.0.1:5173` | 許可オリジン |
+| `SEQANNO_ALLOWED_HOSTS` | なし | 受け付ける Host を足す（カンマ区切り）。既定はループバック（localhost・127.0.0.1・::1）と許可オリジンのホストだけで、それ以外の Host は 403（DNS リバインディング対策）。社内サーバ名で開くときに指定する |
 | `SEQANNO_OCR_REC_MODEL` | なし | 記号ごとの拡大読みに使う文字認識モデル（ONNX）。図面の字体に合わせて追加学習したモデル（`analysis/tools/ocr_finetune.py`）を指定する。なければ同梱のモデル |
 | `SEQANNO_OCR_WORKERS` | CPU 数と 4 の小さいほう | 文字の読み取りを並べる数。1 で並べない（読む文字は同じ） |
 | `SEQANNO_CARD_MODEL` | 同梱のカード用モデル | カード・札・領域を検出するモデルの差し替え。空にすると使わない |

@@ -1,5 +1,5 @@
-# 0.120 以降は TestClient が httpx 以外のパッケージを要求し、テストが起動しない（2026-11-21 確認）
-fastapi>=0.115,<0.120
+# 0.165 以降（Starlette 1.x）に上げ、Starlette の既知の脆弱性（Range・Host・フォーム上限など）を避ける。テストは httpx のまま動く（2026-11-26 確認）
+fastapi>=0.165
 uvicorn[standard]>=0.30
 sqlalchemy>=2.0
 pydantic>=2.7

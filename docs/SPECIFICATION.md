@@ -368,7 +368,7 @@ ZIP を選択してインポートすると、`bundle.json` の有無で復元�
 |------|------|
 | 運用形態 | 各 PC で動く Windows 単一 EXE を第一とする（サーバは `127.0.0.1` だけで待ち受け、データは EXE と同じフォルダの `data/`）。1 ファイルの EXE は約 913 MB で起動に 10〜13 秒、必要なときだけ作るフォルダ形式（ZIP 約 372 MB）は 1.5〜2 秒で起動する（DD-0040）。Docker Compose（共有サーバ）でも動く |
 | 認証 | なし（ローカル運用前提）。必要ならセッション認証を追加する |
-| 外部通信 | なし（`LABEL_LLM_URL` を設定したときだけ、その URL へ記号・文字の切り出し画像を送る）。CORS は `SEQANNO_CORS_ORIGINS` で明示したオリジンのみ。ブラウザ発のリクエストは `Origin` がローカル（localhost/127.0.0.1/::1）または許可オリジン以外の場合 403 で拒否（localhost CSRF 対策） |
+| 外部通信 | なし（`LABEL_LLM_URL` を設定したときだけ、その URL へ記号・文字の切り出し画像を送る）。CORS は `SEQANNO_CORS_ORIGINS` で明示したオリジンのみ。ブラウザ発のリクエストは `Origin` がローカル（localhost/127.0.0.1/::1）または許可オリジン以外の場合 403 で拒否（localhost CSRF 対策）。`Host` がループバック・許可オリジンのホスト・`SEQANNO_ALLOWED_HOSTS` 以外の場合も 403 で拒否（DNS リバインディング対策）。全応答に `X-Frame-Options: DENY`・`frame-ancestors 'none'`・`nosniff`・`Referrer-Policy: no-referrer` を付ける |
 | アップロード上限 | PDF 256 MiB・500ページ／画像 1 枚 64 MiB／ZIP 展開後 2 GiB・20,000 ファイル・圧縮率 25 倍 |
 | PDF 画像化 | PyMuPDF で 150 DPI の PNG に変換（PyMuPDF が無い環境では Poppler）。元ファイル名と1始まりのページ番号を保持。受け取る図面はスキャン PDF を前提とし、線・文字は画像から読む |
 | ページの向き | 登録時に OCR の文字検出で文字の向きを調べ、文字の大半が縦向きのページを 90° か 270° 回して保存する（1 ページ約 0.25 秒）。OCR が使えないときはそのまま保存する。上下逆さのページは直さない |
