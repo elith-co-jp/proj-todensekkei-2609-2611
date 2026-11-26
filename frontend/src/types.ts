@@ -813,5 +813,9 @@ export interface DemoView {
   ready: boolean
   message?: string
   simulation?: CircuitResult
-  logic?: (Omit<LogicDiagramView, 'formulas' | 'candidates' | 'default_targets'> & { locations: Record<string, DemoLocation[]> }) | null
+  logic?: (Omit<LogicDiagramView, 'formulas' | 'candidates' | 'default_targets'> & {
+    locations: Record<string, DemoLocation[]>
+    /** 信号 → その信号を決める信号（上流）。注目点から辿るのに使う（DD-0048） */
+    deps: Record<string, { signal: string; negated: boolean; port: string }[]>
+  }) | null
 }
