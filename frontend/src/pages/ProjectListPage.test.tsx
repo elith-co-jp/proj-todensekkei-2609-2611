@@ -1,14 +1,16 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { MemoryRouter } from 'react-router-dom'
 
-import type { ProjectRow } from '../types'
+import type { DeletePreview, ProjectRow } from '../types'
 import ProjectListPage from './ProjectListPage'
 
 const apiMocks = vi.hoisted(() => ({
   bulkDelete: vi.fn(),
+  clearAnalysis: vi.fn(),
+  deletePreview: vi.fn(),
   createProjects: vi.fn(),
   exportBulk: vi.fn(),
   listProjects: vi.fn(),
@@ -178,5 +180,61 @@ describe('ProjectListPage', () => {
     fireEvent.click(getByRole('button', { name: '表で表示' }))
     expect(getAllByText('AI検出 29')).toHaveLength(2)
     expect(getAllByText('AI配線 41')).toHaveLength(2)
+  })
+
+  describe('削除の確認（DD-0052）', () => {
+    const preview: DeletePreview = {
+      project_ids: [1],
+      names: ['A.png'],
+      missing_ids: [],
+      counts: {
+        symbols: 3, terminals: 2, connections: 4, predictions: 5, structures: 1,
+        drawing_sets: 1, change_sets: 0, image_files: 1, training_runs: 2,
+      },
+      blockers: [],
+      analysis_blockers: [],
+    }
+
+    const openDialog = async () => {
+      apiMocks.listProjects.mockResolvedValue([projectRow(1, 'A.png'), projectRow(2, 'B.png')])
+      const ui = render(<MemoryRouter><ProjectListPage /></MemoryRouter>)
+      await ui.findAllByText('A.png')
+      fireEvent.click(ui.getAllByRole('checkbox', { name: /A\.png/ })[0])
+      fireEvent.click(ui.getByRole('button', { name: /^削除$/ }))
+      const dialog = await ui.findByRole('dialog')
+      await within(dialog).findByText(/アノテーションの記号 3 件/)
+      return { ui, dialog }
+    }
+
+    it('消えるものと残るものを数えて見せ、確かめてから図面を消す', async () => {
+      apiMocks.deletePreview.mockResolvedValue(preview)
+      apiMocks.bulkDelete.mockResolvedValue({ deleted: [1] })
+      const { dialog } = await openDialog()
+      expect(apiMocks.deletePreview).toHaveBeenCalledWith([1])
+      expect(within(dialog).getByRole('list', { name: '一緒に消えるもの' }).textContent).toContain('AI の検出候補 5 件')
+      expect(within(dialog).getByRole('list', { name: '残るもの' }).textContent).toContain('学習の履歴（2 件）')
+      expect(apiMocks.bulkDelete).not.toHaveBeenCalled()
+      fireEvent.click(within(dialog).getByRole('button', { name: /図面を削除する/ }))
+      await waitFor(() => expect(apiMocks.bulkDelete).toHaveBeenCalledWith([1]))
+    })
+
+    it('AI の解析結果だけを消すこともできる', async () => {
+      apiMocks.deletePreview.mockResolvedValue(preview)
+      apiMocks.clearAnalysis.mockResolvedValue({ predictions: 5, structures: 1 })
+      const { ui, dialog } = await openDialog()
+      fireEvent.click(within(dialog).getByLabelText(/AI の解析結果だけ削除/))
+      expect(within(dialog).getByRole('list', { name: '残るもの' }).textContent).toContain('アノテーション')
+      fireEvent.click(within(dialog).getByRole('button', { name: /解析結果を削除する/ }))
+      await waitFor(() => expect(apiMocks.clearAnalysis).toHaveBeenCalledWith([1]))
+      expect(apiMocks.bulkDelete).not.toHaveBeenCalled()
+      expect(await ui.findByText(/検出候補 5 件・構造解析 1 枚/)).toBeTruthy()
+    })
+
+    it('実行中の解析が使っている図面は消せない', async () => {
+      apiMocks.deletePreview.mockResolvedValue({ ...preview, blockers: ['AI 解析を実行中の図面が含まれています。'] })
+      const { dialog } = await openDialog()
+      expect(within(dialog).getByRole('alert').textContent).toContain('AI 解析を実行中')
+      expect((within(dialog).getByRole('button', { name: /図面を削除する/ }) as HTMLButtonElement).disabled).toBe(true)
+    })
   })
 })

@@ -11,6 +11,7 @@ const api = vi.hoisted(() => ({
   createDrawingSet: vi.fn(),
   updateDrawingSet: vi.fn(),
   suggestDrawingSets: vi.fn(),
+  deleteDrawingSet: vi.fn(),
 }))
 vi.mock('../../api/client', () => ({ api, BASE: '' }))
 
@@ -64,5 +65,18 @@ describe('DrawingSetBar', () => {
     fireEvent.click(await screen.findByRole('button', { name: /ER21211 ほか 2 枚/ }))
     expect(onSelect).toHaveBeenCalledWith([1, 2])
     expect(screen.queryByText(/ER30000/)).toBeNull()
+  })
+
+  it('選んだセットは確認してから削除でき、図面は残ると伝える', async () => {
+    api.deleteDrawingSet.mockResolvedValue(undefined)
+    render(<DrawingSetBar selected={[]} onSelect={vi.fn()} />)
+    await screen.findByRole('option', { name: 'DS01（1 枚）' })
+    fireEvent.change(screen.getByRole('combobox', { name: '図面セット' }), { target: { value: '3' } })
+    fireEvent.click(await screen.findByRole('button', { name: '図面セット DS01 を削除' }))
+    const dialog = await screen.findByRole('dialog')
+    expect(dialog.textContent).toContain('セットに入っていた図面とアノテーション')
+    fireEvent.click(screen.getByRole('button', { name: /削除する/ }))
+    await waitFor(() => expect(api.deleteDrawingSet).toHaveBeenCalledWith(3))
+    await waitFor(() => expect(screen.queryByRole('option', { name: 'DS01（1 枚）' })).toBeNull())
   })
 })

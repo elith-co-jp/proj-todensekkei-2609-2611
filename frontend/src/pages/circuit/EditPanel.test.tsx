@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { CircuitEditPreview } from '../../types'
@@ -11,6 +11,7 @@ const api = vi.hoisted(() => ({
   circuitEditApply: vi.fn(),
   circuitEditHistory: vi.fn(),
   circuitEditUndo: vi.fn(),
+  deleteCircuitChangeSet: vi.fn(),
 }))
 vi.mock('../../api/client', () => ({ api, BASE: '' }))
 
@@ -75,5 +76,18 @@ describe('EditPanel', () => {
     await waitFor(() => expect(view.getByRole('alert').textContent).toContain('図面が変わっています'))
     fireEvent.click(view.getByRole('button', { name: 'それでも戻す' }))
     await waitFor(() => expect(api.circuitEditUndo).toHaveBeenLastCalledWith(3, true))
+  })
+
+  it('履歴は確認してから消す。適用中の変更は戻せなくなることを伝える', async () => {
+    api.circuitEditHistory.mockResolvedValueOnce({ change_sets: history }).mockResolvedValue({ change_sets: [] })
+    api.deleteCircuitChangeSet.mockResolvedValue({ deleted: 3 })
+    const view = render(<EditPanel projectIds={[7]} />)
+    fireEvent.click(await view.findByRole('button', { name: '変更 #3 を履歴から削除' }))
+    const dialog = await view.findByRole('dialog')
+    expect(dialog.textContent).toContain('「元に戻す」ができなくなります')
+    expect(within(dialog).getByRole('list', { name: '残るもの' }).textContent).toContain('今の図面')
+    fireEvent.click(within(dialog).getByRole('button', { name: /削除する/ }))
+    await waitFor(() => expect(api.deleteCircuitChangeSet).toHaveBeenCalledWith(3))
+    await waitFor(() => expect(view.queryByRole('list', { name: '変更の履歴' })).toBeNull())
   })
 })

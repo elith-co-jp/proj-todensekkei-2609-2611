@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
-import { AlertTriangle, Check, FlaskConical, Loader2, Undo2 } from 'lucide-react'
+import { AlertTriangle, Check, FlaskConical, Loader2, Trash2, Undo2 } from 'lucide-react'
 
 import { api, BASE } from '../../api/client'
+import { ConfirmDeleteDialog } from '../../components/ConfirmDeleteDialog'
 import type { CircuitChangeSet, CircuitEditOp, CircuitEditPreview } from '../../types'
 
 const EXAMPLE = `[
@@ -29,6 +30,8 @@ export default function EditPanel({ projectIds, onApplied }: Props) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [conflict, setConflict] = useState<number | null>(null)
+  const [removing, setRemoving] = useState<CircuitChangeSet | null>(null)
+  const [removeError, setRemoveError] = useState<string | null>(null)
 
   const loadHistory = async () => {
     try {
@@ -99,6 +102,20 @@ export default function EditPanel({ projectIds, onApplied }: Props) {
       onApplied?.()
     })
 
+  const removeHistory = async () => {
+    if (!removing) return
+    setBusy(true)
+    try {
+      await api.deleteCircuitChangeSet(removing.id)
+      setRemoving(null)
+      await loadHistory()
+    } catch (e) {
+      setRemoveError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const canApply = !!preview?.ok && tried === text && !busy
 
   return (
@@ -148,10 +165,28 @@ export default function EditPanel({ projectIds, onApplied }: Props) {
                     <Undo2 className="h-3 w-3" /> 元に戻す
                   </button>
                 ) : <span className="text-slate-400">戻し済み</span>}
+                <button type="button" className="icon-button text-rose-500" disabled={busy} title="履歴から削除"
+                  aria-label={`変更 #${h.id} を履歴から削除`} onClick={() => { setRemoveError(null); setRemoving(h) }}>
+                  <Trash2 className="h-3 w-3" />
+                </button>
               </li>
             ))}
           </ul>
         </div>
+      )}
+      {removing && (
+        <ConfirmDeleteDialog
+          title={`変更 #${removing.id}「${removing.title}」を履歴から削除しますか？`}
+          lead={removing.status === 'applied'
+            ? 'この変更は図面に入ったままです。履歴を消すと、あとから「元に戻す」ができなくなります。'
+            : 'すでに元に戻した変更です。'}
+          removes={['変更の記録（操作・理由・試した結果・変更前の図面）']}
+          keeps={['今の図面（記号・端子・配線）はそのまま', 'ほかの変更の履歴']}
+          busy={busy}
+          error={removeError}
+          onConfirm={() => void removeHistory()}
+          onCancel={() => setRemoving(null)}
+        />
       )}
     </section>
   )

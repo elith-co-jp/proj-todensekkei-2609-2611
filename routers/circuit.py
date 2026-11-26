@@ -386,6 +386,18 @@ def edit_undo_api(change_set_id: int, payload: UndoRequest | None = None, db: Se
         raise HTTPException(404, str(exc)) from exc
 
 
+@router.delete("/edit/{change_set_id}")
+def edit_delete_api(change_set_id: int, db: Session = Depends(get_db)):
+    """変更セットの履歴を消す。図面はそのまま（この変更は取り消せなくなる。DD-0052）。"""
+    from services import data_deletion
+
+    try:
+        data_deletion.delete_change_set(db, change_set_id)
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    return {"deleted": change_set_id}
+
+
 XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 

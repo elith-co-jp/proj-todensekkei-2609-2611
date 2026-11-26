@@ -17,8 +17,14 @@ from sqlalchemy.orm import Session
 from database import SessionLocal, get_db
 from models import AnnotationProject, MlModel, TrainingRun
 from routers.common import get_project_or_404, safe_upload_name
-from services import analysis_jobs, inference_service
-from schemas import AnnotationUpdatePayload, InferenceRunRequest, TrainingDecisionPayload, TrainingRunRequest
+from schemas import (
+    AnnotationUpdatePayload,
+    BulkIdsRequest,
+    InferenceRunRequest,
+    TrainingDecisionPayload,
+    TrainingRunRequest,
+)
+from services import analysis_jobs, data_deletion, inference_service
 from services.ai_import_service import import_payload
 from services.inference_service import (
     import_predictions_zip,
@@ -115,6 +121,9 @@ def activate_model(model_id: int, db: Session = Depends(get_db)):
 @router.delete("/models/{model_id}")
 def remove_model(model_id: int, db: Session = Depends(get_db)):
     model = _get_model_or_404(db, model_id)
+    reasons = data_deletion.model_blockers(db, model)
+    if reasons:
+        raise HTTPException(409, " ".join(reasons))
     delete_model(db, model)
     db.commit()
     return {"deleted": model_id}
@@ -267,6 +276,17 @@ def project_structure(project_id: int, db: Session = Depends(get_db)):
                     media_type="application/json")
 
 
+@router.post("/analysis/clear")
+def analysis_clear(payload: BulkIdsRequest, db: Session = Depends(get_db)):
+    """AI の候補と構造解析の結果だけを消す。図面・アノテーションは残す（DD-0052）。"""
+    if not payload.ids:
+        raise HTTPException(400, "対象の図面が指定されていません")
+    try:
+        return data_deletion.clear_analysis(db, payload.ids)
+    except data_deletion.DeletionBlocked as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
 @router.post("/analysis/export")
 def export_structure(payload: InferenceRunRequest, db: Session = Depends(get_db)):
     query = db.query(AnnotationProject).order_by(AnnotationProject.id)
@@ -389,6 +409,18 @@ def get_training_run(run_id: int, db: Session = Depends(get_db)):
     if run is None:
         raise HTTPException(404, "学習ジョブが見つかりません")
     return serialize_run(run)
+
+
+@router.delete("/training/runs/{run_id}")
+def delete_training_run(run_id: int, db: Session = Depends(get_db)):
+    """学習の履歴を消す。できたモデルはモデル管理に残る（DD-0052）。"""
+    try:
+        data_deletion.delete_training_run(db, run_id)
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except data_deletion.DeletionBlocked as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return {"deleted": run_id}
 
 
 @router.post("/training/runs/{run_id}/decision")

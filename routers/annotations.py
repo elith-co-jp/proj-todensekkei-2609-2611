@@ -29,7 +29,7 @@ from schemas import (
     SymbolClassPayload,
     YoloExportRequest,
 )
-from services import vector_pdf
+from services import data_deletion, vector_pdf
 from services.annotation_service import (
     WITH_ANNOTATIONS,
     classes_ordered,
@@ -319,12 +319,19 @@ def put_annotations(
     }
 
 
+@router.post("/projects/delete-preview")
+def delete_preview(payload: BulkIdsRequest, db: Session = Depends(get_db)):
+    """削除の確認に出す内容（一緒に消えるもの・残るもの・今は消せない理由）。何も消さない（DD-0052）。"""
+    return data_deletion.projects_impact(db, payload.ids)
+
+
 @router.delete("/projects/{project_id}")
 def delete_project(project_id: int, db: Session = Depends(get_db)):
-    p = get_project_or_404(db, project_id)
-    db.delete(p)
-    db.commit()
-    vector_pdf.remove(project_id)
+    get_project_or_404(db, project_id)
+    try:
+        data_deletion.delete_projects(db, [project_id])
+    except data_deletion.DeletionBlocked as exc:
+        raise HTTPException(409, str(exc)) from exc
     return {"deleted": project_id}
 
 
@@ -332,13 +339,11 @@ def delete_project(project_id: int, db: Session = Depends(get_db)):
 def bulk_delete(payload: BulkIdsRequest, db: Session = Depends(get_db)):
     if not payload.ids:
         raise HTTPException(400, "削除対象が指定されていません")
-    targets = db.query(AnnotationProject).filter(AnnotationProject.id.in_(payload.ids)).all()
-    for p in targets:
-        db.delete(p)
-    db.commit()
-    for p in targets:
-        vector_pdf.remove(p.id)
-    return {"deleted": [p.id for p in targets]}
+    try:
+        deleted = data_deletion.delete_projects(db, payload.ids)
+    except data_deletion.DeletionBlocked as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return {"deleted": deleted}
 
 
 @router.get("/projects/{project_id}/image")

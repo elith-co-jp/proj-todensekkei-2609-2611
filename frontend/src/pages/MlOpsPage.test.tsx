@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { MemoryRouter } from 'react-router-dom'
 
@@ -20,6 +20,9 @@ const api = vi.hoisted(() => ({
   cancelAnalysisJob: vi.fn(),
   trainingClassStats: vi.fn(),
   trainingHardDrawings: vi.fn(),
+  deleteModel: vi.fn(),
+  deleteTrainingRun: vi.fn(),
+  modelDownloadUrl: vi.fn(() => '#'),
 }))
 vi.mock('../api/client', () => ({ api }))
 
@@ -239,5 +242,34 @@ describe('MlOpsPage 学習の評価範囲', () => {
     const link = view.getByRole('link', { name: 'ER21302' }) as HTMLAnchorElement
     expect(link.getAttribute('href')).toBe('/projects/7')
     expect(view.getAllByText('難例')).toHaveLength(1)
+  })
+})
+
+describe('MlOpsPage の削除（DD-0052）', () => {
+  it('使用中のモデルは、消すと解析できなくなることを伝えてから消す', async () => {
+    api.listModels.mockResolvedValue([{ ...model, is_active: true }])
+    api.deleteModel.mockResolvedValue({ deleted: 9 })
+    const view = openPage()
+    fireEvent.click(await view.findByRole('button', { name: 'モデル seq-yolo v3 を削除' }))
+    const dialog = await view.findByRole('dialog')
+    expect(dialog.textContent).toContain('AI 解析ができません')
+    expect(within(dialog).getByRole('list', { name: '残るもの' }).textContent).toContain('AI の検出候補')
+    expect(api.deleteModel).not.toHaveBeenCalled()
+    fireEvent.click(within(dialog).getByRole('button', { name: /削除する/ }))
+    await waitFor(() => expect(api.deleteModel).toHaveBeenCalledWith(9))
+    await waitFor(() => expect(view.queryByRole('dialog')).toBeNull())
+  })
+
+  it('学習履歴を消せる。学習中は消せず、消せない理由はダイアログに出す', async () => {
+    api.listTrainingRuns.mockResolvedValue([trainingRun(4, { decision: 'pending' }), trainingRun(5, { status: 'running' })])
+    api.deleteTrainingRun.mockRejectedValue(new Error('学習中の履歴は削除できません。'))
+    const view = openPage()
+    expect((await view.findByRole('button', { name: '学習履歴 #5 を削除' }) as HTMLButtonElement).disabled).toBe(true)
+    fireEvent.click(view.getByRole('button', { name: '学習履歴 #4 を削除' }))
+    const dialog = await view.findByRole('dialog')
+    expect(dialog.textContent).toContain('採用待ちです')
+    expect(within(dialog).getByRole('list', { name: '残るもの' }).textContent).toContain('学習でできたモデル')
+    fireEvent.click(within(dialog).getByRole('button', { name: /削除する/ }))
+    expect(await within(dialog).findByText('学習中の履歴は削除できません。')).toBeTruthy()
   })
 })

@@ -45,6 +45,7 @@ import type {
   LogicSimulation,
   DemoView,
   LogicTimelineEvent,
+  DeletePreview,
 } from '../types'
 
 import { DEFAULT_DETECTION_CONF } from './defaults'
@@ -152,6 +153,22 @@ export const api = {
 
   bulkDelete: (ids: number[]) =>
     req<{ deleted: number[] }>('/api/projects/bulk-delete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids }),
+    }),
+
+  /** 削除の確認に出す内容（一緒に消えるもの・残るもの・今は消せない理由）。何も消さない（DD-0052） */
+  deletePreview: (ids: number[]) =>
+    req<DeletePreview>('/api/projects/delete-preview', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids }),
+    }),
+
+  /** AI の候補と構造解析の結果だけを消す（図面・アノテーションは残す） */
+  clearAnalysis: (ids: number[]) =>
+    req<{ predictions: number; structures: number }>('/api/ml/analysis/clear', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ids }),
@@ -321,6 +338,9 @@ export const api = {
       body: JSON.stringify({ decision }),
     }),
 
+  deleteTrainingRun: (id: number) =>
+    req<{ deleted: number }>(`/api/ml/training/runs/${id}`, { method: 'DELETE' }),
+
   trainingClassStats: () => req<ClassStats>('/api/ml/training/class-stats'),
 
   trainingHardDrawings: () => req<HardDrawings>('/api/ml/training/hard-drawings'),
@@ -429,6 +449,9 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ force }),
     }),
+
+  deleteCircuitChangeSet: (id: number) =>
+    req<{ deleted: number }>(`/api/circuit/edit/${id}`, { method: 'DELETE' }),
 
   downloadCircuitCode: (projectIds: number[]) =>
     download('/api/circuit/code', {
