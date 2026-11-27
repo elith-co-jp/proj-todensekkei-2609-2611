@@ -702,6 +702,36 @@ def zone_of(box: Any, zones: list[dict[str, Any]]) -> str | None:
 TEXT_NAME_MARGIN_PX = 20
 
 
+def read_tables(image: Image.Image, texts: list[dict[str, Any]], zones: list[dict[str, Any]], reader: Any,
+                lexicon: Counter | None = None) -> dict[str, Any]:
+    """リレー表・表題欄を罫線で行 × 列の格子にし、欄ごとに読み直す（DD-0051）。
+
+    SEQANNO_TABLE_REREAD=0 なら読み直さず、ページの OCR の文字を並べるだけにする。失敗しても解析は続ける。
+    """
+    import logging
+    import os
+
+    from analysis import table_grid, table_reading
+
+    out: dict[str, Any] = {}
+    try:
+        gray = image.convert("L")
+        for zone in zones:
+            area = _as_box(zone["bbox"])
+            inside = table_grid.items_in(texts, area)
+            heights = sorted(float(t["box"][3]) - float(t["box"][1]) for t in inside)
+            if not heights:
+                continue
+            height = heights[len(heights) // 2]
+            area = table_grid.expand_to_rules(gray, area, height)
+            out[zone["type"]] = table_grid.build_grid(texts, area, table_grid.ruling_lines(gray, area, height))
+        if reader is not None and os.environ.get("SEQANNO_TABLE_REREAD", "1") != "0":
+            out = table_reading.reread_grids(image, out, reader, lexicon)
+    except Exception:  # noqa: BLE001  表の読み直しに失敗しても、ほかの文字の結果は使う
+        logging.getLogger(__name__).exception("table reread failed")
+    return out
+
+
 def _has_cjk(text: str) -> bool:
     return any(unicodedata.east_asian_width(c) in "WF" for c in text)
 
@@ -917,10 +947,20 @@ def extract_text_structure(
     texts = classify_texts(items, symbols, zones)
     reread_texts(image, texts, text_reader, text_source)
     unlinked_captions = _infer_attributes(items, symbols, texts, crop_items_of, height)
+    tables = read_tables(image, texts, zones, reader, lexicon)
+    relay = {"rows": rows, "links": link_relay_table(rows, symbols)}
+    if "relay_table" in tables:
+        from analysis import table_reading
+
+        # 欄ごとに読み直したリレー表から行を読み直す（DD-0051 §6）。ページの OCR だけの行は page_rows に残す
+        reread = table_reading.relay_rows_from_grids(texts, tables, width, height)
+        if reread:
+            relay = {"rows": reread, "links": link_relay_table(reread, symbols), "page_rows": rows, "source": "cell_reread"}
     return {
         "texts": texts,
         "unlinked_captions": unlinked_captions,
-        "relay_table": {"rows": rows, "links": link_relay_table(rows, symbols)},
+        "tables": tables,
+        "relay_table": relay,
         "sheet_references": sheet_references(items, symbols),
         "sheet_number_candidates": sheet_number_candidates(items, width, height),
         "regions": [

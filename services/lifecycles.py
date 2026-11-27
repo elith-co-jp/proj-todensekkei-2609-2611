@@ -28,6 +28,7 @@ from statemachine.exceptions import TransitionNotAllowed
 __all__ = [
     "AnalysisJobLifecycle",
     "ChangeSetLifecycle",
+    "TableReviewLifecycle",
     "TrainingDecisionLifecycle",
     "TrainingRunLifecycle",
     "TransitionNotAllowed",
@@ -35,6 +36,7 @@ __all__ = [
     "analysis_job",
     "change_set",
     "fail_if_running",
+    "table_review",
     "training_decision",
     "training_run",
 ]
@@ -107,12 +109,27 @@ class ChangeSetLifecycle(StateMachine):
     undo = applied.to(undone)
 
 
+class TableReviewLifecycle(StateMachine):
+    """表の読み取りの確認（DD-0051 の TableReview.status）。
+
+    人が欄を直して保存すると確認中になり、確定すると構造解析の結果（リレー表）に人の読みを使う。
+    確定した後に直すときは確認中に戻す（戻している間は AI の読みを使う）。
+    """
+
+    draft = State("確認中", initial=True, value="draft")
+    confirmed = State("確定", value="confirmed")
+
+    confirm = draft.to(confirmed)
+    reopen = confirmed.to(draft)
+
+
 # 状態図を書き出す・確かめる対象（名前 → 機械）
 MACHINES: dict[str, type[StateMachine]] = {
     "TrainingRun.status": TrainingRunLifecycle,
     "TrainingRun.decision": TrainingDecisionLifecycle,
     "AnalysisJob.status": AnalysisJobLifecycle,
     "CircuitChangeSet.status": ChangeSetLifecycle,
+    "TableReview.status": TableReviewLifecycle,
 }
 
 
@@ -142,3 +159,7 @@ def analysis_job(job: Any) -> AnalysisJobLifecycle:
 
 def change_set(row: Any) -> ChangeSetLifecycle:
     return _bind(ChangeSetLifecycle, row, "status")
+
+
+def table_review(row: Any) -> TableReviewLifecycle:
+    return _bind(TableReviewLifecycle, row, "status")

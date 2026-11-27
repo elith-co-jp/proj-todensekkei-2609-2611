@@ -138,7 +138,13 @@ AI 改善サイクルの5段階は番号と線でつながった流れとして�
 
 AI の推論と構造解析の結果を 1 枚の図面の上で確かめる画面。検出したシンボル・配線・領域枠（作図領域・DI 範囲・雲マーク・LOC などの大きな枠。
 シンボルの件数には含めない）の表示を切り替え、構造 JSON を確認・書き出せる。エディタで人が確認して保存した件数は、AI の結果とは
-別に数えて示す。ヘッダーから一覧・前後の図面・アノテーション編集へ移動できる。
+別に数えて示す。ヘッダーから一覧・前後の図面・アノテーション編集・表の確認へ移動できる。
+
+### 3.2.2 表の読み取り確認（`/projects/:id/tables`、DD-0051）
+
+リレー表・表題欄の OCR の結果を、元の表と同じ行 × 列に並べて図面の表と上下（または重ねて）に見せ、欄ごとに直して
+「下書き保存」「確定」する。要確認（確からしさ 70% 未満）・直した欄・AI が読んでいない欄を色で分ける。確定したリレー表は
+構造解析の結果のリレー表の行に使い（整合性チェック・シート間の照合・書き出し）、解析し直しても人の読みを使う。
 
 ### 3.3 入出力（`/export`）
 
@@ -279,6 +285,9 @@ ZIP を選択してインポートすると、`bundle.json` の有無で復元�
 | `GET` | `/api/ml/analysis/jobs`、`/api/ml/analysis/jobs/{id}` | ジョブの一覧・進み具合（`done` / `total`、`current`、`results`、`failures`） |
 | `POST` | `/api/ml/analysis/jobs/{id}/cancel` | 解析中の図面を終えたら止める |
 | `GET` | `/api/ml/projects/{id}/structure` | 図面の最新の構造解析結果（未実行は null） |
+| `GET` | `/api/projects/{id}/tables` | 表（リレー表・表題欄）の OCR の格子・人が直した値・状態（`unreviewed` / `draft` / `confirmed`）・リレー表の行（DD-0051） |
+| `PUT` | `/api/projects/{id}/tables/{kind}` | `{values: [{row, col, text}], confirm}`。直した値を保存し、`confirm` で確定（確定済みの表を確定なしで保存すると確認中に戻る） |
+| `DELETE` | `/api/projects/{id}/tables/{kind}` | 確かめた結果を消して AI の読みから始め直す |
 | `POST` | `/api/ml/analysis/export` | `{project_ids[]}`。構造解析の結果を 1 つの `structure.json` にまとめて返す（形式は DATA_FORMAT.md §5）。未実行の図面があれば 409 |
 | `POST` | `/api/ml/training/run` | `{project_ids[], only_done, epochs, imgsz, base_model, holdout}`。バックグラウンドで学習。`holdout`（既定 true）で評価用図面を学習から外す |
 | `GET` | `/api/ml/training/runs` | 学習履歴（最新 50 件。メトリクス・ログ末尾つき） |

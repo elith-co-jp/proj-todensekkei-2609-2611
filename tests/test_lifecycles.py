@@ -93,6 +93,7 @@ def test_states_match_documented_values():
         "TrainingRun.decision": ["", "pending", "adopted", "rejected"],
         "AnalysisJob.status": ["running", "done", "cancelled", "failed"],
         "CircuitChangeSet.status": ["applied", "undone"],
+        "TableReview.status": ["draft", "confirmed"],
     }
 
 
@@ -139,3 +140,13 @@ def test_recover_interrupted_runs_unblocks_training():
         assert (done_row.status, done_row.decision) == ("success", "pending")
     finally:
         db.close()
+
+
+def test_table_review_confirm_and_reopen():
+    row = SimpleNamespace(status="draft")
+    lifecycles.table_review(row).confirm()
+    assert row.status == "confirmed"
+    with pytest.raises(TransitionNotAllowed):
+        lifecycles.table_review(row).confirm()
+    lifecycles.table_review(row).reopen()
+    assert row.status == "draft"
