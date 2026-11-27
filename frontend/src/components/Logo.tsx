@@ -1,18 +1,18 @@
-import { Scan } from 'lucide-react'
-
 /**
- * TodenYOLO ロゴ。グラデーションの角丸に検出枠（YOLO のバウンディングボックス）を重ねたマーク。
- * 文字色は親の text-* を継承する。
+ * TodenYOLO ロゴ。検出枠（YOLO のバウンディングボックス）がシーケンス図の a 接点をとらえたマーク。
+ * 絵は favicon・EXE のアイコンと同じ public/todenyolo-mark.svg。ワードマークの文字色は親の text-* を継承する。
  */
 export function LogoMark({ size = 28, className = '' }: { size?: number; className?: string }) {
   return (
-    <span
+    <img
+      src="/todenyolo-mark.svg"
+      alt=""
       aria-hidden="true"
-      className={`brand-gradient flex flex-none select-none items-center justify-center rounded-xl text-white ${className}`}
-      style={{ height: size, width: size }}
-    >
-      <Scan size={Math.round(size * 0.6)} strokeWidth={2.4} />
-    </span>
+      draggable={false}
+      width={size}
+      height={size}
+      className={`block flex-none select-none ${className}`}
+    />
   )
 }
 
