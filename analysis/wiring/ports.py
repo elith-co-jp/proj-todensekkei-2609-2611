@@ -75,13 +75,19 @@ def point_ink_ratio(image: Image.Image, point: tuple[float, float], radius: int)
     return dark_pixels / max(1, crop.width * crop.height)
 
 
+# 丸の記号（コイル・表示灯）の端子は丸の上下の縁にある。推定の端子は縁のすぐ内側（枠の高さの 15%・85%）に置く。
+# 表示灯を 32%・68% にしていたため、スキャンで太った × 印のインクの上に端子が丸の中ほどに付き、縁の端子から
+# 離れていた（DD-0053）。
+CIRCLE_SYMBOLS = frozenset({"solenoid", "relay_coil", "lamp"})
+
+
 def expected_ratios(class_name: str, box: dict[str, int | float], four_port_height_px: float) -> list[float]:
     height = float(box["y1"]) - float(box["y0"])
     if class_name in {"contact_a", "contact_b"} and height >= four_port_height_px:
         return [0.2, 0.4, 0.6, 0.8]
     if class_name in {"contact_a", "contact_b"}:
         return [0.32, 0.68]
-    if class_name in {"solenoid", "relay_coil"}:
+    if class_name in CIRCLE_SYMBOLS:
         return [0.15, 0.85]
     return [0.32, 0.68]
 
