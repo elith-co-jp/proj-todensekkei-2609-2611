@@ -33,6 +33,9 @@ CONTACT_PREFERS_WIRES_INSIDE_BOX = True
 # fail the ink check. Such a contact takes its ports at the box edges instead, only where a wire
 # reaches the edge; a point off the wire would attach to whatever node lies within reach.
 CONTACT_EDGE_FALLBACK = True
+# 表示灯も、丸の中の点にインクが無く端子が 2 つに満たなければ、貫く配線の上の枠の上下の辺を端子にする。
+# 丸の中は × 印の交点のほかは白く、かすれた図面では線から端子を探す方法（line_ports）も途切れで届かなかった（DD-0054）。
+LAMP_EDGE_FALLBACK = True
 
 
 # A contact boxed together with its label can also cover the return wire drawn just beside the label
@@ -60,6 +63,13 @@ def grazes_box_edge(symbol: dict[str, Any], point: tuple[float, float], orientat
     return (near_y and not near_x) if orientation == "h" else (near_x and not near_y)
 
 
+# 端子の候補の点の周りで「インク」とみなす灰色。かすれた線（地より 40 以上暗いが 180 より明るい）は、
+# 周りの地と最も暗い画素の中間まで閾値を上げてインクとみなす（DD-0054）。濃い線のある所は今までと同じ 180。
+INK_GRAY = 180
+FADED_INK_MIN_CONTRAST = 40
+FADED_INK_BACKGROUND_PERCENTILE = 75
+
+
 def point_ink_ratio(image: Image.Image, point: tuple[float, float], radius: int) -> float:
     gray = image.convert("L")
     x, y = int(round(point[0])), int(round(point[1]))
@@ -69,10 +79,16 @@ def point_ink_ratio(image: Image.Image, point: tuple[float, float], radius: int)
     y1 = min(gray.height, y + radius + 1)
     if x0 >= x1 or y0 >= y1:
         return 0.0
-    crop = gray.crop((x0, y0, x1, y1))
-    histogram = crop.histogram()
-    dark_pixels = sum(histogram[:180])
-    return dark_pixels / max(1, crop.width * crop.height)
+    crop = np.asarray(gray.crop((x0, y0, x1, y1)))
+    threshold = INK_GRAY
+    darkest = int(crop.min())
+    if darkest >= INK_GRAY:
+        around = np.asarray(gray.crop((max(0, x - 3 * radius), max(0, y - 3 * radius),
+                                       min(gray.width, x + 3 * radius + 1), min(gray.height, y + 3 * radius + 1))))
+        background = float(np.percentile(around, FADED_INK_BACKGROUND_PERCENTILE))
+        if background - darkest >= FADED_INK_MIN_CONTRAST:
+            threshold = max(INK_GRAY, int((background + darkest) / 2))
+    return float(np.count_nonzero(crop < threshold)) / max(1, crop.size)
 
 
 # 丸の記号（コイル・表示灯）の端子は丸の上下の縁にある。推定の端子は縁のすぐ内側（枠の高さの 15%・85%）に置く。
@@ -285,7 +301,9 @@ def infer_ports_for_symbol(
     if symbol.get("other_kind") == "card":
         for mirrored in card_ports_across(deduped.values(), wires, (x0, y0, x1, y1), margin_px):
             deduped.setdefault(candidate_key(mirrored), mirrored)
-    if CONTACT_EDGE_FALLBACK and mode == "template" and class_name in {"contact_a", "contact_b"} and not four_port and len(deduped) < 2:
+    edge_fallback = (CONTACT_EDGE_FALLBACK and class_name in {"contact_a", "contact_b"} and not four_port) or (
+        LAMP_EDGE_FALLBACK and class_name == "lamp")
+    if edge_fallback and mode == "template" and len(deduped) < 2:
         return infer_ports_for_symbol(symbol, wires, source_image, config={**config, "mode": "bbox_edge", "edge_on_span": True}, params=params)
     return sorted(deduped.values(), key=lambda item: (str(item["wire_id"]), item["point"][1], item["point"][0]))
 
@@ -701,6 +719,32 @@ def _run(inked: Any, start: int, step: int) -> int:
     return length
 
 
+def _line_columns(
+    mask: Any, box: tuple[int, int, int, int], axes: list[str], gap: int, min_run: int, params: PortParams,
+) -> tuple[str, list[int]]:
+    """枠の両側の外へ min_run 以上続く線の向きと列（同じ強さの隣り合う列）。無ければ空の列。"""
+    x0, y0, x1, y1 = box
+    # 線の太さの揺れを 1 px 許して見るので、同じ強さの列が線の幅だけ続く。その真ん中を端子の位置にする。
+    best_score, best_axis, best_columns = 0, "v", []
+    for axis in axes:
+        lo, hi = (x0 + 2, x1 - 2) if axis == "v" else (y0 + 2, y1 - 2)
+        for c in range(lo, hi + 1):
+            if axis == "v":
+                runs = (_ink_run(mask, c, y0, 0, -1, params.line_probe_px, gap),
+                        _ink_run(mask, c, y1, 0, 1, params.line_probe_px, gap))
+            else:
+                runs = (_ink_run(mask, x0, c, -1, 0, params.line_probe_px, gap),
+                        _ink_run(mask, x1, c, 1, 0, params.line_probe_px, gap))
+            score = min(runs)
+            if score < min_run or score < best_score:
+                continue
+            if score > best_score or axis != best_axis or c != best_columns[-1] + 1:
+                best_score, best_axis, best_columns = score, axis, [c]
+            else:
+                best_columns.append(c)
+    return best_axis, best_columns
+
+
 def line_ports(
     symbol: dict[str, Any], mask: Any, wires: list[dict[str, Any]], symbols: list[dict[str, Any]],
     faint: Any | None = None, params: PortParams = DEFAULT.ports,
@@ -712,34 +756,23 @@ def line_ports(
     box = symbol["bbox"]
     x0, y0, x1, y1 = (int(round(float(box[k]))) for k in ("x0", "y0", "x1", "y1"))
     axes = ["v"] if symbol.get("class_name") in classes.COILS else ["v", "h"]
-    # 線の太さの揺れを 1 px 許して見るので、同じ強さの列が線の幅だけ続く。その真ん中を端子の位置にする。
-    best_score, best_axis, best_columns = 0, "v", []
-    for axis in axes:
-        lo, hi = (x0 + 2, x1 - 2) if axis == "v" else (y0 + 2, y1 - 2)
-        for c in range(lo, hi + 1):
-            if axis == "v":
-                runs = (_ink_run(mask, c, y0, 0, -1, params.line_probe_px, params.line_gap_px),
-                        _ink_run(mask, c, y1, 0, 1, params.line_probe_px, params.line_gap_px))
-            else:
-                runs = (_ink_run(mask, x0, c, -1, 0, params.line_probe_px, params.line_gap_px),
-                        _ink_run(mask, x1, c, 1, 0, params.line_probe_px, params.line_gap_px))
-            score = min(runs)
-            if score < params.line_min_run_px or score < best_score:
-                continue
-            if score > best_score or axis != best_axis or c != best_columns[-1] + 1:
-                best_score, best_axis, best_columns = score, axis, [c]
-            else:
-                best_columns.append(c)
+    best_axis, best_columns = _line_columns(mask, (x0, y0, x1, y1), axes, params.line_gap_px, params.line_min_run_px, params)
     trace_mask, gap = mask, params.line_gap_px
-    if best_columns:
-        axis, c = best_axis, best_columns[len(best_columns) // 2]
-    elif faint is not None and symbol.get("class_name") in FAINT_PORT_CLASSES:
+    found = lead = None
+    if not best_columns and faint is not None and symbol.get("class_name") in FAINT_PORT_CLASSES:
         found = _faint_column(faint, x0, y0, x1, y1, params, middle_only=symbol.get("class_name") in classes.COILS)
         lead = _lead_column(mask, x0, y0, x1, y1, params) if found is None and symbol.get("class_name") in classes.CONTACTS else None
         if found is None and lead is None and symbol.get("class_name") in classes.CONTACTS:
             found = _dotted_column(faint, x0, y0, x1, y1, params)
-        if found is None and lead is None:
-            return []
+    if not best_columns and found is None and lead is None and params.broken_line_gap_px > params.line_gap_px:
+        # スキャンのかすれで線が数 px ずつ途切れると、途切れ 2 px までの線は枠の外で 10 px も続かない（DD-0054）。
+        # 途切れを広く許す代わりに、枠の外に長く続く線だけを使う。薄い線の探し方で見つからないときだけ。
+        best_axis, best_columns = _line_columns(
+            mask, (x0, y0, x1, y1), axes, params.broken_line_gap_px, params.broken_line_min_run_px, params)
+        gap = params.broken_line_gap_px
+    if best_columns:
+        axis, c = best_axis, best_columns[len(best_columns) // 2]
+    elif found is not None or lead is not None:
         if lead is not None:
             # 端子は引き出し線の先に置き、そこから薄い線をたどる。
             found, y0, y1 = lead

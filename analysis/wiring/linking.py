@@ -115,10 +115,13 @@ def enrich_symbols_and_graph(
             t for t in terminal_points
             if not grazes_box_edge(symbol, t["point"], t.get("wire_orientation"), port_params.graze_edge_px)
         ]
+        found_ports = len([t for t in terminal_points if t.get("terminal_ref")])
+        four_port = is_four_port_symbol(str(symbol.get("class_name")), bbox, float(inferred_terminal_config["four_port_height_px"]))
+        # 4 端子の接点も、端子が 1 つも付かなければ線から 2 端子を探す。かすれで配線の確信度が下がると、
+        # 推定の端子が 1 つも付かず、接点が回路から外れていた（DD-0054）。
         if (
             port_params.line_ports and symbol.get("class_name") in LINE_PORT_CLASSES
-            and not is_four_port_symbol(str(symbol.get("class_name")), bbox, float(inferred_terminal_config["four_port_height_px"]))
-            and len([t for t in terminal_points if t.get("terminal_ref")]) < 2
+            and (found_ports == 0 if four_port else found_ports < 2)
         ):
             if line_mask is None:
                 line_mask = make_binary_mask(source_image)

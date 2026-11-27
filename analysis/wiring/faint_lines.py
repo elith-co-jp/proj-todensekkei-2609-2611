@@ -38,6 +38,12 @@ SOLID_ALIGN = 3
 # 分岐の黒丸どうしも同じ。黒丸は太い線の上に描かれ、薄い線で結ばれることはない。ずれた黒丸の間の帯は、下部の
 # 交差の束で 11 px おきに並ぶ平行な横線を拾い、別々の配線をつないだ（ER21276・ER21279・ER21280 の 5 本）。
 JUNCTION_ALIGN = SOLID_ALIGN
+# 傾いたスキャンでは、離れた黒丸ほど上下（左右）にずれる。黒丸どうしのずれの許しに、間の長さのこの割合を足す
+# （0.005 は約 0.3 度）。間の短い黒丸（交差の束）はほとんど変わらない（DD-0054）。
+JUNCTION_SKEW_SLOPE = 0.005
+# 黒丸の外で線の位置を測る長さと、線とみなす列の平均の灰色の上限（_line_across）。
+LINE_PROBE = 20
+LINE_PROBE_MAX_MEAN = 200
 # まばらな点線（DD-0023）。スキャンでほとんど消えた上部の母線の行の線は、灰色の点が 5〜30 px おきに残るだけで、
 # 灰色の割合（MIN_GREY_SHARE）にも途切れの長さ（MAX_WHITE_RUN）にも届かない。白い紙では点は 0 個。濃い点（交わる
 # 配線）は数えない。
@@ -71,6 +77,31 @@ def _profile(gray: np.ndarray, a: tuple[float, float], b: tuple[float, float], v
     x0, x1 = sorted((round(a[0]), round(b[0])))
     band = gray[max(0, y - half):y + half + 1, x0 + skip:x1 - skip]
     return band.min(axis=0) if band.size else np.array([255])
+
+
+def _line_across(gray: np.ndarray, point: tuple[float, float], toward: float, vertical: bool, scale: float) -> float | None:
+    """黒丸から相手の端子へ向かう線が、黒丸のすぐ外で通る位置（縦の線なら x）。線が無ければ None。
+
+    かすれ・ごみで黒丸の形が崩れると、黒丸の中心は線から 3〜4 px ずれる（DD-0054）。線そのものの位置で
+    ずれを測り直す。黒丸の外 END_SKIP から LINE_PROBE の範囲で、ALIGN 以内の列（行）の平均が最も暗い所。
+    """
+    skip, length, half = round(END_SKIP * scale), round(LINE_PROBE * scale), round(ALIGN * scale)
+    direction = 1 if toward > (point[1] if vertical else point[0]) else -1
+    if vertical:
+        x, y = round(point[0]), round(point[1])
+        y0, y1 = sorted((y + direction * skip, y + direction * (skip + length)))
+        band = gray[max(0, y0):max(0, y1), max(0, x - half):x + half + 1].astype(float)
+        origin = max(0, x - half)
+    else:
+        x, y = round(point[0]), round(point[1])
+        x0, x1 = sorted((x + direction * skip, x + direction * (skip + length)))
+        band = gray[max(0, y - half):y + half + 1, max(0, x0):max(0, x1)].astype(float).T
+        origin = max(0, y - half)
+    if not band.size:
+        return None
+    means = band.mean(axis=0)
+    best = int(means.argmin())
+    return origin + best if means[best] <= LINE_PROBE_MAX_MEAN else None
 
 
 def _longest(mask: np.ndarray) -> int:
@@ -235,8 +266,17 @@ def bridge_faint_wires(payload: dict[str, Any], image: Image.Image) -> list[dict
                 continue
             profile = _profile(gray, here, (ox, oy), vertical, scale)
             offset = abs((ox, oy)[axis] - here[axis])
-            aligned = offset <= SOLID_ALIGN * scale
-            if both_junctions and offset > JUNCTION_ALIGN * scale:
+            if offset > SOLID_ALIGN * scale:
+                # 黒丸の中心がずれていても、黒丸の外の線が相手の端子とそろっていれば、そろっているとみなす。
+                for point, toward, peer, s_id in ((here, (ox, oy)[along], (ox, oy), sid), ((ox, oy), here[along], here, other_sid)):
+                    if _class(symbols[s_id]) != classes.JUNCTION:
+                        continue
+                    line = _line_across(gray, point, toward, vertical, scale)
+                    if line is not None:
+                        offset = min(offset, abs(line - peer[axis]))
+            junction_align = JUNCTION_ALIGN * scale + gap * JUNCTION_SKEW_SLOPE
+            aligned = offset <= (junction_align if both_junctions else SOLID_ALIGN * scale)
+            if both_junctions and offset > junction_align:
                 continue
             # Beyond the ordinary terminal search radius, only a continuous, tightly aligned bus between
             # explicit junction dots is strong enough evidence.  Sparse scan noise must not bridge that far.

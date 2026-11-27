@@ -7,7 +7,8 @@
   logic     合成回路（DD-0032）: シミュレーション・回路コードの往復・波及範囲が正解と一致するか、誤りを入れた図面を矛盾チェックが見つけるか
   reading   図面を読む手順（DD-0035）: 成立条件・3 値の判定・順引きが正解と一致するか
   drawings  合成図面（PDF → 画像 → 配線の読み取り → 回路）: 配線の再現率・適合率と、回路の意味が正解と同じか。
-            きれいな図面と、スキャンに似せて劣化させた図面（受領図面はスキャン）の両方。--model で記号の検出も YOLO で行う
+            きれいな図面と、スキャンに似せて劣化させた図面（受領図面はスキャン）、傾き・かすれ・線の途切れ・ごみも
+            加えた強い劣化の図面（scan_hard、DD-0054）。--model で記号の検出も YOLO で行う
 
 Example:
     python analysis/tools/eval_suite.py                      # 既定の規模。基準値（analysis/eval_baseline.json）と比べる
@@ -92,8 +93,8 @@ def run_drawings(count: int, work: Path, *, model: Path | None, enable_ocr: bool
     root = work / "synthetic"
     generate_dataset(root, DatasetConfig(count=count, seed=2609))
     out: dict[str, Any] = {}
-    for name, scan_seed in (("clean", None), ("scan", 1000)):
-        r = evaluate_dataset(root, disable_ocr=not enable_ocr, model_path=model, scan_seed=scan_seed)
+    for name, scan_seed, hard in (("clean", None, False), ("scan", 1000, False), ("scan_hard", 1000, True)):
+        r = evaluate_dataset(root, disable_ocr=not enable_ocr, model_path=model, scan_seed=scan_seed, scan_hard=hard)
         prefix = f"drawings.{name}"
         out |= {
             f"{prefix}.wire_recall": round(r["connections"]["recall"], 4),
