@@ -309,6 +309,9 @@ export default function MlOpsPage() {
     }
   }
 
+  // サーバと同じ決め方で学習に使う図面を数え、0 枚なら押せないようにする（押すと 400 になる）
+  const trainTargetCount = trainIds.size > 0 ? trainIds.size : onlyDone ? projects.filter((r) => r.status === 'done').length : projects.length
+
   const startTraining = async () => {
     setBusy('train')
     setNotice(null)
@@ -912,10 +915,14 @@ export default function MlOpsPage() {
               <button
                 className="btn btn-accent w-full justify-center"
                 onClick={() => void startTraining()}
-                disabled={busy !== null || !status?.ultralytics || trainingRunning || projects.length === 0}
+                disabled={busy !== null || !status?.ultralytics || trainingRunning || trainTargetCount === 0}
               >
                 {busy === 'train' || trainingRunning ? <Loader2 size={14} className="animate-spin" /> : <Brain size={14} />}
-                {trainingRunning ? '学習を実行中…' : '学習を開始'}
+                {trainingRunning
+                  ? '学習を実行中…'
+                  : trainTargetCount === 0
+                    ? onlyDone ? '完了（done）の図面がありません' : '学習に使う図面がありません'
+                    : '学習を開始'}
               </button>
             </div>
 
