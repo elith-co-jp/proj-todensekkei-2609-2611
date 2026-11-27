@@ -15,6 +15,8 @@ sys.path.insert(0, str(ROOT))
 _TMP = tempfile.mkdtemp(prefix="seqanno_test_")
 os.environ["SEQANNO_DATA_DIR"] = _TMP
 os.environ["SEQANNO_DATABASE_URL"] = f"sqlite:///{Path(_TMP) / 'test.db'}"
+# TestClient は Host: testserver で送る（DNS リバインディング対策の Host 確認を通すため）
+os.environ["SEQANNO_ALLOWED_HOSTS"] = "testserver"
 
 from fastapi.testclient import TestClient
 from PIL import Image

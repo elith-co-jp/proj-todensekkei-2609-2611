@@ -8,7 +8,7 @@ import AnalysisPage from './AnalysisPage'
 
 const api = vi.hoisted(() => ({
   getProject: vi.fn(), getPredictions: vi.fn(), getStructure: vi.fn(), listProjects: vi.fn(),
-  imageUrl: vi.fn((id) => `/api/projects/${id}/image`), runAnalysis: vi.fn(), exportStructure: vi.fn(),
+  imageUrl: vi.fn((id) => `/api/projects/${id}/image`), runAnalysis: vi.fn(), exportStructure: vi.fn(), analysisUnavailableReason: vi.fn(),
 }))
 vi.mock('../api/client', () => ({ api }))
 
@@ -33,6 +33,7 @@ beforeEach(() => {
   api.getStructure.mockResolvedValue({ project_id: 1, result })
   api.listProjects.mockResolvedValue([{ id: 1 }, { id: 2 }])
   api.runAnalysis.mockResolvedValue({})
+  api.analysisUnavailableReason.mockResolvedValue(null)
   api.exportStructure.mockResolvedValue({ name: 'structure.json' })
 })
 
@@ -86,6 +87,15 @@ describe('AnalysisPage', () => {
     expect((view.getByRole('button', { name: '構造JSON' }) as HTMLButtonElement).disabled).toBe(true)
     fireEvent.click(view.getByRole('button', { name: '解析を実行' }))
     await waitFor(() => expect(api.runAnalysis).toHaveBeenCalledWith([1]))
+  })
+
+  it('does not send the analysis request when no model is registered', async () => {
+    api.analysisUnavailableReason.mockResolvedValue('推論に使うモデルがありません')
+    const view = openPage()
+    await view.findByRole('heading', { name: '解析結果' })
+    fireEvent.click(view.getByRole('button', { name: '再解析' }))
+    expect((await view.findByRole('alert')).textContent).toContain('推論に使うモデルがありません')
+    expect(api.runAnalysis).not.toHaveBeenCalled()
   })
 
   it('keeps saved predictions when reanalysis fails', async () => {

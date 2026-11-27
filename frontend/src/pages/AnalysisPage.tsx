@@ -57,6 +57,11 @@ export default function AnalysisPage() {
     setError(null)
     setNotice(null)
     try {
+      const reason = await api.analysisUnavailableReason()
+      if (reason) {
+        if (request === generation.current) setError(reason)
+        return
+      }
       await api.runAnalysis([projectId])
       const result = await fetchPage(projectId)
       if (request !== generation.current) return

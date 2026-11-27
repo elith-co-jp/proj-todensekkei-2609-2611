@@ -210,6 +210,11 @@ export default function DemoPage() {
   }
   const analyze = async (target: number[]) => {
     try {
+      const reason = await api.analysisUnavailableReason()
+      if (reason) {
+        setError(reason)
+        return
+      }
       setJob(await api.startAnalysisJob(target))
       setError(null)
     } catch (e) {

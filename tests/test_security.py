@@ -54,3 +54,35 @@ def test_allows_requests_without_origin(client):
         files={"files": ("a.png", make_png(), "image/png")},
     )
     assert res.status_code == 200
+
+
+# ---------------------------------------------------------------- DNS リバインディング
+def test_rejects_foreign_host(client):
+    # 攻撃サイトのドメインを 127.0.0.1 に向け直したとき、Host はそのドメインになる
+    res = client.get("/api/projects", headers={"Host": "evil.example:8010"})
+    assert res.status_code == 403
+
+
+def test_allows_loopback_hosts(client):
+    for host in ("127.0.0.1:8010", "localhost", "[::1]:8010", "LOCALHOST:3000"):
+        res = client.get("/api/health", headers={"Host": host})
+        assert res.status_code == 200, host
+
+
+# ---------------------------------------------------------------- 守りのヘッダ
+def test_security_headers_on_responses(client):
+    for res in (client.get("/api/health"), client.get("/api/health", headers={"Origin": "https://evil.example"})):
+        assert res.headers["X-Content-Type-Options"] == "nosniff"
+        assert res.headers["X-Frame-Options"] == "DENY"
+        assert "frame-ancestors 'none'" in res.headers["Content-Security-Policy"]
+
+
+# ---------------------------------------------------------------- 画面の静的ファイル
+def test_spa_path_rejects_unc_and_traversal():
+    from main import _is_plain_relative
+
+    assert _is_plain_relative("favicon.ico")
+    assert _is_plain_relative("img/logo.svg")
+    for bad in ("/attacker/share/x", "\\\\attacker\\share\\x", "..\\secret", "../secret", "a/../../b",
+                "C:/Windows/win.ini", "a//b", ""):
+        assert not _is_plain_relative(bad), bad

@@ -102,6 +102,53 @@ _LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1"}
 _CONFIGURED_ORIGINS = {o.strip().rstrip("/").lower() for o in _origins.split(",") if o.strip()}
 
 
+# DNS リバインディング対策で受け付ける Host。ループバックと許可オリジンのホストに加え、
+# SEQANNO_ALLOWED_HOSTS（カンマ区切り）で足せる（社内サーバで動かすときなど）
+_ALLOWED_HOSTS = (
+    _LOOPBACK_HOSTS
+    | {(urlsplit(o).hostname or "").lower() for o in _CONFIGURED_ORIGINS}
+    | {h.strip().lower() for h in os.environ.get("SEQANNO_ALLOWED_HOSTS", "").split(",") if h.strip()}
+) - {""}
+
+# 画面を他サイトの iframe に埋め込ませない（クリックジャッキング対策）など、全応答に付ける守りのヘッダ
+_SECURITY_HEADERS = {
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Content-Security-Policy": "frame-ancestors 'none'",
+    "Referrer-Policy": "no-referrer",
+}
+
+
+def _host_name(host_header: str) -> str:
+    """Host ヘッダ（例: 127.0.0.1:8010、[::1]:8010）からホスト名だけを取り出す。"""
+    try:
+        return (urlsplit(f"//{host_header}").hostname or "").lower()
+    except ValueError:
+        return ""
+
+
+@app.middleware("http")
+async def _security_headers(request: Request, call_next):
+    response = await call_next(request)
+    for name, value in _SECURITY_HEADERS.items():
+        response.headers.setdefault(name, value)
+    return response
+
+
+@app.middleware("http")
+async def _reject_foreign_hosts(request: Request, call_next):
+    """DNS リバインディング対策: Host がローカル・許可ホスト以外のリクエストを拒否する。
+
+    攻撃サイトのドメインを 127.0.0.1 に向け直すと、ブラウザはそのサイトと同一オリジンとして
+    この API を読めてしまう（GET は Origin を送らないため Origin の確認では防げない）。
+    そのとき Host は攻撃サイトのドメインになるので、ここで止める。
+    """
+    if _host_name(request.headers.get("host", "")) not in _ALLOWED_HOSTS:
+        return JSONResponse({"detail": "許可されていないホストです"}, status_code=403,
+                            headers=_SECURITY_HEADERS)
+    return await call_next(request)
+
+
 @app.middleware("http")
 async def _reject_foreign_origins(request: Request, call_next):
     """localhost CSRF 対策: Origin がローカル以外のブラウザ発リクエストを拒否する。
@@ -121,7 +168,8 @@ async def _reject_foreign_origins(request: Request, call_next):
                 host = ""
             allowed = host in _LOOPBACK_HOSTS
         if not allowed:
-            return JSONResponse({"detail": "許可されていないオリジンです"}, status_code=403)
+            return JSONResponse({"detail": "許可されていないオリジンです"}, status_code=403,
+                                headers=_SECURITY_HEADERS)
     return await call_next(request)
 
 
@@ -151,6 +199,19 @@ def desktop_shutdown() -> dict:
 # ビルド済みフロントエンド（frontend/dist）があれば配信する。
 # exe 化時は同梱リソースの基準（resource_base）から探す。
 _DIST = resource_base() / "frontend" / "dist"
+
+
+def _is_plain_relative(path: str) -> bool:
+    """dist 配下を指す素直な相対パスか。
+
+    Windows では UNC パス（`//host/share`。バックスラッシュ区切りも同じ）を resolve するだけで SMB 接続が起き、
+    資格情報が外へ漏れうる。ファイルシステムに触れる前に、区切り・ドライブ・".." を弾く。
+    """
+    if "\\" in path or ":" in path or path.startswith("/"):
+        return False
+    return all(part not in ("", ".", "..") for part in path.split("/"))
+
+
 if _DIST.exists():
     app.mount("/assets", StaticFiles(directory=_DIST / "assets"), name="assets")
 
@@ -158,9 +219,9 @@ if _DIST.exists():
     def spa(full_path: str):
         # dist 直下の静的ファイル（favicon・ロゴ等）は実体を返し、
         # それ以外は SPA として index.html にフォールバックする。
-        if full_path:
+        if full_path and _is_plain_relative(full_path):
             dist_root = _DIST.resolve()
             candidate = (dist_root / full_path).resolve()
-            if candidate.is_file() and dist_root in candidate.parents:
+            if dist_root in candidate.parents and candidate.is_file():
                 return FileResponse(candidate)
         return FileResponse(_DIST / "index.html")

@@ -12,6 +12,7 @@ const api = vi.hoisted(() => ({
   demoView: vi.fn(),
   createProjects: vi.fn(),
   startAnalysisJob: vi.fn(),
+  analysisUnavailableReason: vi.fn(async () => null),
   getAnalysisJob: vi.fn(),
   ioTable: vi.fn(),
   uploadIoTable: vi.fn(),
