@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import io
 import logging
-from functools import lru_cache
 from typing import Any
 
 import numpy as np
@@ -23,11 +22,11 @@ SIDEWAYS_RATIO = 3.0  # 縦長の文字枠が横長の文字枠の 3 倍以上�
 SAMPLE_BOXES = 12
 
 
-@lru_cache(maxsize=1)
 def _reader() -> Any:
-    from rapidocr_onnxruntime import RapidOCR
+    """解析と同じ RapidOCR を使う（モデルを 2 組読み込まない。DD-0056）。"""
+    from analysis.wiring.ocr import shared_reader
 
-    return RapidOCR()
+    return shared_reader()
 
 
 def _text_boxes(image: Image.Image, reader: Any) -> list[tuple[float, float, float, float]]:

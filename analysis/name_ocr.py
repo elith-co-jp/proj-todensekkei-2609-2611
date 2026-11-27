@@ -36,7 +36,9 @@ def make_reader(path: Path, threads: int | None = None) -> LabelReader:
     from rapidocr_onnxruntime import RapidOCR
 
     limits = {f"{part}_intra_op_num_threads": threads for part in ("det", "cls", "rec")} if threads else {}
-    engine = RapidOCR(rec_model_path=str(path), **limits)
+    from analysis import ocr_cache
+
+    engine = ocr_cache.wrap(RapidOCR(rec_model_path=str(path), **limits), ocr_cache.engine_tag("name", path))
 
     def read(image: Image.Image, box: Any) -> str | None:
         x0, y0, x1, y1 = _as_box(box)
