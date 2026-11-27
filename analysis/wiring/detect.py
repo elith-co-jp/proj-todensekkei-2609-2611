@@ -56,6 +56,12 @@ MERGE_SIDE_BY_SIDE_PX = 6
 # 線のすぐ上の小さな印（ER21283 の「↑」）と 0.69 重なり、角の線を落としていた（DD-0022）。長い母線と同じ値。
 SHORT_CORNER_TEXT_OVERLAP = 0.75
 
+# 図面の枠とみなす上下の横線の組の条件（_is_frame_pair、DD-0053）。上下の間は画像の高さのこの割合以上。
+FRAME_MIN_HEIGHT = 0.5
+# 左右の縦線が無いとき、上と下の線の左右の端のずれはこの割合（画像の幅に対して）まで。枠の線は端がそろい、
+# 上下の母線は 120 px（幅の 7%）ずれる（合成図面）。
+FRAME_END_ALIGN = 0.03
+
 
 def make_binary_mask(image: Image.Image) -> np.ndarray:
     gray = np.array(image.convert("L"))
@@ -457,11 +463,26 @@ def merge_candidate_lines(
     return [line_from_box(orientation, box) for box in merged]
 
 
+def _is_frame_pair(top: Box, bottom: Box, width: int, height: int, left: bool, right: bool) -> bool:
+    """上下の長い横線の組が図面の枠に見えるか（DD-0053）。
+
+    枠は長方形なので、上と下の線は別の線で、上下に FRAME_MIN_HEIGHT 以上離れ、左右の端がそろう
+    （そろわなくても左右の縦線が両方あれば枠）。スキャンで枠の細い線が消えた図面では、上下の母線が枠に
+    選ばれ、枠の近くとして母線が配線から外れたり、母線が 1 本だけ残って描画範囲が 0 になったりしていた。
+    """
+    if top == bottom or bottom.y1 - top.y0 < height * FRAME_MIN_HEIGHT:
+        return False
+    if left and right:
+        return True
+    tolerance = width * FRAME_END_ALIGN
+    return abs(top.x0 - bottom.x0) <= tolerance and abs(top.x1 - bottom.x1) <= tolerance
+
+
 def detect_regions(width: int, height: int, h_lines: list[LineSegment], v_lines: list[LineSegment]) -> PageRegions:
+    default = Box(int(width * 0.03), int(height * 0.05), int(width * 0.95), int(height * 0.93))
     long_h = [line.box for line in h_lines if line.box.width >= width * 0.55]
-    if not long_h:
-        outer = Box(int(width * 0.03), int(height * 0.05), int(width * 0.95), int(height * 0.93))
-    else:
+    outer = default
+    if long_h:
         top = min([box for box in long_h if box.y0 <= height * 0.25] or long_h, key=lambda box: box.y0)
         bottom = max([box for box in long_h if box.y1 >= height * 0.70] or long_h, key=lambda box: box.y1)
         x0 = min(top.x0, bottom.x0)
@@ -473,7 +494,8 @@ def detect_regions(width: int, height: int, h_lines: list[LineSegment], v_lines:
             x0 = min(x0, min(box.x0 for box in left_support))
         if right_support:
             x1 = max(x1, max(box.x1 for box in right_support))
-        outer = Box(x0, top.y0, x1, bottom.y1)
+        if _is_frame_pair(top, bottom, width, height, bool(left_support), bool(right_support)):
+            outer = Box(x0, top.y0, x1, bottom.y1)
 
     bottom_band_y = int(outer.y0 + outer.height * 0.78)
     return PageRegions(
