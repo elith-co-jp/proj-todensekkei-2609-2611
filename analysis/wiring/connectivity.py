@@ -30,6 +30,8 @@ NODE_ANCHOR_CLASSES = classes.PASS_THROUGH
 TERMINAL_GAP_BRIDGE_CLASSES = classes.TWO_TERMINAL_DEVICES | (classes.PASS_THROUGH - {"terminal"})
 # 端子どうしを直接結ぶ記号（距離は BridgeParams.terminal_terminal_bridge_max_px）。
 TERMINAL_TERMINAL_BRIDGE_CLASSES = frozenset({classes.JUNCTION})
+# 一直線に並ぶとみなす 2 本の配線の軸のずれ（px、add_collinear_bridges）。
+COLLINEAR_AXIS_PX = 3.0
 
 
 def compact_label_candidate(candidate: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -211,6 +213,7 @@ def build_direct_from_to(
         own_device_jump_classes=set(classes.COILS | classes.CONTACTS),
         device_jump_across=params.device_jump_across_px,
         device_jump_end=params.device_jump_end_px,
+        collinear_bridge_max=params.collinear_bridge_max_px,
         trace=trace,
     )
     valid_pairs = sorted(
@@ -382,6 +385,7 @@ def build_predicted_graph_pairs(
     own_device_jump_classes: set[str] | None = None,
     device_jump_across: float = 0.0,
     device_jump_end: float = 1.0,
+    collinear_bridge_max: float = 0.0,
     trace: dict[str, Any] | None = None,
 ) -> set[tuple[str, str]]:
     nodes_by_id = {str(node["id"]): node for node in payload.get("nodes", [])}
@@ -961,7 +965,67 @@ def build_predicted_graph_pairs(
         if peer_stop is not None:
             add_graph_edge(stop_id, peer_stop, "pass_through_trace")
 
+    def add_collinear_bridges() -> None:
+        """同じ向きで一直線に並ぶ 2 本の配線の端どうしを、間が collinear_bridge_max 以下で記号が無ければつなぐ（DD-0054）。
+
+        スキャンのかすれで 1 本の線が 10〜20 px 途切れると、検出では 2 本の配線になる。直交する配線への橋渡し
+        （add_wire_gap_bridges）は同じ向きの線を結ばないので、途切れの上下が別の回路になっていた。
+        間に記号の枠（分岐点を除く）があれば、その記号の中の途切れなので結ばない（端子の無い接点を短絡させない）。
+        """
+        if collinear_bridge_max <= 0:
+            return
+        boxes = [
+            payload_box(symbol) for symbol in payload.get("symbols", [])
+            if str(symbol.get("class_name") or "") != classes.JUNCTION and not (symbol.get("dot_role") or {}).get("suppressed")
+        ]
+        ends = []
+        for edge_id, segment in edge_segments.items():
+            orientation = str(segment["orientation"])
+            if orientation not in {"h", "v"}:
+                continue
+            for node_id, point, end_t in ((segment["from_node_id"], segment["start"], 0.0), (segment["to_node_id"], segment["end"], 1.0)):
+                if str(nodes_by_id.get(str(node_id), {}).get("type") or "") != "endpoint":
+                    continue
+                if past_end_terminal(edge_id, point, end_t):
+                    continue
+                other = segment["end"] if end_t == 0.0 else segment["start"]
+                ends.append((orientation, str(segment.get("wire_id") or ""), graph_node_id(str(node_id), str(segment.get("wire_id") or "")),
+                             point, other))
+        for i, (orientation, wire_a, key_a, point_a, other_a) in enumerate(ends):
+            along, across = (0, 1) if orientation == "h" else (1, 0)
+            for orientation_b, wire_b, key_b, point_b, other_b in ends[i + 1:]:
+                if orientation_b != orientation or wire_b == wire_a or abs(point_a[across] - point_b[across]) > COLLINEAR_AXIS_PX:
+                    continue
+                gap = abs(point_a[along] - point_b[along])
+                # 2 本の端が向き合う（a の端の先に b の端があり、b の端の先に a の端がある）。
+                facing = ((point_b[along] - point_a[along]) * (point_a[along] - other_a[along]) > 0
+                          and (point_a[along] - point_b[along]) * (point_b[along] - other_b[along]) > 0)
+                if not facing or gap > collinear_bridge_max:
+                    continue
+                lo, hi = sorted((point_a[along], point_b[along]))
+                mid = (point_a[across] + point_b[across]) / 2
+                key = ("x0", "x1", "y0", "y1") if orientation == "h" else ("y0", "y1", "x0", "x1")
+                if any(box and box[key[0]] - 2 <= hi and box[key[1]] + 2 >= lo and box[key[2]] - 2 <= mid <= box[key[3]] + 2
+                       for box in boxes):
+                    stats["collinear_bridge_rejected_symbol_count"] += 1
+                    continue
+                add_graph_edge(key_a, key_b, "collinear_bridge")
+                stats["collinear_bridge_count"] += 1
+
+    def past_end_terminal(edge_id: str, end_point: tuple[float, float], end_t: float) -> bool:
+        segment = edge_segments[edge_id]
+        other = segment["end"] if end_t == 0.0 else segment["start"]
+        direction = (end_point[0] - other[0], end_point[1] - other[1])
+        norm = (direction[0] ** 2 + direction[1] ** 2) ** 0.5 or 1.0
+        for t, stop_id in stops_by_edge.get(edge_id, []):
+            if stop_id in terminal_by_stop and abs(t - end_t) <= 1e-9 and stop_id in coords:
+                sx, sy = coords[stop_id]
+                if ((sx - end_point[0]) * direction[0] + (sy - end_point[1]) * direction[1]) / norm > 2.0:
+                    return True
+        return False
+
     add_wire_gap_bridges()
+    add_collinear_bridges()
 
     for edge in edges:
         edge_id = str(edge["id"])

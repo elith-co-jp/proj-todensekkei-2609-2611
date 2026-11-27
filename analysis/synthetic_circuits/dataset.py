@@ -742,23 +742,25 @@ def _round_trip_metrics(original: Image.Image, rendered: Image.Image) -> tuple[f
     return mean_abs, dark_recall
 
 
-def _degrade_like_scan(path: Path, seed: int) -> None:
+def _degrade_like_scan(path: Path, seed: int, *, hard: bool = False) -> None:
     import cv2
 
-    from analysis.synthetic_circuits.scan import scan_variant
+    from analysis.synthetic_circuits.scan import scan_hard_variant, scan_variant
 
     gray = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
-    if gray is None or not cv2.imwrite(str(path), scan_variant(gray, seed)):
+    degraded = scan_hard_variant(gray, seed) if hard and gray is not None else scan_variant(gray, seed) if gray is not None else None
+    if degraded is None or not cv2.imwrite(str(path), degraded):
         raise OSError(f"cannot degrade synthetic page: {path}")
 
 
 def evaluate_dataset(
     root: Path, *, disable_ocr: bool | None = None, model_path: Path | None = None, confidence: float = 0.5,
-    scan_seed: int | None = None,
+    scan_seed: int | None = None, scan_hard: bool = False,
 ) -> dict[str, Any]:
     """Render PDFs, run production analysis, and compare symbols, terminals and circuit semantics.
 
     scan_seed を与えると、解析の前にスキャンに似せた劣化（analysis.synthetic_circuits.scan）を図面ごとに掛ける（DD-0038）。
+    scan_hard を足すと、傾き・かすれ・線の途切れ・ごみも加えた強い劣化にする（DD-0054）。
     """
     from analysis import runtime
 
@@ -820,7 +822,7 @@ def evaluate_dataset(
                 pixel_differences.append(mean_abs)
                 dark_recalls.append(dark_recall)
                 if scan_seed is not None:
-                    _degrade_like_scan(input_path, scan_seed + len(pixel_differences))
+                    _degrade_like_scan(input_path, scan_seed + len(pixel_differences), hard=scan_hard)
                 detections = (
                     _predict_detections(detector, input_path, confidence)
                     if detector is not None else source["oracle_detections"]
@@ -939,6 +941,7 @@ def evaluate_dataset(
         "schema_version": SCHEMA_VERSION,
         "evaluation_mode": "model_production_logic_explicit_config" if detector is not None else "oracle_symbols_structural",
         "scan_seed": scan_seed,
+        "scan_hard": scan_hard,
         "ocr_requested": not disable_ocr,
         "ocr_runtime": {
             "status_counts": dict(sorted(ocr_statuses.items())),

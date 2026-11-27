@@ -30,6 +30,9 @@ BAR_RIGHT_FAR_PX = 12
 BAR_MARGIN = 0.15
 # 枠の上下の外で、線が入る列を探す長さ。
 LEAD_PROBE_PX = 8
+# 線の幅とみなす列の強さ（最も強い列に対する割合）と、線の端から棒を探し始めるまでの隙間（px）。
+LEAD_WIDTH_SHARE = 0.5
+LEAD_EDGE_GAP_PX = 2
 
 
 def _iou(a: dict[str, Any], b: dict[str, Any]) -> float:
@@ -39,8 +42,12 @@ def _iou(a: dict[str, Any], b: dict[str, Any]) -> float:
     return inter / union if union > 0 else 0.0
 
 
-def _terminal_column(binary: np.ndarray, box: dict[str, Any]) -> int | None:
-    """枠の上と下の外のどちらにも線がある列（接点の線が出入りする列）。無ければ None。"""
+def _terminal_lead(binary: np.ndarray, box: dict[str, Any]) -> tuple[float, float] | None:
+    """枠の上と下の外のどちらにも線がある列（接点の線が出入りする列）の中心と、線の半分の太さ。無ければ None。
+
+    スキャンで線が太る（6〜7 px）と、最も強い列は線の端になりやすい。線の幅（最も強い列の半分以上の強さが続く列）の
+    中心を列にし、棒を探す範囲は線の太さの分だけ外へずらす（DD-0054）。
+    """
     height, width = binary.shape
     x0, y0, x1, y1 = (int(round(float(box[k]))) for k in ("x0", "y0", "x1", "y1"))
     above = binary[max(0, y0 - LEAD_PROBE_PX):max(0, y0), max(0, x0):min(width, x1)]
@@ -48,24 +55,46 @@ def _terminal_column(binary: np.ndarray, box: dict[str, Any]) -> int | None:
     if not above.size or not below.size:
         return None
     score = np.minimum(above.mean(axis=0), below.mean(axis=0))
-    return x0 + int(score.argmax()) if score.max() > 0 else None
+    if score.max() <= 0:
+        return None
+    peak = int(score.argmax())
+    lo = hi = peak
+    while lo > 0 and score[lo - 1] >= score[peak] * LEAD_WIDTH_SHARE:
+        lo -= 1
+    while hi < len(score) - 1 and score[hi + 1] >= score[peak] * LEAD_WIDTH_SHARE:
+        hi += 1
+    return max(0, x0) + (lo + hi) / 2, (hi - lo) / 2
 
 
 def bar_side(binary: np.ndarray, box: dict[str, Any]) -> str | None:
     """接点の棒が白丸の列の左（"b"）か右（"a"）か。決められなければ None。"""
-    column = _terminal_column(binary, box)
-    if column is None:
+    lead = _terminal_lead(binary, box)
+    if lead is None:
         return None
+    column, half = int(round(lead[0])), int(np.ceil(lead[1]))
     height = float(box["y1"]) - float(box["y0"])
     ya, yb = int(round(float(box["y0"]) + 0.25 * height)), int(round(float(box["y1"]) - 0.25 * height))
     if yb - ya < 4:
         return None
 
-    def strongest(lo: int, hi: int) -> float:
-        cols = [binary[ya:yb, c].mean() for c in range(column + lo, column + hi + 1) if 0 <= c < binary.shape[1]]
+    def ink(c: int) -> float:
+        return float(binary[ya:yb, c].mean()) if 0 <= c < binary.shape[1] else 0.0
+
+    near = max(BAR_NEAR_PX, half + LEAD_EDGE_GAP_PX)
+
+    def strongest(sign: int, far: int) -> float:
+        # 線の中（列の強さの半分以上）と、線の端から外へ弱まっていく肩は棒ではない。太った線や白丸の縁が
+        # 肩になり、棒の無い側に棒があるとみなしていた（DD-0054）。肩の外から far までの最も強い列を棒の強さにする。
+        far += half
+        base, step = ink(column), 0
+        while base > 0 and step < far and ink(column + sign * (step + 1)) >= base * LEAD_WIDTH_SHARE:
+            step += 1
+        while step < far and ink(column + sign * (step + 1)) <= ink(column + sign * step):
+            step += 1
+        cols = [ink(column + sign * d) for d in range(max(step, near), far + 1)]
         return max(cols) if cols else 0.0
 
-    left, right = strongest(-BAR_LEFT_FAR_PX, -BAR_NEAR_PX), strongest(BAR_NEAR_PX, BAR_RIGHT_FAR_PX)
+    left, right = strongest(-1, max(BAR_LEFT_FAR_PX, near + 4)), strongest(1, max(BAR_RIGHT_FAR_PX, near + 4))
     if left > right + BAR_MARGIN:
         return "b"
     if right > left + BAR_MARGIN:

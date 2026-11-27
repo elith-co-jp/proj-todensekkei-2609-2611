@@ -38,6 +38,10 @@ class PortParams:
     line_trace_max_px: int = 400
     # たどるときに許す線の途切れ。
     line_gap_px: int = 2
+    # 上の値で線が見つからないとき、かすれた線として許す途切れと、そのとき枠の外に続く長さの下限（DD-0054）。
+    # スキャンのかすれの途切れは 2〜7 px。長さは line_probe_px の 6 割で、文字の画（1 行ぶん）より長い。
+    broken_line_gap_px: int = 8
+    broken_line_min_run_px: int = 24
     # たどる線がコネクタ・端子台の枠に入り、その中心がたどる線からこれ以内にあれば、その記号の端子につなぐ。
     # コネクタの間の短い線は配線として検出されない（ER21315 の ABN GW の上）。0 でつながない。
     line_pass_through_px: float = 6.0
@@ -92,6 +96,9 @@ class BridgeParams:
     device_jump_across_px: float = 4.0
     # 橋渡しの線に沿った範囲の端の遊び（画素の丸め）。
     device_jump_end_px: float = 1.0
+    # 一直線に並ぶ 2 本の配線の端の間がこれ以下で、間に記号が無ければつなぐ（スキャンのかすれの途切れ、DD-0054）。
+    # 記号の無い所で線が途切れて描かれることはない。合成図面の途切れは 10〜20 px。0 でつながない。
+    collinear_bridge_max_px: float = 30.0
 
 
 @dataclass(frozen=True)
