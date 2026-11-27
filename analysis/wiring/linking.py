@@ -5,11 +5,11 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import Any
 
-import numpy as np
 from PIL import Image
 
 from analysis.wiring import classes
 from analysis.wiring.detect import make_binary_mask
+from analysis.wiring.faint_lines import paper_gray
 from analysis.wiring.geometry import (
     box_center,
     box_intersects,
@@ -117,16 +117,19 @@ def enrich_symbols_and_graph(
         ]
         found_ports = len([t for t in terminal_points if t.get("terminal_ref")])
         four_port = is_four_port_symbol(str(symbol.get("class_name")), bbox, float(inferred_terminal_config["four_port_height_px"]))
-        # 4 端子の接点も、端子が 1 つも付かなければ線から 2 端子を探す。かすれで配線の確信度が下がると、
-        # 推定の端子が 1 つも付かず、接点が回路から外れていた（DD-0054）。
+        # 4 端子の接点も、端子がそろわなければ線から 2 端子を探す。かすれで配線の確信度が下がると推定の端子が
+        # 1 つも付かず（DD-0054）、インクの途切れで 4 点の一部だけが付くと、内側の点が端子になって枠の上下の
+        # 端子から離れていた（DD-0055）。線から 2 端子が見つかったときだけ置き換える。
         if (
             port_params.line_ports and symbol.get("class_name") in LINE_PORT_CLASSES
-            and (found_ports == 0 if four_port else found_ports < 2)
+            and (found_ports < 4 if four_port else found_ports < 2)
         ):
             if line_mask is None:
                 line_mask = make_binary_mask(source_image)
-                faint_mask = np.asarray(source_image.convert("L")) < port_params.faint_gray
-            terminal_points = line_ports(symbol, line_mask, wires, symbols, faint_mask, port_params) or terminal_points
+                faint_mask = paper_gray(source_image) < port_params.faint_gray
+            from_lines = line_ports(symbol, line_mask, wires, symbols, faint_mask, port_params)
+            if from_lines and (not four_port or found_ports == 0 or len(from_lines) >= 2):
+                terminal_points = from_lines
         symbol["terminals"] = [
             {
                 "ref": terminal.get("terminal_ref"),
