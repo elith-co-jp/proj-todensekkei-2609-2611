@@ -12,7 +12,7 @@ from unittest.mock import patch
 
 from PIL import Image
 
-from analysis.wiring.ocr import load_symbol_ocr_reader
+from analysis.wiring.ocr import _rapidocr, load_symbol_ocr_reader
 
 TOOLS_DIR = Path(__file__).resolve().parents[1] / "tools"
 sys.path.insert(0, str(TOOLS_DIR))
@@ -55,8 +55,13 @@ class WirePipelineTests(unittest.TestCase):
             self.assertEqual(parse_args().model, Path("custom.pt"))
 
     def test_missing_symbol_ocr_dependency_does_not_block_pipeline(self) -> None:
-        with patch.dict("sys.modules", {"rapidocr_onnxruntime": None}):
-            reader, effective_engine, warning = load_symbol_ocr_reader("rapidocr", "en")
+        # RapidOCR は使い回す（lru_cache）ため、OCR が入った環境で先に作られていると import に届かない
+        _rapidocr.cache_clear()
+        try:
+            with patch.dict("sys.modules", {"rapidocr_onnxruntime": None}):
+                reader, effective_engine, warning = load_symbol_ocr_reader("rapidocr", "en")
+        finally:
+            _rapidocr.cache_clear()
 
         self.assertIsNone(reader)
         self.assertEqual(effective_engine, "none")
