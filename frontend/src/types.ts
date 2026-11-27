@@ -151,6 +151,7 @@ export type MlStatus = {
   card_model?: { name: string } | null
   model_count: number
   training_running: TrainingRun | null
+  analysis_running?: boolean
 }
 
 export type Detection = {
