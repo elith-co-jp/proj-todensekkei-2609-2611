@@ -2,7 +2,7 @@
 """PyInstaller 仕様ファイル（1 ファイル exe）。
 
 ビルド:
-    pip install torch==2.5.1 torchvision==0.20.1 --index-url https://download.pytorch.org/whl/cpu
+    pip install torch==2.13.0 torchvision==0.28.0 --index-url https://download.pytorch.org/whl/cpu
     pip install -r requirements.txt -r requirements-ml.txt "pyinstaller>=6.17,<7"
     cd frontend && npm ci && npm run build && cd ..
     pyinstaller seq-annotator.spec --noconfirm

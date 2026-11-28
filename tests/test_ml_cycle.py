@@ -68,6 +68,16 @@ def test_ml_status(client):
     assert set(body) >= {"ultralytics", "active_model", "model_count", "training_running"}
     assert body["model_count"] == 0
     assert body["active_model"] is None
+    assert body["analysis_running"] is False
+
+
+def test_ml_status_reports_running_analysis(client):
+    # 解析の実行中は画面が解析の要求（409 になる）を送らずに待てるよう、状態に出す
+    from routers import ml
+
+    with ml._inference_lock:
+        assert client.get("/api/ml/status").json()["analysis_running"] is True
+    assert client.get("/api/ml/status").json()["analysis_running"] is False
 
 
 def test_model_lifecycle(client):

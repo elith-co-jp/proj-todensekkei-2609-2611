@@ -81,7 +81,7 @@ function trainingRun(id: number, overrides: Partial<TrainingRun>): TrainingRun {
   }
 }
 
-const row = { id: 1, name: '匿名ページ1', symbol_count: 3 } as ProjectRow
+const row = { id: 1, name: '匿名ページ1', symbol_count: 3, status: 'done' } as ProjectRow
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -163,6 +163,15 @@ describe('MlOpsPage 学習の評価範囲', () => {
     await waitFor(() => expect(start.disabled).toBe(false))
     fireEvent.click(start)
     await waitFor(() => expect(api.startTraining).toHaveBeenLastCalledWith(expect.objectContaining({ holdout: false })))
+  })
+
+  it('学習に使う図面が無いときは学習を開始できない（400 になる要求を送らない）', async () => {
+    api.listProjects.mockResolvedValue([{ ...row, status: 'draft' }])
+    const view = openPage()
+    const start = (await view.findByRole('button', { name: /完了（done）の図面がありません/ })) as HTMLButtonElement
+    expect(start.disabled).toBe(true)
+    fireEvent.click(view.getByRole('checkbox', { name: '完了（done）の図面だけを学習に使う' }))
+    await waitFor(() => expect((view.getByRole('button', { name: '学習を開始' }) as HTMLButtonElement).disabled).toBe(false))
   })
 
   it('採用判定と学習履歴に、どの図面で評価したかを示す', async () => {

@@ -14,7 +14,7 @@ if not exist ".venv" (
 )
 call .venv\Scripts\activate.bat || goto :error
 python -m pip install --upgrade pip || goto :error
-pip install torch==2.5.1 torchvision==0.20.1 --index-url https://download.pytorch.org/whl/cpu || goto :error
+pip install torch==2.13.0 torchvision==0.28.0 --index-url https://download.pytorch.org/whl/cpu || goto :error
 pip install -r requirements.txt -r requirements-ml.txt "pyinstaller>=6.17,<7" -c constraints.txt || goto :error
 
 echo [2/5] フロントエンドをビルドします...

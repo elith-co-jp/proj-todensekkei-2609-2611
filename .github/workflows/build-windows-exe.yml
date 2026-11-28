@@ -126,7 +126,8 @@ jobs:
         # uv は pip と同じ版を並べて入れるので速い。Drive へのアップロードに使う版もここで入れる。
         run: |
           python -m pip install uv==0.13.7
-          uv pip install --system torch==2.5.1 torchvision==0.20.1 --index-url https://download.pytorch.org/whl/cpu
+          # 2.10 未満は checkpoint（.pt）の読み込みで任意コード実行の脆弱性（CVE-2025-32434・CVE-2026-24747）。2.13 で既知の脆弱性なし（2026-11-27 確認）
+          uv pip install --system torch==2.13.0 torchvision==0.28.0 --index-url https://download.pytorch.org/whl/cpu
           uv pip install --system -r requirements.txt -r requirements-ml.txt "pyinstaller>=6.17,<7" google-api-python-client==2.200.0 -c constraints.txt
 
       - name: Build frontend
