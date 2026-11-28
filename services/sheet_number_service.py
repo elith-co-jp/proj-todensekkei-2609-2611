@@ -102,7 +102,10 @@ def read_ocr_items(path: Path) -> tuple[list[OcrItem], int, int]:
     """ページ下部 30% を 1 回だけ OCR し、文字枠をページのピクセル座標で返す。"""
     try:
         import numpy as np
-        from rapidocr_onnxruntime import RapidOCR
+
+        from analysis.wiring.ocr import shared_reader
+
+        reader = shared_reader()  # 呼ぶたびにモデルを読み込まない（DD-0056）
     except ImportError as exc:
         raise RuntimeError(
             "文字認識（OCR）を利用できない環境のため、シート番号を読み取れません。手入力してください。"
@@ -111,7 +114,7 @@ def read_ocr_items(path: Path) -> tuple[list[OcrItem], int, int]:
         page = opened.convert("RGB")
     width, height = page.size
     top = int(height * (1 - OCR_CROP_RATIO))
-    results, _ = RapidOCR()(np.asarray(page.crop((0, top, width, height))))
+    results, _ = reader(np.asarray(page.crop((0, top, width, height))))
     items: list[OcrItem] = []
     for points, text, score in results or []:
         xs = [float(x) for x, _ in points]

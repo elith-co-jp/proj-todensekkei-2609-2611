@@ -1,17 +1,53 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="TodenYOLO">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="TodenYOLO">
+  <!-- 検出枠（YOLO のバウンディングボックス）がシーケンス図の a 接点をとらえたマーク。
+       favicon.ico と EXE のアイコンは、この絵と、16・24・32px 用にピクセルへ合わせた絵から作る。 -->
   <defs>
-    <linearGradient id="toden" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#a3e635"/>
-      <stop offset="48%" stop-color="#2dd4bf"/>
-      <stop offset="100%" stop-color="#38bdf8"/>
+    <linearGradient id="background" x1="0" y1="0" x2="256" y2="256" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#16357a"/>
+      <stop offset="0.5" stop-color="#0b1b40"/>
+      <stop offset="1" stop-color="#050b1d"/>
     </linearGradient>
+    <radialGradient id="corner-light" cx="210" cy="30" r="210" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#3b82f6" stop-opacity="0.6"/>
+      <stop offset="1" stop-color="#3b82f6" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="sheen" x1="0" y1="0" x2="0" y2="140" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.12"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="frame" x1="44" y1="44" x2="212" y2="212" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#a5f3fc"/>
+      <stop offset="0.45" stop-color="#22d3ee"/>
+      <stop offset="1" stop-color="#3b82f6"/>
+    </linearGradient>
+    <filter id="neon" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="8"/>
+    </filter>
+    <clipPath id="tile">
+      <rect width="256" height="256" rx="56"/>
+    </clipPath>
   </defs>
-  <rect width="64" height="64" rx="14" fill="url(#toden)"/>
-  <g stroke="#ffffff" stroke-width="5" stroke-linecap="round" fill="none">
-    <path d="M16 27v-6a5 5 0 0 1 5-5h6"/>
-    <path d="M37 16h6a5 5 0 0 1 5 5v6"/>
-    <path d="M48 37v6a5 5 0 0 1-5 5h-6"/>
-    <path d="M27 48h-6a5 5 0 0 1-5-5v-6"/>
+
+  <g clip-path="url(#tile)">
+    <rect width="256" height="256" fill="url(#background)"/>
+    <rect width="256" height="256" fill="url(#corner-light)"/>
+    <path stroke="#93c5fd" stroke-opacity="0.06" stroke-width="2"
+          d="M32 0V256M64 0V256M96 0V256M128 0V256M160 0V256M192 0V256M224 0V256M0 32H256M0 64H256M0 96H256M0 128H256M0 160H256M0 192H256M0 224H256"/>
+    <rect width="256" height="140" fill="url(#sheen)"/>
   </g>
-  <circle cx="32" cy="32" r="3.5" fill="#ffffff"/>
+  <rect x="2" y="2" width="252" height="252" rx="54" fill="none" stroke="#ffffff" stroke-opacity="0.14" stroke-width="4"/>
+
+  <g fill="none" stroke-width="20" stroke-linecap="round" stroke-linejoin="round">
+    <g stroke="#22d3ee" opacity="0.55" filter="url(#neon)">
+      <path d="M46 98V74a28 28 0 0 1 28-28h24M158 46h24a28 28 0 0 1 28 28v24M210 158v24a28 28 0 0 1-28 28h-24M98 210H74a28 28 0 0 1-28-28v-24"/>
+    </g>
+    <path stroke="url(#frame)" d="M46 98V74a28 28 0 0 1 28-28h24M158 46h24a28 28 0 0 1 28 28v24M210 158v24a28 28 0 0 1-28 28h-24M98 210H74a28 28 0 0 1-28-28v-24"/>
+  </g>
+
+  <g fill="none" stroke-linecap="round">
+    <path stroke="#22d3ee" stroke-width="20" opacity="0.75" filter="url(#neon)" d="M80 128H108M148 128H176M108 94V162M148 94V162"/>
+    <path stroke="#ffffff" stroke-width="16" d="M80 128H108M148 128H176M108 94V162M148 94V162"/>
+  </g>
+  <circle cx="80" cy="128" r="13" fill="#ffffff"/>
+  <circle cx="176" cy="128" r="13" fill="#ffffff"/>
 </svg>

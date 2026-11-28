@@ -68,6 +68,8 @@ def ml_status(db: Session = Depends(get_db)):
         "card_model": {"name": card.stem} if card is not None else None,
         "model_count": db.query(MlModel).count(),
         "training_running": serialize_run(running) if running else None,
+        # 解析（同期・裏のジョブ）の実行中。画面は 409 になる要求を送らずに待ってもらう
+        "analysis_running": _inference_lock.locked(),
     }
 
 

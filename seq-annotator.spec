@@ -2,7 +2,7 @@
 """PyInstaller 仕様ファイル（1 ファイル exe）。
 
 ビルド:
-    pip install torch==2.5.1 torchvision==0.20.1 --index-url https://download.pytorch.org/whl/cpu
+    pip install torch==2.13.0 torchvision==0.28.0 --index-url https://download.pytorch.org/whl/cpu
     pip install -r requirements.txt -r requirements-ml.txt "pyinstaller>=6.17,<7"
     cd frontend && npm ci && npm run build && cd ..
     pyinstaller seq-annotator.spec --noconfirm
@@ -22,6 +22,8 @@ from PyInstaller.utils.hooks import collect_all, collect_submodules
 spec_dir = Path(SPECPATH)
 # フォルダ形式（DD-0040）。1 ファイルの EXE は起動のたびに約 900 MB を一時フォルダへ展開する。
 ONEDIR = os.environ.get("SEQANNO_ONEDIR") == "1"
+# EXE のアイコン。画面の favicon と同じファイルを使う。
+APP_ICON = str(spec_dir / "frontend" / "public" / "favicon.ico")
 
 # --- 同梱データ（ビルド済みフロントエンド） -----------------------------------
 datas = [(str(spec_dir / "frontend" / "dist"), "frontend/dist")]
@@ -98,6 +100,7 @@ if ONEDIR:
         [],
         exclude_binaries=True,
         name="TodenYOLO",
+        icon=APP_ICON,
         debug=False,
         bootloader_ignore_signals=False,
         strip=False,
@@ -118,6 +121,7 @@ else:
         a.datas,
         [],
         name="TodenYOLO",
+        icon=APP_ICON,
         debug=False,
         bootloader_ignore_signals=False,
         strip=False,

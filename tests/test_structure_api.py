@@ -364,7 +364,10 @@ def test_analysis_job_saves_each_drawing_and_skips_failures(client, monkeypatch)
     assert client.get(f"/api/ml/projects/{third}/structure").json()["result"] is not None
     assert client.get("/api/ml/analysis/jobs").json()[0]["id"] == job["id"]
     # ロックは解放され、次のジョブを始められる
-    assert client.post("/api/ml/analysis/jobs", json={"project_ids": [first]}).status_code == 202
+    again = client.post("/api/ml/analysis/jobs", json={"project_ids": [first]})
+    assert again.status_code == 202
+    # 終わるまで待つ（裏の解析が次のテストの DB の作り直しと重ならないように）
+    _wait_job(client, again.json()["id"])
 
 
 def test_analysis_job_can_be_cancelled_between_drawings(client, monkeypatch):

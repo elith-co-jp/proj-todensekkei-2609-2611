@@ -203,6 +203,7 @@ export const api = {
     const status = await req<MlStatus>('/api/ml/status')
     if (!status.active_model) return '推論に使うモデルがありません。「AI 学習」の画面で先にモデルを登録してください'
     if (!status.ultralytics) return 'この環境では ultralytics が入っていないため、ここでは AI 解析できません。「AI 学習」の画面から外部で実行した結果を取り込んでください'
+    if (status.analysis_running) return '別の解析を実行中です。終わってからもう一度押してください'
     return null
   },
 
