@@ -59,6 +59,22 @@ DEVICE_CLASSES = classes.TWO_TERMINAL_DEVICES
 END_CLASSES = classes.TWO_TERMINAL_DEVICES | classes.PASS_THROUGH
 
 
+# 紙の地の明るさ（灰色の PAPER_PERCENTILE パーセンタイル）が PAPER_WHITE 未満なら、地が白（255）になるように伸ばして
+# から薄い線を見る（paper_gray）。薄い線の閾値（灰色 240・245 以下）は地が白い前提で、黄ばみ・裏写りで地が 232〜250
+# の図面では紙全体が薄い線になっていた（DD-0055）。地が白い図面はそのまま。
+PAPER_WHITE = 250
+PAPER_PERCENTILE = 90
+
+
+def paper_gray(image: Image.Image) -> np.ndarray:
+    """灰色の画像。地が白くなければ地が 255 になるように伸ばす。"""
+    gray = np.asarray(image.convert("L"))
+    paper = float(np.percentile(gray, PAPER_PERCENTILE))
+    if paper >= PAPER_WHITE or paper <= 0:
+        return gray
+    return np.clip(gray.astype(np.float32) * (255.0 / paper), 0, 255).astype(np.uint8)
+
+
 def _class(symbol: dict[str, Any]) -> str:
     return symbol.get("class_name") or symbol.get("type") or ""
 
@@ -190,7 +206,7 @@ def _leaves_device(symbol: dict[str, Any], term: dict[str, Any], toward: tuple[f
 
 def bridge_faint_wires(payload: dict[str, Any], image: Image.Image) -> list[dict[str, Any]]:
     """Add faint-line connections to payload["from_to"] and return them."""
-    gray = np.asarray(image.convert("L"))
+    gray = paper_gray(image)
     scale = max(0.5, image.width / 1755)
     # 行き先の札も線の端になる（札に届く母線が薄く、検出した配線が無い、DD-0022）。
     symbols = {s["id"]: s for s in payload.get("symbols", []) if _class(s) in END_CLASSES or s.get("other_kind") == "destination"}
@@ -266,16 +282,18 @@ def bridge_faint_wires(payload: dict[str, Any], image: Image.Image) -> list[dict
                 continue
             profile = _profile(gray, here, (ox, oy), vertical, scale)
             offset = abs((ox, oy)[axis] - here[axis])
-            if offset > SOLID_ALIGN * scale:
-                # 黒丸の中心がずれていても、黒丸の外の線が相手の端子とそろっていれば、そろっているとみなす。
-                for point, toward, peer, s_id in ((here, (ox, oy)[along], (ox, oy), sid), ((ox, oy), here[along], here, other_sid)):
-                    if _class(symbols[s_id]) != classes.JUNCTION:
-                        continue
-                    line = _line_across(gray, point, toward, vertical, scale)
-                    if line is not None:
-                        offset = min(offset, abs(line - peer[axis]))
+            any_junction = classes.JUNCTION in (_class(symbols[sid]), _class(symbols[other_sid]))
+            if offset > SOLID_ALIGN * scale and any_junction:
+                # 黒丸の中心や推定の端子がずれていても、両端のすぐ外の線どうしがそろっていれば、そろっているとみなす
+                # （DD-0054・DD-0055）。測れない端は端子の位置のまま。
+                line_here = _line_across(gray, here, (ox, oy)[along], vertical, scale)
+                line_there = _line_across(gray, (ox, oy), here[along], vertical, scale)
+                line_here = here[axis] if line_here is None else line_here
+                line_there = (ox, oy)[axis] if line_there is None else line_there
+                offset = min(offset, abs(line_here - line_there), abs(line_here - (ox, oy)[axis]), abs(line_there - here[axis]))
+            # 傾いたスキャンでは離れた端子ほどずれるので、黒丸につながる線は間の長さの分だけずれを許す。
             junction_align = JUNCTION_ALIGN * scale + gap * JUNCTION_SKEW_SLOPE
-            aligned = offset <= (junction_align if both_junctions else SOLID_ALIGN * scale)
+            aligned = offset <= (junction_align if any_junction else SOLID_ALIGN * scale)
             if both_junctions and offset > junction_align:
                 continue
             # Beyond the ordinary terminal search radius, only a continuous, tightly aligned bus between
@@ -339,7 +357,7 @@ def _row_coverage(ink: np.ndarray, y: int, x0: int, x1: int) -> float:
 
 def bridge_parallel_contacts(payload: dict[str, Any], image: Image.Image) -> list[dict[str, Any]]:
     """迂回の線で並列につながった接点の端子を結び、payload["from_to"] に足して返す。"""
-    ink = np.asarray(image.convert("L")) <= GREY_MAX
+    ink = paper_gray(image) <= GREY_MAX
     scale = max(0.5, image.width / 1755)
     from_to = payload.get("from_to") or {}
     wired = {

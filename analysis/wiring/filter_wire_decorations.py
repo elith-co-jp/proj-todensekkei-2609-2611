@@ -18,6 +18,7 @@ import numpy as np
 from PIL import Image, ImageOps
 
 from analysis.parallel import ordered_map
+from analysis.wiring import classes
 from analysis.wiring.assemble import build_connection_candidates
 from analysis.wiring.detect import (
     Box,
@@ -295,6 +296,34 @@ def _cut_wire(wire: dict[str, Any], cuts: list[tuple[int, int]], binary: np.ndar
     return parts
 
 
+# 枠の中の線を記号の絵とみなす記号（_is_device_outline）と、枠の外へのはみ出しの許し（px、150 dpi）。
+OUTLINE_DEVICE_CLASSES = classes.COILS | frozenset({"lamp"})
+DEVICE_OUTLINE_PAD_PX = 4
+
+
+def _is_device_outline(wire: dict[str, Any], boxes: list[dict[str, Any]], scale: float,
+                       wires: list[dict[str, Any]] | None = None) -> bool:
+    """線がコイル・電磁弁・表示灯の枠の中（DEVICE_OUTLINE_PAD_PX のはみ出しまで）に収まり、その記号を直交する配線が
+    端から端まで貫いている。貫く配線の上に黒丸の無い交点を作り、記号の両端子を短絡させる線だけを外す。"""
+    pad = DEVICE_OUTLINE_PAD_PX * scale
+    b = wire["bbox"]
+    for box in boxes:
+        if not (box["x0"] - pad <= b["x0"] and b["x1"] <= box["x1"] + pad
+                and box["y0"] - pad <= b["y0"] and b["y1"] <= box["y1"] + pad):
+            continue
+        for other in wires or []:
+            o = other["bbox"]
+            if other is wire or other.get("orientation") == wire.get("orientation"):
+                continue
+            if other.get("orientation") == "v":
+                through = box["x0"] <= (o["x0"] + o["x1"]) / 2 <= box["x1"] and o["y0"] <= box["y0"] and o["y1"] >= box["y1"]
+            else:
+                through = box["y0"] <= (o["y0"] + o["y1"]) / 2 <= box["y1"] and o["x0"] <= box["x0"] and o["x1"] >= box["x1"]
+            if through:
+                return True
+    return False
+
+
 def filter_wire_decorations(
     payload: dict[str, Any],
     image: Image.Image,
@@ -312,6 +341,7 @@ def filter_wire_decorations(
         logging.getLogger(__name__).exception("Label rule OCR failed; keeping solid rules")
         rules, checked, ocr_failed = [], 0, True
     cards = _card_boxes(symbols)
+    devices = [s["bbox"] for s in symbols if s.get("class_name") in OUTLINE_DEVICE_CLASSES and s.get("bbox")]
     kept = []
     removed = []
     trimmed = []
@@ -332,6 +362,11 @@ def filter_wire_decorations(
             excluded_segments.append(
                 {"orientation": "h", "axis": wire["axis"], "start": span_start, "end": span_end}
             )
+        elif _is_device_outline(wire, devices, scale, payload.get("wires", [])):
+            # コイル・電磁弁・表示灯の枠の中に収まる線は記号の絵（電磁弁の四角の上下の辺）で、配線ではない。
+            # かすれた図面では辺が角のつながる短い横線として配線に残り、記号を貫く縦線の上に黒丸の無い
+            # 交点を作って、記号の両端子を短絡させていた（DD-0055）。
+            removed.append({"wire_id": wire["id"], "reason": "device_outline"})
         elif cuts := _rule_cuts(binary, line, rules, scale):
             parts = _cut_wire(wire, cuts, binary)
             kept.extend(parts)
