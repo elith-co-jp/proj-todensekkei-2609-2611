@@ -71,6 +71,11 @@ async def lifespan(_app: FastAPI):
     from services.training_service import recover_interrupted_runs
 
     recover_interrupted_runs()
+    # 同じ画素の OCR は前の結果を使う（解析のやり直しを速くする。DD-0056）。置き場はデータの下
+    from analysis import ocr_cache
+    from database import DATA_DIR
+
+    ocr_cache.configure(DATA_DIR / "ocr_cache")
     if _DESKTOP_MODE:
         _touch_desktop_heartbeat()
         _start_desktop_watchdog()

@@ -227,6 +227,8 @@ uvicorn main:app --port 8010               # http://localhost:8010 で UI と AP
 | `SEQANNO_ALLOWED_HOSTS` | なし | 受け付ける Host を足す（カンマ区切り）。既定はループバック（localhost・127.0.0.1・::1）と許可オリジンのホストだけで、それ以外の Host は 403（DNS リバインディング対策）。社内サーバ名で開くときに指定する |
 | `SEQANNO_OCR_REC_MODEL` | なし | 記号ごとの拡大読みに使う文字認識モデル（ONNX）。図面の字体に合わせて追加学習したモデル（`analysis/tools/ocr_finetune.py`）を指定する。なければ同梱のモデル |
 | `SEQANNO_OCR_WORKERS` | CPU 数と 4 の小さいほう | 文字の読み取りを並べる数。1 で並べない（読む文字は同じ） |
+| `SEQANNO_OCR_CACHE` | 1 | 0 で文字の読み取りの結果を残さない（毎回 OCR する）。残した結果はデータフォルダの `ocr_cache`（DD-0056） |
+| `SEQANNO_OCR_CACHE_MB` | 1024 | 文字の読み取りの結果を残す上限（MB）。超えたら起動時に古く使われたものから消す |
 | `SEQANNO_CARD_MODEL` | 同梱のカード用モデル | カード・札・領域を検出するモデルの差し替え。空にすると使わない |
 | `SEQANNO_NGSPICE` | PATH の `ngspice` | 回路計算に使う ngspice の場所。無ければ内蔵の節点解析で解く |
 | `LABEL_LLM_URL` / `LABEL_LLM_MODEL` | なし | ラベル・名称の読み直しに使うローカル LLM（Ollama 互換 API）。設定したときだけ使う |
