@@ -153,7 +153,7 @@ export default function App() {
     return (
       <main className="flex min-h-dvh items-center justify-center bg-[#07111f] px-6 text-slate-100">
         <div className="max-w-sm text-center">
-          <LogoMark size={44} className="mx-auto text-cyan-300" />
+          <LogoMark size={44} className="mx-auto" />
           <h1 className="mt-5 text-lg font-bold">TodenYOLO を終了しました</h1>
           <p className="mt-2 text-sm leading-6 text-slate-400">
             このタブは閉じて構いません。アプリを再起動した場合は再接続してください。
